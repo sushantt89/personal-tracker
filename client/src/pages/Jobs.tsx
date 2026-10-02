@@ -1,0 +1,73 @@
+import { useNavigate } from 'react-router-dom';
+import { Button, Link, Typography, Stack, Chip } from '@mui/material';
+import CheckCircleOutlineIcon from '@mui/icons-material/CheckCircleOutline';
+import CancelOutlinedIcon from '@mui/icons-material/CancelOutlined';
+import PlaceOutlinedIcon from '@mui/icons-material/PlaceOutlined';
+import ContentPasteGoIcon from '@mui/icons-material/ContentPasteGo';
+import { ResourcePage, type ResourceConfig } from '../components/ResourcePage';
+import { StatusChip, StatCard } from '../components/common';
+import type { Job } from '../api/types';
+import { jobFields, jobDefaults, withFormattedAddress } from '../utils/forms';
+import { money, fmtDate, fmtTime, mapsUrl } from '../utils/format';
+import { patch } from '../api/client';
+import { useInvalidateFinance } from '../hooks/useInvalidate';
+import { useToast } from '../hooks/useToast';
+import { useLookupMaps } from '../hooks/useLookups';
+import { Grid } from '@mui/material';
+
+export default function Jobs() {
+  const nav = useNavigate();
+  const invalidate = useInvalidateFinance();
+  const toast = useToast();
+  const { sources, srcById } = useLookupMaps();
+  const setStatus = async (j: Job, status: Job['status']) => {
+    await patch(`/jobs/${j.id}`, { status });
+    invalidate();
+    toast(`Job marked ${status}`);
+  };
+  const config: ResourceConfig<Job> = {
+    queryKey: 'jobs', endpoint: '/jobs', title: 'Jobs', singular: 'Job',
+    subtitle: 'Own-business jobs are billed to the client; jobs done under a contractor are billed to (and paid by) the contractor.',
+    fields: jobFields, defaults: jobDefaults, dateFilter: true, transform: withFormattedAddress,
+    fromRecord: (j) => ({ ...j, address: j.address ?? {}, tasks: j.tasks ?? [] }),
+    filters: [
+      { name: 'status', label: 'Status', options: ['scheduled', 'in_progress', 'completed', 'cancelled'].map((s) => ({ value: s, label: s.replace('_', ' ') })) },
+      { name: 'incomeSourceId', label: 'Source', options: sources.map((s) => ({ value: s.id, label: s.name })) },
+      { name: 'workType', label: 'Working as', options: [{ value: 'own', label: 'Own business' }, { value: 'subcontract', label: 'Under a contractor' }] },
+    ],
+    headerActions: <Button startIcon={<ContentPasteGoIcon />} onClick={() => nav('/import')}>Paste schedule</Button>,
+    columns: [
+      { key: 'date', label: 'Date', render: (j) => <>{fmtDate(j.date, 'ddd D MMM')}<Typography variant="caption" color="text.secondary" component="div">{fmtTime(j.startTime)}{j.endTime ? `–${fmtTime(j.endTime)}` : ''}</Typography></>, sortValue: (j) => j.date + (j.startTime ?? '') },
+      { key: 'clientName', label: 'Client', render: (j) => <><Typography variant="body2" fontWeight={500}>{j.clientName ?? j.title ?? '—'}</Typography><Typography variant="caption" color="text.secondary">{[j.incomeSourceId && srcById.get(j.incomeSourceId)?.name, j.workType === 'subcontract' ? `via ${j.contractorName ?? 'contractor'}` : null].filter(Boolean).join(' · ')}</Typography></> },
+      { key: 'workType', label: 'Bill to', render: (j) => (j.workType === 'subcontract' ? <Chip size="small" color="secondary" variant="outlined" label={j.contractorName ?? 'Contractor'} /> : <Chip size="small" variant="outlined" label="Client" />), sortValue: (j) => (j.workType === 'subcontract' ? j.contractorName ?? 'zz' : '') },
+      { key: 'address', label: 'Address', render: (j) => (j.address?.formatted ? <Link href={mapsUrl(j.address.formatted)} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()} underline="hover" color="inherit">{j.address.formatted}</Link> : '—'), sortValue: (j) => j.address?.suburb ?? '' },
+      { key: 'amount', label: 'Amount', align: 'right', render: (j) => money(j.amount), sortValue: (j) => j.amount ?? 0 },
+      { key: 'travel', label: 'Drive', align: 'right', render: (j) => (j.distanceKm !== undefined && j.distanceKm !== null ? <Typography variant="body2" color="text.secondary" noWrap>{j.distanceKm ? `${j.distanceKm.toFixed(1)} km · ${j.travelMinutes ?? 0} min` : 'start'}</Typography> : '—'), sortValue: (j) => j.distanceKm ?? -1 },
+      { key: 'hoursWorked', label: 'Hours', align: 'right', render: (j) => j.hoursWorked ? j.hoursWorked.toFixed(1) : '—' },
+      { key: 'status', label: 'Status', render: (j) => <Stack direction="row" spacing={0.5}><StatusChip status={j.status} />{j.invoiceId && <Chip size="small" label="Invoiced" variant="outlined" />}</Stack> },
+    ],
+    mobileTitle: (j) => j.clientName ?? 'Job',
+    mobileSubtitle: (j) => `${fmtDate(j.date, 'ddd D MMM')} ${fmtTime(j.startTime)} · ${j.address?.suburb ?? ''}${j.workType === 'subcontract' ? ` · via ${j.contractorName ?? 'contractor'}` : ''}`,
+    mobileRight: (j) => <><Typography variant="body2" fontWeight={600}>{money(j.amount)}</Typography><StatusChip status={j.status} /></>,
+    rowActions: [
+      { label: 'Mark completed', icon: <CheckCircleOutlineIcon fontSize="small" />, onClick: (j) => setStatus(j, 'completed'), show: (j) => j.status !== 'completed' },
+      { label: 'Cancel job', icon: <CancelOutlinedIcon fontSize="small" />, onClick: (j) => setStatus(j, 'cancelled'), show: (j) => j.status !== 'cancelled' },
+      { label: 'Open in Google Maps', icon: <PlaceOutlinedIcon fontSize="small" />, onClick: (j) => { window.open(mapsUrl(j.address?.formatted), '_blank'); }, show: (j) => !!j.address?.formatted },
+    ],
+    deleteMessage: () => 'The linked income record is removed too (unless it is already paid).',
+    summary: (items) => {
+      const done = items.filter((j) => j.status === 'completed');
+      const amt = done.reduce((a, j) => a + (j.amount ?? 0), 0);
+      const hrs = done.reduce((a, j) => a + (j.hoursWorked ?? 0), 0);
+      return (
+        <Grid container spacing={2}>
+          <Grid size={{ xs: 6, md: 3 }}><StatCard label="Jobs" value={items.length} hint={`${done.length} completed`} /></Grid>
+          <Grid size={{ xs: 6, md: 3 }}><StatCard label="Completed income" value={money(amt)} /></Grid>
+          <Grid size={{ xs: 6, md: 3 }}><StatCard label="Avg per job" value={done.length ? money(amt / done.length) : '—'} /></Grid>
+          <Grid size={{ xs: 6, md: 3 }}><StatCard label="Avg per hour" value={hrs ? money(amt / hrs) : '—'} hint={`${hrs.toFixed(1)} hours`} /></Grid>
+        </Grid>
+      );
+    },
+  };
+  return <ResourcePage config={config} />;
+}

@@ -1,0 +1,12 @@
+node_modules/
+dist/
+.env
+.env.*
+!.env.example
+server/uploads/
+*.log
+.DS_Store
+coverage/
+
+# update archives delivered during development
+update-*.tar.gz

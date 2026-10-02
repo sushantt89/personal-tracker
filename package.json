@@ -1,0 +1,25 @@
+{
+  "name": "personal-tracker",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Personal life, work, income, expense, invoice and budgeting tracker",
+  "workspaces": [
+    "server",
+    "client"
+  ],
+  "scripts": {
+    "dev": "concurrently -n server,client -c blue,magenta \"npm run dev -w server\" \"npm run dev -w client\"",
+    "build": "npm run build -w server && npm run build -w client",
+    "start": "npm run start -w server",
+    "test": "npm run test -w server",
+    "typecheck": "npm run typecheck -w server && npm run typecheck -w client",
+    "seed": "npm run seed -w server",
+    "dev:phone": "concurrently -n server,client -c blue,magenta \"npm run dev -w server\" \"npm run dev -w client -- --host\""
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

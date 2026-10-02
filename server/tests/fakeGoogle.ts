@@ -1,0 +1,76 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
+/** Minimal in-memory stand-in for the Calendar and Drive APIs used by the app. */
+export function createFakeGoogle() {
+  const events = new Map<string, any>();
+  const files = new Map<string, any>();
+  let seq = 0;
+  const id = (p: string) => `${p}${++seq}`;
+  const notFound = () => Object.assign(new Error('Not Found'), { code: 404 });
+  let failWith: any = null;
+  const userDeleted: any[] = [];
+  const later = () => new Date(Date.now() + 60000).toISOString();
+  const maybeFail = () => { if (failWith) throw failWith; };
+
+  const calendar = {
+    events: {
+      insert: async ({ requestBody }: any) => { maybeFail(); const e = { ...requestBody, id: id('evt'), status: 'confirmed', updated: new Date().toISOString() }; events.set(e.id, e); return { data: e }; },
+      update: async ({ eventId, requestBody }: any) => { maybeFail(); if (!events.has(eventId)) throw notFound(); const e = { ...requestBody, id: eventId, status: 'confirmed', updated: new Date().toISOString() }; events.set(eventId, e); return { data: e }; },
+      delete: async ({ eventId }: any) => { maybeFail(); if (!events.delete(eventId)) throw notFound(); return { data: {} }; },
+      list: async ({ privateExtendedProperty, updatedMin, showDeleted }: any) => {
+        maybeFail();
+        const [k, v] = String(privateExtendedProperty?.[0] ?? '').split('=');
+        const live = [...events.values()].filter((e) => e.extendedProperties?.private?.[k] === v && (!updatedMin || e.updated >= updatedMin));
+        return { data: { items: showDeleted ? [...live, ...userDeleted.filter((e) => e.extendedProperties?.private?.[k] === v)] : live } };
+      },
+    },
+  };
+
+  const parse = (q: string) => ({
+    name: /name='((?:[^'\\]|\\.)*)'/.exec(q)?.[1]?.replace(/\\'/g, "'"),
+    parent: /'([^']+)' in parents/.exec(q)?.[1],
+    folder: q.includes("mimeType='application/vnd.google-apps.folder'"),
+    sha: /value='([a-f0-9]+)'/.exec(q)?.[1],
+  });
+  const drive = {
+    files: {
+      get: async ({ fileId }: any) => { maybeFail(); const f = files.get(fileId); if (!f) throw notFound(); return { data: { id: f.id, trashed: false } }; },
+      list: async ({ q }: any) => {
+        maybeFail();
+        const c = parse(q);
+        const out = [...files.values()].filter((f) => (!c.name || f.name === c.name) && (!c.parent || f.parents?.[0] === c.parent) && (!c.folder || f.mimeType === 'application/vnd.google-apps.folder') && (!c.sha || f.appProperties?.sha256 === c.sha));
+        return { data: { files: out.map((f) => ({ id: f.id, webViewLink: `https://drive.example/${f.id}` })) } };
+      },
+      create: async ({ requestBody, media }: any) => {
+        maybeFail();
+        const f = { ...requestBody, id: id('file'), versions: media ? 1 : 0 };
+        files.set(f.id, f);
+        return { data: { id: f.id, webViewLink: `https://drive.example/${f.id}` } };
+      },
+      update: async ({ fileId, requestBody }: any) => {
+        maybeFail();
+        const f = files.get(fileId); if (!f) throw notFound();
+        Object.assign(f, requestBody, { versions: f.versions + 1 });
+        return { data: { id: f.id, webViewLink: `https://drive.example/${f.id}` } };
+      },
+    },
+  };
+
+  const pathOf = (f: any): string => {
+    const parts = [f.name];
+    let p = f.parents?.[0];
+    while (p && p !== 'root') { const parent = files.get(p); if (!parent) break; parts.unshift(parent.name); p = parent.parents?.[0]; }
+    return parts.join('/');
+  };
+
+  return {
+    apis: { calendar, drive } as any,
+    events, files,
+    uploaded: () => [...files.values()].filter((f) => f.mimeType !== 'application/vnd.google-apps.folder').map((f) => ({ ...f, path: pathOf(f) })),
+    folders: () => [...files.values()].filter((f) => f.mimeType === 'application/vnd.google-apps.folder').map(pathOf),
+    /** Simulate the person editing or deleting an event in the Google Calendar app. */
+    userEdits: (eventId: string, patch: any) => { events.set(eventId, { ...events.get(eventId), ...patch, updated: later() }); },
+    userDeletes: (eventId: string) => { const e = events.get(eventId); events.delete(eventId); userDeleted.push({ ...e, status: 'cancelled', updated: later() }); },
+    failNext: (e: any) => { failWith = e; },
+    clearFail: () => { failWith = null; },
+  };
+}

@@ -1,0 +1,206 @@
+import { Router } from 'express';
+import crypto from 'node:crypto';
+import { z } from 'zod';
+import { parseMessage, normaliseForHash, formatAddress } from '../services/parser/index.js';
+import { ImportBatch, Job, Income, IncomeSource, Invoice, Settings } from '../models/index.js';
+import { queueCalendarSync } from '../services/google/calendar.js';
+import { queueTravelDay } from '../services/travel/index.js';
+import { googleApis } from '../services/google/client.js';
+import { parseBody } from '../middleware/validate.js';
+import { userCtx } from '../utils/userCtx.js';
+import { escapeRegex } from '../services/crud.js';
+import { resolveClient, applyWorkArrangement, payerOf } from '../services/clients.js';
+import { jobIncomeDescription } from './resources.js';
+import { audit } from '../services/audit.js';
+import { conflict, badRequest } from '../utils/httpError.js';
+import { zDate, zOptTime, zOptMoney, zMoney, zOptId, zOptStr, zAddress } from '../utils/zod.js';
+import { minutesBetween } from '../utils/dates.js';
+
+/* eslint-disable @typescript-eslint/no-explicit-any */
+const r = Router();
+const hashOf = (text: string) => crypto.createHash('sha256').update(normaliseForHash(text)).digest('hex');
+
+async function findDuplicateJob(userId: string, j: { date?: string; startTime?: string; clientName?: string }) {
+  if (!j.date || !j.clientName) return null;
+  const q: any = { userId, date: j.date, clientName: new RegExp(`^${escapeRegex(j.clientName.trim())}$`, 'i'), status: { $ne: 'cancelled' } };
+  if (j.startTime) q.startTime = j.startTime;
+  const dup = await Job.findOne(q).select('_id').lean();
+  return dup ? String(dup._id) : null;
+}
+
+/** Step 1: analyse pasted text. Nothing is saved. */
+r.post('/parse', async (req, res) => {
+  const { text } = parseBody(z.object({ text: z.string().min(1, 'Paste a message first').max(10000, 'Message is too long') }), req.body);
+  const { today } = await userCtx(req);
+  const result = parseMessage(text, { today });
+  const userId = req.userId!;
+
+  for (const j of result.jobs) j.duplicateOfJobId = await findDuplicateJob(userId, j);
+
+  // Suggest matching expected income / invoices for payment messages
+  const paymentMatches: Record<string, { incomeId?: string; invoiceId?: string; label: string }[]> = {};
+  for (const p of result.payments) {
+    const matches: { incomeId?: string; invoiceId?: string; label: string }[] = [];
+    if (p.reference) {
+      const inv = await Invoice.findOne({ userId, number: new RegExp(`^${escapeRegex(p.reference)}$`, 'i') }).lean();
+      if (inv) matches.push({ invoiceId: String(inv._id), label: `Invoice ${inv.number} · ${inv.clientName} · $${inv.total}` });
+    }
+    const q: any = { userId, status: { $in: ['expected', 'pending'] }, amount: p.amount };
+    if (p.payer) q.clientName = new RegExp(escapeRegex(p.payer.split(' ')[0]), 'i');
+    const incomes = await Income.find(q).sort({ date: -1 }).limit(5).lean();
+    for (const i of incomes) matches.push({ incomeId: String(i._id), label: `${i.date} · ${i.clientName ?? i.description ?? 'Income'} · $${i.amount} (${i.status})` });
+    paymentMatches[p.tempId] = matches;
+  }
+
+  const hash = hashOf(text);
+  const previous = await ImportBatch.findOne({ userId, messageHash: hash }).sort({ createdAt: -1 }).lean();
+  const jobSources = await IncomeSource.find({ userId, archived: { $ne: true } }).sort({ isJobBased: -1, name: 1 }).lean();
+  res.json({
+    ...result,
+    messageHash: hash,
+    alreadyImported: previous ? { at: previous.createdAt, jobCount: previous.jobIds.length } : null,
+    suggestedIncomeSourceId: jobSources[0] ? String(jobSources[0]._id) : null,
+    suggestedWorkType: jobSources[0]?.workType ?? 'own',
+    suggestedContractorId: jobSources[0]?.contractorId ? String(jobSources[0].contractorId) : null,
+    paymentMatches,
+  });
+});
+
+const commitJob = z.object({
+  clientName: z.string().trim().min(1, 'Client name is required').max(120),
+  date: zDate,
+  startTime: zOptTime,
+  endTime: zOptTime,
+  amount: zOptMoney,
+  hoursWorked: z.coerce.number().min(0).max(24).optional().nullable(),
+  address: zAddress,
+  description: zOptStr(2000),
+  tasks: z.array(z.string().max(300)).max(50).optional(),
+  rooms: z.coerce.number().int().min(0).max(100).optional().nullable(),
+  bathrooms: z.coerce.number().int().min(0).max(100).optional().nullable(),
+  specialInstructions: zOptStr(2000),
+  meetingPoint: zOptStr(300),
+  sourceText: zOptStr(5000),
+  incomeSourceId: zOptId,
+  workType: z.enum(['own', 'subcontract']).optional(),
+  contractorId: zOptId,
+  contractorName: zOptStr(120),
+});
+const commitPayment = z.object({
+  amount: zMoney,
+  date: zDate,
+  payer: zOptStr(120),
+  reference: zOptStr(60),
+  description: zOptStr(500),
+  incomeSourceId: zOptId,
+  matchIncomeId: zOptId,
+  paymentMethod: zOptStr(60),
+});
+
+/** Step 2: create records from the reviewed (and possibly edited) data. */
+r.post('/commit', async (req, res) => {
+  const body = parseBody(
+    z.object({
+      sourceMessage: z.string().max(10000).default(''),
+      incomeSourceId: zOptId,
+      workType: z.enum(['own', 'subcontract']).optional(),
+      contractorId: zOptId,
+      contractorName: zOptStr(120),
+      createIncome: z.boolean().default(true),
+      /** false = keep these jobs out of Google Calendar */
+      syncCalendar: z.boolean().default(true),
+      allowDuplicates: z.boolean().default(false),
+      jobs: z.array(commitJob).max(100).default([]),
+      payments: z.array(commitPayment).max(100).default([]),
+    }),
+    req.body,
+  );
+  const userId = req.userId!;
+  if (!body.jobs.length && !body.payments.length) throw badRequest('Nothing to import');
+  if (body.incomeSourceId && !(await IncomeSource.exists({ _id: body.incomeSourceId, userId }))) throw badRequest('Unknown income source');
+
+  const hash = body.sourceMessage ? hashOf(body.sourceMessage) : undefined;
+  if (!body.allowDuplicates) {
+    if (hash && (await ImportBatch.exists({ userId, messageHash: hash }))) throw conflict('This message has already been imported. Tick "import anyway" to import it again.');
+    const dups: string[] = [];
+    for (const j of body.jobs) if (await findDuplicateJob(userId, j)) dups.push(`${j.clientName} on ${j.date}${j.startTime ? ' at ' + j.startTime : ''}`);
+    if (dups.length) throw conflict(`Possible duplicate jobs already exist: ${dups.join('; ')}`, { duplicates: dups });
+  }
+
+  const createdJobs: any[] = [], createdIncome: any[] = [], updatedIncome: any[] = [];
+  try {
+    for (const j of body.jobs) {
+      const incomeSourceId = j.incomeSourceId ?? body.incomeSourceId ?? null;
+      const address = j.address ? { ...j.address, formatted: j.address.formatted || formatAddress(j.address) } : undefined;
+      const data: any = {
+        ...j, incomeSourceId, address, sourceMessage: body.sourceMessage?.slice(0, 10000),
+        hoursWorked: j.hoursWorked ?? ((minutesBetween(j.startTime, j.endTime) ?? 0) / 60 || undefined),
+        status: 'scheduled', title: j.description ? undefined : undefined,
+      };
+      delete data.sourceText;
+      data.workType = j.workType ?? body.workType;
+      data.contractorId = j.contractorId ?? body.contractorId ?? null;
+      data.contractorName = j.contractorName ?? body.contractorName;
+      if (data.workType === undefined) delete data.workType; // inherit from income source
+      await resolveClient(userId, data, { create: true, address, incomeSourceId });
+      await applyWorkArrangement(userId, data);
+      const job = await Job.create({ ...data, userId, ...(body.syncCalendar ? {} : { sync: { calendarOptOut: true } }) });
+      createdJobs.push(job);
+      await audit(userId, 'Job', job._id, 'create', undefined, job.toJSON(), 'Paste & Import');
+      if (body.createIncome && job.amount && job.amount > 0) {
+        const inc = await Income.create({
+          userId, date: job.date, amount: job.amount, incomeSourceId, ...payerOf(job),
+          description: jobIncomeDescription(job), hoursWorked: job.hoursWorked, status: 'expected', jobId: job._id,
+        });
+        createdIncome.push(inc);
+        await audit(userId, 'Income', inc._id, 'create', undefined, inc.toJSON(), 'Paste & Import');
+      }
+    }
+    for (const p of body.payments) {
+      if (p.matchIncomeId) {
+        const inc = await Income.findOne({ _id: p.matchIncomeId, userId });
+        if (!inc) throw badRequest('Matched income record not found');
+        const prev = inc.toJSON();
+        inc.set({ status: 'paid', paidDate: p.date, paymentMethod: p.paymentMethod ?? inc.paymentMethod });
+        await inc.save();
+        updatedIncome.push(inc);
+        await audit(userId, 'Income', inc._id, 'update', prev, inc.toJSON(), 'Payment message import');
+      } else {
+        const data: any = { date: p.date, amount: p.amount, clientName: p.payer, description: p.description || `Payment${p.payer ? ' from ' + p.payer : ''}`, status: 'paid', paidDate: p.date, incomeSourceId: p.incomeSourceId ?? body.incomeSourceId ?? null, invoiceNumber: p.reference, paymentMethod: p.paymentMethod ?? 'Bank transfer' };
+        await resolveClient(userId, data, { create: false });
+        const inc = await Income.create({ ...data, userId });
+        createdIncome.push(inc);
+        await audit(userId, 'Income', inc._id, 'create', undefined, inc.toJSON(), 'Payment message import');
+      }
+    }
+  } catch (err) {
+    // Roll back partial imports so the user can retry cleanly
+    await Income.deleteMany({ _id: { $in: createdIncome.map((x) => x._id) } });
+    await Job.deleteMany({ _id: { $in: createdJobs.map((x) => x._id) } });
+    throw err;
+  }
+
+  const batch = hash
+    ? await ImportBatch.create({ userId, messageHash: hash, sourceMessage: body.sourceMessage, kind: body.jobs.length && body.payments.length ? 'mixed' : body.jobs.length ? 'schedule' : 'payment', jobIds: createdJobs.map((j) => j._id), incomeIds: createdIncome.map((i) => i._id) })
+    : null;
+  if (batch) await Job.updateMany({ _id: { $in: createdJobs.map((j) => j._id) } }, { importBatchId: batch._id });
+  for (const j of createdJobs) queueCalendarSync(userId, 'job', j._id);
+  queueTravelDay(userId, ...createdJobs.map((j) => j.date));
+  const cal = (await Settings.findOne({ userId }).lean())?.integrations?.googleCalendar;
+  const calendarOn = Boolean(body.syncCalendar && cal?.enabled && cal.syncTypes?.includes('job') && (await googleApis(userId)));
+
+  res.status(201).json({
+    jobs: createdJobs.map((j) => j.toJSON()),
+    incomeCreated: createdIncome.length,
+    incomeUpdated: updatedIncome.length,
+    calendarSync: calendarOn ? 'queued' : 'off',
+    batchId: batch ? String(batch._id) : null,
+  });
+});
+
+r.get('/history', async (req, res) => {
+  const items = await ImportBatch.find({ userId: req.userId }).sort({ createdAt: -1 }).limit(50).lean();
+  res.json({ items: items.map((b) => ({ id: String(b._id), createdAt: b.createdAt, kind: b.kind, jobCount: b.jobIds.length, incomeCount: b.incomeIds.length, preview: b.sourceMessage?.slice(0, 160) })) });
+});
+
+export default r;

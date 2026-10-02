@@ -1,0 +1,45 @@
+import { Schema, model } from 'mongoose';
+import { baseOptions, ownerField, addressSchema, dateReq, dateOpt, timeField, moneyReq, moneyOpt, ref, externalSyncSchema } from './_common.js';
+
+export const JOB_STATUSES = ['scheduled', 'in_progress', 'completed', 'cancelled'] as const;
+export const WORK_TYPES = ['own', 'subcontract'] as const;
+
+const jobSchema = new Schema(
+  {
+    userId: ownerField,
+    title: { type: String, trim: true, maxlength: 200 },
+    clientId: ref('Client'),
+    clientName: { type: String, trim: true, maxlength: 120 }, // denormalised display name
+    incomeSourceId: ref('IncomeSource'),
+    /** own = you are the business and invoice the client; subcontract = you work under a contractor and invoice them */
+    workType: { type: String, enum: WORK_TYPES, default: 'own' },
+    contractorId: ref('Client'),
+    contractorName: { type: String, trim: true, maxlength: 120 },
+    date: dateReq,
+    startTime: timeField,
+    endTime: timeField,
+    amount: moneyOpt,
+    hoursWorked: { type: Number, min: 0, max: 24 },
+    address: addressSchema,
+    meetingPoint: { type: String, maxlength: 300 },
+    description: { type: String, maxlength: 2000 },
+    tasks: { type: [String], default: [] },
+    rooms: { type: Number, min: 0 },
+    bathrooms: { type: Number, min: 0 },
+    specialInstructions: { type: String, maxlength: 2000 },
+    status: { type: String, enum: JOB_STATUSES, default: 'scheduled' },
+    notes: { type: String, maxlength: 2000 },
+    invoiceId: ref('Invoice'),
+    importBatchId: ref('ImportBatch'),
+    sourceMessage: { type: String, maxlength: 10000 },
+    distanceKm: { type: Number, min: 0 },
+    travelMinutes: { type: Number, min: 0 },
+    sync: externalSyncSchema,
+  },
+  baseOptions,
+);
+jobSchema.index({ userId: 1, date: 1 });
+jobSchema.index({ userId: 1, contractorId: 1, date: 1 });
+jobSchema.index({ userId: 1, clientName: 'text', description: 'text', title: 'text' });
+
+export const Job = model('Job', jobSchema);

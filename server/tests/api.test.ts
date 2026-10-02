@@ -1,0 +1,307 @@
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { MongoMemoryServer } from 'mongodb-memory-server';
+import mongoose from 'mongoose';
+import request from 'supertest';
+import type { Express } from 'express';
+
+let mongo: MongoMemoryServer;
+let app: Express;
+const TODAY = '2026-10-01';
+const SAMPLE = `Hi SUSHANT
+Your schedule for Friday 2 OCT.
+Meet at Goodwood Road McDonald's at 8:45am.
+Sonia 8:45am ($25)
+25 Angus Street
+Goodwood, SA, Australia
+Andrew Dana - 10am ($30)
+2 Chessington Avenue
+Frewville, SA, Australia
+Bron B - 11:30am ($30)
+25 Clifton St Hawthorn 5062
+Kitchen, 2 bathrooms, 3 rooms.
+Dusting and wipedown surfaces, vacuum and mop floor.
+Change the bed in master bedroom.`;
+
+beforeAll(async () => {
+  mongo = await MongoMemoryServer.create();
+  process.env.MONGODB_URI = mongo.getUri();
+  process.env.JWT_SECRET = 'test-secret-test-secret-test-secret';
+  process.env.NODE_ENV = 'test';
+  process.env.UPLOAD_DIR = './tmp-test-uploads';
+  await mongoose.connect(mongo.getUri());
+  const { createApp } = await import('../src/app.js');
+  app = createApp();
+});
+
+afterAll(async () => {
+  await mongoose.disconnect();
+  await mongo.stop();
+  const fs = await import('node:fs/promises');
+  await fs.rm('./tmp-test-uploads', { recursive: true, force: true });
+});
+
+describe('API end-to-end', () => {
+  const agent = () => request.agent(app);
+  let a: ReturnType<typeof agent>;
+  let cleaningId: string;
+
+  it('registers and authenticates', async () => {
+    a = agent();
+    const r = await a.post('/api/auth/register').send({ name: 'Sushant', email: 'S@example.com', password: 'password123' });
+    expect(r.status).toBe(201);
+    expect(r.body.user.passwordHash).toBeUndefined();
+    const me = await a.get('/api/auth/me');
+    expect(me.body.user.email).toBe('s@example.com');
+    const unauth = await request(app).get('/api/jobs');
+    expect(unauth.status).toBe(401);
+    const sources = await a.get('/api/income-sources');
+    cleaningId = sources.body.items.find((s: { name: string }) => s.name === 'Cleaning').id;
+    expect(cleaningId).toBeTruthy();
+  });
+
+  it('parses without saving, then imports', async () => {
+    const p = await a.post(`/api/import/parse?today=${TODAY}`).send({ text: SAMPLE });
+    expect(p.status).toBe(200);
+    expect(p.body.summary).toMatchObject({ jobCount: 3, totalAmount: 85 });
+    expect((await a.get('/api/jobs')).body.total).toBe(0);
+
+    const c = await a.post('/api/import/commit').send({ sourceMessage: SAMPLE, incomeSourceId: cleaningId, jobs: p.body.jobs });
+    expect(c.status).toBe(201);
+    expect(c.body.jobs).toHaveLength(3);
+    expect(c.body.incomeCreated).toBe(3);
+
+    const again = await a.post('/api/import/commit').send({ sourceMessage: SAMPLE, incomeSourceId: cleaningId, jobs: p.body.jobs });
+    expect(again.status).toBe(409);
+
+    const p2 = await a.post(`/api/import/parse?today=${TODAY}`).send({ text: SAMPLE });
+    expect(p2.body.alreadyImported).toBeTruthy();
+    expect(p2.body.jobs[0].duplicateOfJobId).toBeTruthy();
+
+    const clients = await a.get('/api/clients');
+    expect(clients.body.total).toBe(3);
+  });
+
+  it('syncs linked income when a job changes, and invoices completed jobs', async () => {
+    const jobs = (await a.get('/api/jobs')).body.items;
+    const sonia = jobs.find((j: { clientName: string }) => j.clientName === 'Sonia');
+    await a.patch(`/api/jobs/${sonia.id}`).send({ amount: 28 }).expect(200);
+    const inc = (await a.get(`/api/income?jobId=${sonia.id}`)).body.items[0];
+    expect(inc.amount).toBe(28);
+
+    const done = await a.post('/api/jobs/complete-past?today=2026-10-05').send({});
+    expect(done.body.updated).toBe(3);
+
+    const cand = await a.get(`/api/invoices/candidates?from=2026-10-01&to=2026-10-31&incomeSourceId=${cleaningId}`);
+    expect(cand.body.items).toHaveLength(3);
+    expect(cand.body.total).toBe(88);
+
+    const items = cand.body.items.map((j: { id: string; date: string; clientName: string; amount: number }) => ({ jobId: j.id, date: j.date, description: `Cleaning – ${j.clientName}`, quantity: 1, rate: j.amount }));
+    const inv = await a.post('/api/invoices').send({ issueDate: '2026-10-05', dueDate: '2026-10-12', clientName: 'Agency', incomeSourceId: cleaningId, items });
+    expect(inv.status).toBe(201);
+    expect(inv.body.number).toBe('INV-2026-0001');
+    expect(inv.body.total).toBe(88);
+
+    const dupInv = await a.post('/api/invoices').send({ issueDate: '2026-10-05', dueDate: '2026-10-12', clientName: 'Agency', items });
+    expect(dupInv.status).toBe(409);
+
+    const pdf = await a.get(`/api/invoices/${inv.body.id}/pdf`);
+    expect(pdf.headers['content-type']).toBe('application/pdf');
+    expect(pdf.body.length).toBeGreaterThan(1000);
+
+    await a.post(`/api/invoices/${inv.body.id}/status`).send({ status: 'sent' }).expect(200);
+    const overdue = await a.get('/api/invoices?status=overdue&today=2026-10-20');
+    expect(overdue.body.items).toHaveLength(1);
+
+    const paid = await a.post(`/api/invoices/${inv.body.id}/status?today=2026-10-20`).send({ status: 'paid', updateIncome: true });
+    expect(paid.body.incomeUpdated).toBe(3);
+    const paidIncome = await a.get('/api/income?status=paid');
+    expect(paidIncome.body.total).toBe(3);
+
+    const blocked = await a.delete(`/api/jobs/${sonia.id}`);
+    expect(blocked.status).toBe(409);
+  });
+
+  it('bills, budget, dashboard and required income', async () => {
+    const cats = (await a.get('/api/categories')).body.items;
+    const insurance = cats.find((c: { name: string }) => c.name === 'Insurance');
+    const bill = await a.post('/api/bills').send({ name: 'Car insurance', amount: 120, frequency: 'monthly', dueDate: '2026-09-15', categoryId: insurance.id });
+    expect(bill.status).toBe(201);
+    await a.post('/api/bills').send({ name: 'Phone', amount: 30, frequency: 'fortnightly', dueDate: '2026-10-03' }).expect(201);
+    await a.put('/api/budget').send({ expectedVariableExpenses: 700, monthlySavingsTarget: 500, categoryBudgets: [{ categoryId: insurance.id, amount: 100 }] }).expect(200);
+
+    const summary = (await a.get('/api/bills/summary')).body;
+    expect(summary.monthlyBills).toBe(185); // 120 + 30*26/12
+    expect(summary.minimumMonthlyIncome).toBe(1385);
+
+    const pay = await a.post(`/api/bills/${bill.body.id}/pay`).send({ occurrence: '2026-10-15' });
+    expect(pay.status).toBe(201);
+    expect((await a.post(`/api/bills/${bill.body.id}/pay`).send({ occurrence: '2026-10-15' })).status).toBe(409);
+
+    await a.post('/api/expenses').send({ date: '2026-10-02', amount: 23.5, categoryId: cats.find((c: { name: string }) => c.name === 'Fuel').id, merchant: 'Shell' }).expect(201);
+    const bad = await a.post('/api/expenses').send({ date: '2026-13-40', amount: -5 });
+    expect(bad.status).toBe(400);
+
+    const d = (await a.get('/api/dashboard?from=2026-10-01&to=2026-10-31&today=2026-10-20')).body;
+    expect(d.money.incomeReceived).toBe(88);
+    expect(d.money.expenses).toBe(143.5);
+    expect(d.work.jobsThisMonth).toBe(3);
+    expect(d.work.avgPerJob).toBeCloseTo(29.33, 2);
+    expect(d.required.minimumMonthlyIncome).toBe(1385);
+    expect(d.charts.expenseByCategory.length).toBe(2);
+
+    const alerts = (await a.get('/api/alerts?today=2026-10-20')).body.items;
+    expect(alerts.some((x: { id: string }) => x.id.startsWith('budget-'))).toBe(true);
+    const insights = (await a.get('/api/insights?today=2026-10-20')).body.items;
+    expect(insights.find((i: { id: string }) => i.id === 'jobs-month').text).toContain('3 jobs');
+  });
+
+  it('search, calendar, reports, tasks, documents', async () => {
+    const s = (await a.get('/api/search?q=andrew')).body.results;
+    expect(s.some((r: { type: string }) => r.type === 'job')).toBe(true);
+    expect(s.some((r: { type: string }) => r.type === 'income')).toBe(true);
+    expect(s.some((r: { type: string }) => r.type === 'client')).toBe(true);
+
+    await a.post('/api/tasks').send({ title: 'Study', date: '2026-10-01', startTime: '18:00', category: 'study', recurrence: { frequency: 'daily' } }).expect(201);
+    const cal = (await a.get('/api/calendar?from=2026-10-01&to=2026-10-07')).body.items;
+    expect(cal.filter((e: { type: string }) => e.type === 'task')).toHaveLength(7);
+    expect(cal.filter((e: { type: string }) => e.type === 'job')).toHaveLength(3);
+
+    const rep = (await a.get('/api/reports/work?from=2026-10-01&to=2026-10-31&groupBy=client')).body;
+    expect(rep.rows).toHaveLength(3);
+    const csv = await a.get('/api/reports/income?from=2026-10-01&to=2026-10-31&groupBy=month&format=csv');
+    expect(csv.headers['content-type']).toContain('text/csv');
+    expect(csv.text).toContain('Month,Records,Received,Expected,Total,Hours');
+
+    const up = await a.post('/api/documents').field('meta', JSON.stringify({ kind: 'receipt', title: 'Fuel receipt' })).attach('file', Buffer.from('%PDF-1.4 test'), { filename: 'r.pdf', contentType: 'application/pdf' });
+    expect(up.status).toBe(201);
+    const exp = await a.post(`/api/documents/${up.body.id}/create-expense`).send({ date: '2026-10-03', amount: 50, merchant: 'BP' });
+    expect(exp.status).toBe(201);
+    const file = await a.get(`/api/documents/${up.body.id}/file`);
+    expect(file.status).toBe(200);
+  });
+
+  it('isolates users', async () => {
+    const b = request.agent(app);
+    await b.post('/api/auth/register').send({ name: 'Other', email: 'other@example.com', password: 'password123' }).expect(201);
+    expect((await b.get('/api/jobs')).body.total).toBe(0);
+    const jobs = (await a.get('/api/jobs')).body.items;
+    expect((await b.get(`/api/jobs/${jobs[0].id}`)).status).toBe(404);
+    expect((await b.patch(`/api/jobs/${jobs[0].id}`).send({ amount: 1 })).status).toBe(404);
+    const cats = (await a.get('/api/categories')).body.items;
+    expect((await b.post('/api/expenses').send({ date: '2026-10-01', amount: 5, categoryId: cats[0].id })).status).toBe(400);
+  });
+
+  it('subcontract work: income and invoices go to the contractor', async () => {
+    const sources = (await a.get('/api/income-sources')).body.items;
+    const freelance = sources.find((s: { name: string }) => s.name === 'Freelance');
+    const msg = `Your schedule for Monday 12 Oct\nKim Lee 9am ($50)\n3 Main Rd Norwood SA 5067`;
+    const p = await a.post('/api/import/parse?today=2026-10-01').send({ text: msg });
+    expect(p.body.jobs).toHaveLength(1);
+    const c = await a.post('/api/import/commit').send({ sourceMessage: msg, incomeSourceId: freelance.id, workType: 'subcontract', contractorName: 'Sparkle Co', jobs: p.body.jobs });
+    expect(c.status).toBe(201);
+    const job = c.body.jobs[0];
+    expect(job.workType).toBe('subcontract');
+    expect(job.contractorName).toBe('Sparkle Co');
+    const contractors = (await a.get('/api/clients?type=contractor')).body.items;
+    expect(contractors.map((x: { name: string }) => x.name)).toContain('Sparkle Co');
+    const inc = (await a.get(`/api/income?jobId=${job.id}`)).body.items[0];
+    expect(inc.clientName).toBe('Sparkle Co');
+    expect(inc.description).toContain('Kim Lee');
+
+    // Income source default: jobs created from this source inherit the contractor
+    await a.patch(`/api/income-sources/${freelance.id}`).send({ workType: 'subcontract', contractorId: job.contractorId }).expect(200);
+    const j2 = await a.post('/api/jobs').send({ date: '2026-10-13', clientName: 'Pat', amount: 40, incomeSourceId: freelance.id });
+    expect(j2.body.workType).toBe('subcontract');
+    expect(j2.body.contractorName).toBe('Sparkle Co');
+    // switching a job to own business moves its income to the client
+    await a.patch(`/api/jobs/${j2.body.id}`).send({ workType: 'own' }).expect(200);
+    expect((await a.get(`/api/income?jobId=${j2.body.id}`)).body.items[0].clientName).toBe('Pat');
+
+    const sub = await a.get(`/api/invoices/candidates?from=2026-10-01&to=2026-10-31&workType=subcontract&contractorId=${job.contractorId}&includeScheduled=true`);
+    expect(sub.body.items.map((x: { id: string }) => x.id)).toEqual([job.id]);
+    const own = await a.get('/api/invoices/candidates?from=2026-10-01&to=2026-10-31&workType=own&includeScheduled=true');
+    expect(own.body.items.some((x: { id: string }) => x.id === job.id)).toBe(false);
+  });
+
+  it('invoice templates', async () => {
+    const t = await a.post('/api/invoice-templates').send({ name: 'Weekly agency', billToType: 'contractor', clientName: 'Sparkle Co', items: [{ description: 'Cleaning', quantity: 1, rate: 100 }], paymentTermsDays: 14 });
+    expect(t.status).toBe(201);
+    expect((await a.post('/api/invoice-templates').send({ name: 'Weekly agency' })).status).toBe(409);
+    const list = (await a.get('/api/invoice-templates')).body.items;
+    expect(list).toHaveLength(1);
+    await a.delete(`/api/invoice-templates/${t.body.id}`).expect(200);
+  });
+
+  it('reads a receipt photo locally and creates the expense on upload', async () => {
+    const sharp = (await import('sharp')).default;
+    const lines = ['BP MODBURY', 'TAX INVOICE', '28/09/2026 18:10', 'DIESEL           48.20', 'TOTAL           $48.20', 'GST INCLUDED      4.38', 'EFTPOS           48.20'];
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="640" height="${lines.length * 42 + 50}"><rect width="100%" height="100%" fill="#fff"/>${lines.map((l, i) => `<text x="30" y="${50 + i * 42}" font-family="DejaVu Sans Mono, monospace" font-size="26">${l}</text>`).join('')}</svg>`;
+    const jpg = await sharp(Buffer.from(svg)).jpeg().toBuffer();
+    const scan = await a.post('/api/documents/scan?today=2026-10-01').attach('file', jpg, { filename: 'bp.jpg', contentType: 'image/jpeg' });
+    expect(scan.status).toBe(200);
+    expect(scan.body).toMatchObject({ merchant: 'BP', categoryHint: 'Fuel', total: 48.2, gst: 4.38, date: '2026-09-28', paymentMethod: 'Card', source: 'ocr' });
+    // Nothing saved by scanning
+    expect((await a.get('/api/documents?q=bp.jpg')).body.items).toHaveLength(0);
+
+    const cats = (await a.get('/api/categories')).body.items;
+    const fuel = cats.find((c: { name: string }) => c.name === 'Fuel');
+    const up = await a.post('/api/documents').field('meta', JSON.stringify({ kind: 'receipt', title: 'BP', createExpense: { date: '2026-09-28', amount: 48.2, merchant: 'BP', categoryId: fuel.id, paymentMethod: 'Card', gst: 4.38 } })).attach('file', jpg, { filename: 'bp.jpg', contentType: 'image/jpeg' });
+    expect(up.status).toBe(201);
+    expect(up.body.expense).toMatchObject({ amount: 48.2, merchant: 'BP', receiptId: up.body.id });
+    expect(up.body.expenseId).toBe(up.body.expense.id);
+    const again = await a.post(`/api/documents/${up.body.id}/scan?today=2026-10-01`);
+    expect(again.body.total).toBe(48.2);
+    const bad = await a.post('/api/documents/scan').attach('file', Buffer.from('x'), { filename: 'x.heic', contentType: 'image/heic' });
+    expect(bad.status).toBe(400);
+  });
+
+  it('reads iPhone HEIC photos and scanned PDFs', async () => {
+    const fs = await import('node:fs');
+    const heic = fs.readFileSync('tests/fixtures/receipt.heic');
+    const scan = await a.post('/api/documents/scan?today=2026-10-01').attach('file', heic, { filename: 'IMG_0042.HEIC', contentType: 'image/heic' });
+    expect(scan.body).toMatchObject({ merchant: 'Bunnings', total: 25.4, gst: 2.31, date: '2026-09-27', source: 'ocr' });
+    // Stored as JPEG so any browser can display it (also when the browser sends a generic type)
+    const up = await a.post('/api/documents').field('meta', JSON.stringify({ kind: 'receipt', title: 'Bunnings' })).attach('file', heic, { filename: 'IMG_0042.HEIC', contentType: 'application/octet-stream' });
+    expect(up.status).toBe(201);
+    expect(up.body).toMatchObject({ mimeType: 'image/jpeg', originalName: 'IMG_0042.jpg' });
+    const file = await a.get(`/api/documents/${up.body.id}/file`);
+    expect(file.headers['content-type']).toBe('image/jpeg');
+
+    const pdf = await a.post('/api/documents/scan?today=2026-10-01').attach('file', fs.readFileSync('tests/fixtures/scanned.pdf'), { filename: 'scan.pdf', contentType: 'application/pdf' });
+    expect(pdf.body).toMatchObject({ merchant: 'Bunnings', total: 25.4, date: '2026-09-27', source: 'pdf-scan' });
+  });
+
+  it('repeating income creates the next entries by itself', async () => {
+    const root = await a.post('/api/income?today=2026-10-01').send({ date: '2026-09-17', amount: 800, description: 'Fortnightly pay', status: 'paid', recurring: { enabled: true, frequency: 'fortnightly' } });
+    expect(root.status).toBe(201);
+    let kids = (await a.get(`/api/income?recurringParentId=${root.body.id}`)).body.items;
+    // 1 Oct, 15 Oct, 29 Oct (within ~5 weeks of today); all expected, never auto-paid
+    expect(kids.map((k: { date: string }) => k.date).sort()).toEqual(['2026-10-01', '2026-10-15', '2026-10-29']);
+    expect(kids.every((k: { status: string; amount: number }) => k.status === 'expected' && k.amount === 800)).toBe(true);
+
+    // A deleted entry is not re-created; time moving on adds only new ones
+    const oct15 = kids.find((k: { date: string }) => k.date === '2026-10-15');
+    await a.delete(`/api/income/${oct15.id}`).expect(200);
+    await a.get('/api/dashboard?today=2026-10-20').expect(200);
+    kids = (await a.get(`/api/income?recurringParentId=${root.body.id}`)).body.items;
+    expect(kids.map((k: { date: string }) => k.date).sort()).toEqual(['2026-10-01', '2026-10-29', '2026-11-12']);
+
+    // Changing the amount updates future expected entries only
+    await a.patch(`/api/income/${root.body.id}?today=2026-10-20`).send({ amount: 850 }).expect(200);
+    kids = (await a.get(`/api/income?recurringParentId=${root.body.id}`)).body.items;
+    expect(kids.find((k: { date: string }) => k.date === '2026-10-01').amount).toBe(800);
+    expect(kids.find((k: { date: string }) => k.date === '2026-10-29').amount).toBe(850);
+
+    const stop = await a.post(`/api/income/${kids[0].id}/stop-recurring?today=2026-10-20`).send({});
+    expect(stop.body.removed).toBe(2);
+    await a.get('/api/dashboard?today=2026-12-20').expect(200);
+    expect((await a.get(`/api/income?recurringParentId=${root.body.id}`)).body.total).toBe(1);
+  });
+
+  it('password reset flow', async () => {
+    const r = await request(app).post('/api/auth/forgot-password').send({ email: 'nobody@example.com' });
+    expect(r.status).toBe(200);
+    const bad = await request(app).post('/api/auth/reset-password').send({ token: 'x'.repeat(64), password: 'newpassword1' });
+    expect(bad.status).toBe(400);
+  });
+});

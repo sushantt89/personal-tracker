@@ -123,6 +123,31 @@ export async function uploadDocument(userId: string, docId: unknown) {
   }
 }
 
+/**
+ * Reads a document's file. Hosts with temporary disks (e.g. Render's free plan) wipe uploaded files on every restart,
+ * so when the local copy is gone we fetch the copy saved in Google Drive and put it back.
+ */
+export async function readDocumentFile(userId: string, doc: { storageKey: string; sync?: { googleDriveFileId?: string | null } | null }): Promise<Buffer> {
+  try {
+    return await storage.read(doc.storageKey);
+  } catch (e: any) {
+    if (e?.code !== 'ENOENT') throw e;
+  }
+  const fileId = doc.sync?.googleDriveFileId;
+  const apis = fileId ? await googleApis(userId) : null;
+  if (!fileId || !apis) throw Object.assign(new Error('This file is no longer stored on the server and has no copy in Google Drive.'), { code: 'FILE_GONE' });
+  try {
+    const r = await apis.drive.files.get({ fileId, alt: 'media' }, { responseType: 'arraybuffer' });
+    const data = Buffer.from(r.data as unknown as ArrayBuffer);
+    await storage.restore(doc.storageKey, data).catch(() => undefined);
+    return data;
+  } catch (e) {
+    if (isNotFound(e)) throw Object.assign(new Error('This file is no longer stored on the server, and its copy in Google Drive was deleted.'), { code: 'FILE_GONE' });
+    await recordGoogleError(userId, e, 'Reading a file from Google Drive');
+    throw e;
+  }
+}
+
 /** Creates Personal Finance/{Invoices/<year>/<months>, Receipts/<year>, Financial Documents}. */
 export async function setupDriveFolders(userId: string) {
   const apis = await googleApis(userId);

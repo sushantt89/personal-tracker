@@ -31,9 +31,10 @@ export function createFakeGoogle() {
     folder: q.includes("mimeType='application/vnd.google-apps.folder'"),
     sha: /value='([a-f0-9]+)'/.exec(q)?.[1],
   });
+  const readAll = async (s: AsyncIterable<Buffer>) => { const parts: Buffer[] = []; for await (const c of s) parts.push(Buffer.from(c)); return Buffer.concat(parts); };
   const drive = {
     files: {
-      get: async ({ fileId }: any) => { maybeFail(); const f = files.get(fileId); if (!f) throw notFound(); return { data: { id: f.id, trashed: false } }; },
+      get: async ({ fileId, alt }: any) => { maybeFail(); const f = files.get(fileId); if (!f) throw notFound(); if (alt === 'media') { const b: Buffer = f.content ?? Buffer.alloc(0); return { data: b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength) }; } return { data: { id: f.id, trashed: false } }; },
       list: async ({ q }: any) => {
         maybeFail();
         const c = parse(q);
@@ -42,14 +43,14 @@ export function createFakeGoogle() {
       },
       create: async ({ requestBody, media }: any) => {
         maybeFail();
-        const f = { ...requestBody, id: id('file'), versions: media ? 1 : 0 };
+        const f = { ...requestBody, id: id('file'), versions: media ? 1 : 0, content: media ? await readAll(media.body) : undefined };
         files.set(f.id, f);
         return { data: { id: f.id, webViewLink: `https://drive.example/${f.id}` } };
       },
-      update: async ({ fileId, requestBody }: any) => {
+      update: async ({ fileId, requestBody, media }: any) => {
         maybeFail();
         const f = files.get(fileId); if (!f) throw notFound();
-        Object.assign(f, requestBody, { versions: f.versions + 1 });
+        Object.assign(f, requestBody, { versions: f.versions + 1 }, media ? { content: await readAll(media.body) } : {});
         return { data: { id: f.id, webViewLink: `https://drive.example/${f.id}` } };
       },
     },

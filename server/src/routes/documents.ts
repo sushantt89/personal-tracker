@@ -14,7 +14,7 @@ import { ocrService } from '../services/integrations/index.js';
 import { scanReceipt } from '../services/ocr/index.js';
 import { heicToJpeg, isHeic } from '../services/ocr/engine.js';
 import { userCtx } from '../utils/userCtx.js';
-import { queueDocumentUpload, uploadDocument } from '../services/google/drive.js';
+import { queueDocumentUpload, uploadDocument, readDocumentFile } from '../services/google/drive.js';
 import { googleApis } from '../services/google/client.js';
 import { zDate, zMoney, zOptId, zOptStr } from '../utils/zod.js';
 
@@ -60,7 +60,7 @@ r.post('/:id/scan', async (req, res) => {
   if (!doc) throw notFound('Document not found');
   const { today } = await userCtx(req);
   try {
-    res.json(await scanReceipt(await storage.read(doc.storageKey), doc.mimeType ?? '', today));
+    res.json(await scanReceipt(await readDocumentFile(req.userId!, doc), doc.mimeType ?? '', today));
   } catch (e) {
     throw badRequest((e as Error).message);
   }
@@ -110,7 +110,13 @@ r.post('/', (req, res, next) => upload.single('file')(req, res, (err) => (err ? 
 r.get('/:id/file', async (req, res) => {
   const doc = await DocumentModel.findOne({ _id: req.params.id, userId: req.userId }).select('+storageKey');
   if (!doc) throw notFound('Document not found');
-  const data = await storage.read(doc.storageKey);
+  let data: Buffer;
+  try {
+    data = await readDocumentFile(req.userId!, doc);
+  } catch (e) {
+    if ((e as { code?: string }).code === 'FILE_GONE') throw notFound((e as Error).message);
+    throw e;
+  }
   res.setHeader('Content-Type', doc.mimeType || 'application/octet-stream');
   res.setHeader('Content-Disposition', `${req.query.download === '1' ? 'attachment' : 'inline'}; filename="${(doc.originalName || 'file').replace(/[^\w.\- ]/g, '_')}"`);
   res.setHeader('Cache-Control', 'private, max-age=300');

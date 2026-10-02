@@ -20,7 +20,7 @@ export function signToken(userId: string, tokenVersion: number) {
 export function cookieOptions(): CookieOptions {
   return {
     httpOnly: true,
-    secure: isProd,
+    secure: env.COOKIE_SECURE ? env.COOKIE_SECURE === 'true' : isProd,
     sameSite: 'lax',
     maxAge: env.JWT_EXPIRES_DAYS * 86400 * 1000,
     path: '/',

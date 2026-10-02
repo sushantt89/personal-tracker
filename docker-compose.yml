@@ -1,0 +1,36 @@
+# Run the whole app (and a database) on your own computer with one command:
+#   docker compose up --build
+# then open http://localhost:4000
+#
+# Uses the settings in your .env file. MONGODB_URI is overridden below to use the
+# database container; delete that line to keep using MongoDB Atlas instead.
+services:
+  app:
+    build: .
+    ports:
+      - "4000:4000"
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: production
+      PORT: 4000
+      MONGODB_URI: mongodb://mongo:27017/personal-tracker
+      CLIENT_URL: http://localhost:4000
+      # Sign-in cookies normally require https in production; localhost is plain http
+      COOKIE_SECURE: "false"
+      UPLOAD_DIR: /data/uploads
+    volumes:
+      - uploads:/data/uploads
+    depends_on:
+      - mongo
+    restart: unless-stopped
+
+  mongo:
+    image: mongo:7
+    volumes:
+      - mongo-data:/data/db
+    restart: unless-stopped
+
+volumes:
+  uploads:
+  mongo-data:

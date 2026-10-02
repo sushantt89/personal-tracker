@@ -201,6 +201,21 @@ describe('Google integration (fake Google APIs)', () => {
     expect(fake.uploaded().some((f) => f.path === 'Personal Finance/Receipts/2026/fuel.pdf')).toBe(true);
     expect((await a().get(`/api/documents?q=Fuel`)).body.items[0].sync.googleDriveLink).toBeTruthy();
     expect(doc.status).toBe(201);
+
+    // The host wiped its disk (as free hosting does on restart): the file is served from the Drive copy and put back
+    const { DocumentModel } = await import('../src/models/index.js');
+    const { storage } = await import('../src/services/storage.js');
+    const stored = await DocumentModel.findById(doc.body.id).select('+storageKey');
+    await storage.remove(stored!.storageKey);
+    const file = await a().get(`/api/documents/${doc.body.id}/file`).buffer(true).parse((res, cb) => { const parts: Buffer[] = []; res.on('data', (c: Buffer) => parts.push(c)); res.on('end', () => cb(null, Buffer.concat(parts))); }).expect(200);
+    expect(file.body.toString()).toBe('%PDF-1.4 receipt');
+    expect((await storage.read(stored!.storageKey)).toString()).toBe('%PDF-1.4 receipt');
+
+    // No Drive copy either: a clear message instead of a crash
+    await storage.remove(stored!.storageKey);
+    await DocumentModel.updateOne({ _id: stored!._id }, { $unset: { 'sync.googleDriveFileId': 1 } });
+    const gone = await a().get(`/api/documents/${doc.body.id}/file`).expect(404);
+    expect(gone.body.error).toContain('no longer stored');
   });
 
   it('brings changes made in Google Calendar back into the app (two-way)', async () => {

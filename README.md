@@ -136,5 +136,7 @@ Password-reset emails print to the server console unless `SMTP_*` is set (a Gmai
 ## Phone, tablet and Home Screen
 
 The layout adapts to phones, tablets and computers, the app can be added to the Home Screen, and it has in-app notifications (bell, pop-ups, notifications page). See `docs/MOBILE.md` and `docs/NOTIFICATIONS.md`. To try it on a phone on the same Wi‑Fi: `npm run dev:phone`.
-#   p e r s o n a l - t r a c k e r  
- 
+
+## Going live (Render + Docker)
+
+The repository includes a `Dockerfile`, `docker-compose.yml` and a Render blueprint (`render.yaml`). Step-by-step guide, including what the free plan can't do: `docs/DEPLOY_RENDER.md`.

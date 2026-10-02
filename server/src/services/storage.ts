@@ -8,6 +8,8 @@ export interface StorageProvider {
   readonly name: 'local' | 'google_drive';
   save(userId: string, buffer: Buffer, originalName: string, folder: string): Promise<{ key: string }>;
   read(key: string): Promise<Buffer>;
+  /** Put a file back at a known key (used when a copy is recovered from Google Drive). */
+  restore(key: string, buffer: Buffer): Promise<void>;
   remove(key: string): Promise<void>;
 }
 
@@ -30,6 +32,11 @@ class LocalStorage implements StorageProvider {
   }
   async read(key: string) {
     return fs.readFile(this.resolve(key));
+  }
+  async restore(key: string, buffer: Buffer) {
+    const full = this.resolve(key);
+    await fs.mkdir(path.dirname(full), { recursive: true });
+    await fs.writeFile(full, buffer);
   }
   async remove(key: string) {
     await fs.rm(this.resolve(key), { force: true });

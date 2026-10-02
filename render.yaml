@@ -1,0 +1,25 @@
+# Render blueprint: New + → Blueprint → pick this repository. See docs/DEPLOY_RENDER.md.
+services:
+  - type: web
+    name: personal-tracker
+    runtime: docker
+    plan: free
+    region: singapore
+    healthCheckPath: /api/health
+    autoDeploy: true
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: MONGODB_URI        # your MongoDB Atlas connection string
+        sync: false
+      - key: JWT_SECRET
+        generateValue: true
+      - key: TOKEN_ENCRYPTION_KEY
+        generateValue: true
+      # Optional — Google Calendar & Drive (docs/GOOGLE_SETUP.md)
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: GOOGLE_CLIENT_SECRET
+        sync: false
+      - key: GOOGLE_REDIRECT_URI  # https://<your-app>.onrender.com/api/integrations/google/callback
+        sync: false

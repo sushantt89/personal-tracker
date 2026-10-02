@@ -6,7 +6,10 @@ const schema = z.object({
   MONGODB_URI: z.string().min(1, 'MONGODB_URI is required'),
   JWT_SECRET: z.string().min(16, 'JWT_SECRET must be at least 16 characters'),
   JWT_EXPIRES_DAYS: z.coerce.number().int().positive().default(7),
-  CLIENT_URL: z.string().default('http://localhost:5173'),
+  /** Public address of the app. On Render this is filled in automatically from RENDER_EXTERNAL_URL. */
+  CLIENT_URL: z.string().default(process.env.RENDER_EXTERNAL_URL || 'http://localhost:5173'),
+  /** Sign-in cookie only over https. Defaults to on in production; set to "false" to run the production build on plain http (e.g. Docker on localhost). */
+  COOKIE_SECURE: z.enum(['true', 'false']).optional(),
   UPLOAD_DIR: z.string().default('./uploads'),
   MAX_UPLOAD_MB: z.coerce.number().positive().default(10),
   SMTP_HOST: z.string().optional().default(''),

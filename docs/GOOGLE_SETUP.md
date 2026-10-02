@@ -12,6 +12,7 @@ This takes about 10 minutes and costs nothing. You do it once. After that, you c
 1. Go to **APIs & Services → Library**.
 2. Search **Google Calendar API** → **Enable**.
 3. Go back, search **Google Drive API** → **Enable**.
+4. Optional, for emails (password reset, daily summary): search **Gmail API** → **Enable**.
 
 ## 3. Set up the consent screen
 1. Go to **APIs & Services → OAuth consent screen** (in newer consoles: **Google Auth Platform → Branding / Audience / Data access**).
@@ -22,6 +23,7 @@ This takes about 10 minutes and costs nothing. You do it once. After that, you c
    - `.../auth/calendar.events` (see, edit, create and delete events)
    - `.../auth/drive.file` (only files created by this app)
    - `openid` and `.../auth/userinfo.email`
+   - `.../auth/gmail.send` (send email on your behalf — optional; the app can never read your mail)
 4. **Test users / Audience**: add your own Gmail address.
 5. **Important — avoid weekly sign-outs.** While the app is in *Testing*, Google expires its access after 7 days. For personal use, click **Publish app** (Audience → *In production*). You don't need Google verification for your own use. When you connect, Google shows *"Google hasn't verified this app"*: click **Advanced → Go to Personal Tracker (unsafe)**. That's expected, because you are the developer.
 
@@ -46,7 +48,7 @@ Restart the app: press `Ctrl+C`, then run `npm run dev`.
 
 ## 6. Connect in the app
 1. **Settings → Integrations → Connect Google**.
-2. Choose your account and **tick both boxes** (Calendar and Drive) on Google's screen.
+2. Choose your account and **tick every box** (Calendar, Drive and "Send email on your behalf") on Google's screen.
 3. You come back to the app with "Google connected".
 4. **Google Calendar**: switch on *Sync automatically*, choose what to sync, then **Sync now** to add existing upcoming items.
 5. **Google Drive**: switch on *Use Google Drive*, then **Create folders**. This makes:
@@ -75,3 +77,11 @@ Restart the app: press `Ctrl+C`, then run `npm run dev`.
 | *Google did not return offline access* | Remove the app at https://myaccount.google.com/permissions, then connect again. |
 
 If you change `JWT_SECRET` (or set `TOKEN_ENCRYPTION_KEY`), the stored Google token can no longer be read. Just click **Reconnect**.
+
+## Sending email from your Google account
+If you allow **Send email on your behalf** when connecting, the app sends its emails (password-reset links, the daily summary, test emails) from your own Gmail address through Google's web API. No SMTP settings or app password are needed, and it works on hosts that block mail ports, such as Render's free plan.
+
+- Needs the **Gmail API** enabled (step 2.4) and the `gmail.send` scope on the consent screen (step 3.3).
+- If you connected before this was added: Settings → Integrations → **Reconnect** and tick the new box.
+- The permission only allows sending. The app cannot read, search or delete your mail.
+- A password-reset email is sent through the Google connection of the account being reset, so it works while signed out. If that account has no Google connection and there are no SMTP settings, the link is printed in the server log instead.

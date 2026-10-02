@@ -37,7 +37,7 @@ Every later `git push` redeploys automatically.
 | Sleeps after 15 minutes without visitors | The first visit after a pause takes about a minute to wake up. |
 | No reminders while asleep | Phone notifications and the calendar check only run while the app is awake. Recurring income is still caught up whenever you open the app. |
 | Files are wiped on every restart or sleep | Uploaded receipts/documents are deleted from Render's disk. **Turn on Google Drive** (Settings → Integrations): each upload is copied to Drive, and the app fetches it back from Drive automatically when the local copy is gone. Without Drive, receipt images are lost (the expense records themselves are safe in the database). |
-| Email ports are blocked | The daily email summary can't be sent from the free plan. In-app and phone notifications are unaffected. |
+| Email ports are blocked | SMTP (e.g. a Gmail app password) doesn't work on the free plan. Connect Google with "Send email on your behalf" instead — that goes through Google's web API and is not blocked. The daily email is still only sent if the app is awake at that hour. |
 | 750 free hours a month | Enough for one always-available service. |
 
 Render's paid **Starter** plan removes all of these: no sleeping, email works, and you can attach a disk — set `UPLOAD_DIR` to the disk's mount path (e.g. `/data/uploads`). To switch, change `plan: free` to `plan: starter` in `render.yaml`. Check Render's pricing page for the current cost.

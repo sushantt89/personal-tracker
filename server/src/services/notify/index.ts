@@ -2,7 +2,7 @@ import webpush from 'web-push';
 import { env } from '../../config/env.js';
 import { AppConfig, NotificationLog, PushSubscription, Settings, User } from '../../models/index.js';
 import { computeAlerts, alertKey, type Alert } from '../alerts.js';
-import { emailService } from '../email.js';
+import { emailRoute, sendUserEmail } from '../email.js';
 import { todayIn } from '../../utils/dates.js';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -28,16 +28,17 @@ export async function getVapid() {
 
 // Swappable senders so tests never touch the network
 type PushSender = (sub: { endpoint: string; keys: { p256dh: string; auth: string } }, payload: string) => Promise<void>;
-type EmailSender = (to: string, subject: string, text: string, html?: string) => Promise<void>;
+type EmailSender = (to: string, subject: string, text: string, html?: string, userId?: string) => Promise<unknown>;
+const defaultEmailSender: EmailSender = (to, subject, text, html, userId) => sendUserEmail(userId!, to, subject, text, html);
 const defaultPush: PushSender = async (sub, payload) => {
   const v = await getVapid();
   await webpush.sendNotification(sub, payload, { vapidDetails: { subject: `mailto:${env.SMTP_FROM.match(/<(.+)>/)?.[1] ?? 'admin@example.com'}`, publicKey: v.publicKey, privateKey: v.privateKey }, TTL: 12 * 3600 });
 };
 let pushSender: PushSender = defaultPush;
-let emailSender: EmailSender = (to, subject, text, html) => emailService.send(to, subject, text, html);
+let emailSender: EmailSender = defaultEmailSender;
 export const setNotifySenders = (s: { push?: PushSender | null; email?: EmailSender | null }) => {
   if (s.push !== undefined) pushSender = s.push ?? defaultPush;
-  if (s.email !== undefined) emailSender = s.email ?? ((to, subject, text, html) => emailService.send(to, subject, text, html));
+  if (s.email !== undefined) emailSender = s.email ?? defaultEmailSender;
 };
 
 // ------------------------------------------------------------------ helpers
@@ -109,11 +110,11 @@ export async function runNotifications(userId: string, now = new Date()) {
   const hour = localHour(tz, now);
   const alerts = await computeAlerts(userId, today, user.currency || 'AUD');
 
-  if (n.emailEnabled && emailConfigured() && hour >= (n.emailHour ?? 7) && (await once(userId, 'email', `digest|${today}`))) {
+  if (n.emailEnabled && (await emailRoute(userId)) && hour >= (n.emailHour ?? 7) && (await once(userId, 'email', `digest|${today}`))) {
     if (alerts.length) {
       const d = buildDigest(user.name.split(' ')[0], today, alerts);
       try {
-        await emailSender(user.email, d.subject, d.text, d.html);
+        await emailSender(user.email, d.subject, d.text, d.html, userId);
         result.email = true;
       } catch (e) {
         console.error('[email digest]', (e as Error).message);

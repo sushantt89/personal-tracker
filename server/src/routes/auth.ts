@@ -8,7 +8,7 @@ import { parseBody } from '../middleware/validate.js';
 import { requireAuth, signToken, cookieOptions, COOKIE_NAME } from '../middleware/auth.js';
 import { badRequest, conflict, unauthorized } from '../utils/httpError.js';
 import { ensureUserDefaults } from '../services/defaults.js';
-import { emailService } from '../services/email.js';
+import { sendUserEmail } from '../services/email.js';
 import { env } from '../config/env.js';
 
 const r = Router();
@@ -83,7 +83,13 @@ r.post('/forgot-password', limiter, async (req, res) => {
     user.resetTokenExpires = new Date(Date.now() + 60 * 60 * 1000);
     await user.save();
     const link = `${env.CLIENT_URL.replace(/\/$/, '')}/reset-password?token=${token}`;
-    await emailService.send(user.email, 'Reset your Personal Tracker password', `Use this link within 1 hour to reset your password:\n\n${link}\n\nIf you didn't request this, ignore this email.`);
+    try {
+      await sendUserEmail(String(user._id), user.email, 'Reset your Personal Tracker password', `Use this link within 1 hour to reset your password:\n\n${link}\n\nIf you didn't request this, ignore this email.`);
+    } catch (e) {
+      // Never reveal whether the account exists or whether delivery worked; the link is still in the server log for the owner
+      console.error('[password reset] email could not be sent:', (e as Error).message);
+      console.log(`[password reset] link for ${user.email}: ${link}`);
+    }
   }
   // Always the same response, so emails can't be enumerated
   res.json({ ok: true, message: 'If an account exists for that email, a reset link has been sent.' });

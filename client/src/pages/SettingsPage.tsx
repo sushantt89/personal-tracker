@@ -151,7 +151,7 @@ function NotificationsTab({ settings }: { settings: Settings }) {
   const [n, setN] = useState({ ...settings.notifications, inAppPopups: settings.notifications.inAppPopups !== false });
   const [busy, setBusy] = useState<string | null>(null);
   const [thisDevice, setThisDevice] = useState(false);
-  const status = useQuery({ queryKey: ['notify-status'], queryFn: () => get<{ emailConfigured: boolean; devices: { id: string; userAgent?: string; addedAt?: string }[] }>('/notifications/status') });
+  const status = useQuery({ queryKey: ['notify-status'], queryFn: () => get<{ emailConfigured: boolean; emailVia?: 'gmail' | 'smtp' | null; emailFrom?: string | null; gmailNeedsPermission?: boolean; googleAvailable?: boolean; devices: { id: string; userAgent?: string; addedAt?: string }[] }>('/notifications/status') });
   useEffect(() => { currentSubscription().then((s) => setThisDevice(!!s)).catch(() => undefined); }, []);
   const sw = (k: keyof typeof n, label: string) => <FormControlLabel control={<Switch checked={!!n[k]} onChange={(e) => setN({ ...n, [k]: e.target.checked })} />} label={label} />;
   const persist = (next = n, msg = 'Saved') => save(() => patch('/settings', { notifications: next }), ['settings', 'alerts', 'notify-status'], msg);
@@ -182,8 +182,15 @@ function NotificationsTab({ settings }: { settings: Settings }) {
         <Stack spacing={2}>
           <SectionCard title="Daily email summary" subtitle="One email each morning, only on days when there is something to tell you">
             {status.data && !status.data.emailConfigured && (
-              <Alert severity="info" sx={{ mb: 1.5 }}>Email isn’t set up on the server yet. Add <code>SMTP_HOST</code>, <code>SMTP_USER</code> and <code>SMTP_PASS</code> to <code>.env</code> and restart — a free Gmail app password works. Steps: <code>docs/NOTIFICATIONS.md</code>.</Alert>
+              <Alert severity="info" sx={{ mb: 1.5 }}>
+                {status.data.gmailNeedsPermission
+                  ? <>Email isn’t set up yet. Go to <b>Integrations</b>, click <b>Reconnect</b> and allow “Send email on your behalf” — emails are then sent from your own Google account.</>
+                  : status.data.googleAvailable
+                    ? <>Email isn’t set up yet. Connect your Google account under <b>Integrations</b> and emails are sent from it — nothing else to configure.</>
+                    : <>Email isn’t set up yet. Connect Google (see <code>docs/GOOGLE_SETUP.md</code>), or add <code>SMTP_HOST</code>, <code>SMTP_USER</code> and <code>SMTP_PASS</code> to <code>.env</code>. Steps: <code>docs/NOTIFICATIONS.md</code>.</>}
+              </Alert>
             )}
+            {status.data?.emailVia === 'gmail' && <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1 }}>Emails are sent from your Google account{status.data.emailFrom ? ` (${status.data.emailFrom})` : ''}.</Typography>}
             <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} alignItems={{ sm: 'center' }}>
               <FormControlLabel control={<Switch checked={!!n.emailEnabled} onChange={(e) => { const next = { ...n, emailEnabled: e.target.checked }; setN(next); persist(next, e.target.checked ? 'Daily email turned on' : 'Daily email turned off'); }} />} label="Email me a daily summary" />
               <TextField select label="Send at" value={n.emailHour ?? 7} onChange={(e) => { const next = { ...n, emailHour: Number(e.target.value) }; setN(next); persist(next); }} sx={{ maxWidth: 150 }} disabled={!n.emailEnabled}>

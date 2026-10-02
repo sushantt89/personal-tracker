@@ -269,6 +269,39 @@ describe('Google integration (fake Google APIs)', () => {
     await a().patch('/api/settings').send({ integrations: { googleCalendar: { twoWay: true } } }).expect(200);
   });
 
+  it('sends email from the connected Google account once permission is given', async () => {
+    const { GoogleAccount, User } = await import('../src/models/index.js');
+    const me = await User.findById(userId).lean();
+    // Connected for Calendar/Drive only: no way to send email yet
+    let st = (await a().get('/api/notifications/status')).body;
+    expect(st).toMatchObject({ emailConfigured: false, emailVia: null, gmailNeedsPermission: true });
+    await a().post('/api/notifications/test').send({ channel: 'email' }).expect(400);
+
+    // Reconnected with the "send email" permission
+    await GoogleAccount.updateOne({ userId }, { $addToSet: { scopes: 'https://www.googleapis.com/auth/gmail.send' } });
+    st = (await a().get('/api/notifications/status')).body;
+    expect(st).toMatchObject({ emailConfigured: true, emailVia: 'gmail', emailFrom: 'me@gmail.com', gmailNeedsPermission: false });
+
+    await a().post('/api/notifications/test').send({ channel: 'email' }).expect(200);
+    expect(fake.sent).toHaveLength(1);
+    expect(fake.sent[0]).toContain('From: Personal Tracker <me@gmail.com>');
+    expect(fake.sent[0]).toContain(`To: ${me!.email}`);
+    expect(fake.sent[0]).toContain('multipart/alternative');
+
+    // Forgot password works while signed out, using the account owner's own Google connection
+    await request(app).post('/api/auth/forgot-password').send({ email: me!.email }).expect(200);
+    expect(fake.sent).toHaveLength(2);
+    const body = Buffer.from(fake.sent[1].split('\r\n\r\n')[1].replace(/\r\n/g, ''), 'base64').toString('utf8');
+    expect(fake.sent[1]).toContain('Subject: Reset your Personal Tracker password');
+    expect(body).toMatch(/reset-password\?token=[a-f0-9]{64}/);
+
+    // A Google failure never changes the answer the sign-in page gives
+    fake.failNext(Object.assign(new Error('Backend Error'), { code: 500 }));
+    await request(app).post('/api/auth/forgot-password').send({ email: me!.email }).expect(200);
+    fake.clearFail();
+    await GoogleAccount.updateOne({ userId }, { $set: { lastError: null } });
+  });
+
   it('flags the account when Google access is revoked', async () => {
     fake.failNext(Object.assign(new Error('invalid_grant'), { code: 400 }));
     await a().patch('/api/settings').send({ integrations: { googleCalendar: { syncTypes: ['job', 'appointment'] } } }).expect(200);

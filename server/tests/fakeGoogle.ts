@@ -31,6 +31,7 @@ export function createFakeGoogle() {
     folder: q.includes("mimeType='application/vnd.google-apps.folder'"),
     sha: /value='([a-f0-9]+)'/.exec(q)?.[1],
   });
+  const sent: string[] = [];
   const readAll = async (s: AsyncIterable<Buffer>) => { const parts: Buffer[] = []; for await (const c of s) parts.push(Buffer.from(c)); return Buffer.concat(parts); };
   const drive = {
     files: {
@@ -64,8 +65,8 @@ export function createFakeGoogle() {
   };
 
   return {
-    apis: { calendar, drive } as any,
-    events, files,
+    apis: { calendar, drive, sendMail: async (raw: string) => { maybeFail(); sent.push(Buffer.from(raw, 'base64url').toString('utf8')); } } as any,
+    events, files, sent,
     uploaded: () => [...files.values()].filter((f) => f.mimeType !== 'application/vnd.google-apps.folder').map((f) => ({ ...f, path: pathOf(f) })),
     folders: () => [...files.values()].filter((f) => f.mimeType === 'application/vnd.google-apps.folder').map(pathOf),
     /** Simulate the person editing or deleting an event in the Google Calendar app. */

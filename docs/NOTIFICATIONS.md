@@ -56,3 +56,6 @@ These need no setup and work on every device.
 - The installed app's icon shows the unread count on devices that support icon badges.
 
 API: `GET /api/alerts` → `{ items, unread }`; `POST /api/alerts/read|unread|dismiss` with `{ keys: [...] }` or `{ all: true }`.
+
+## Email without SMTP
+The simplest way to get emails is to connect Google with permission to send email (Settings → Integrations) — see "Sending email from your Google account" in `docs/GOOGLE_SETUP.md`. When that permission is present it is used first; the `SMTP_*` settings are the fallback.

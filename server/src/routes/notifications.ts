@@ -5,15 +5,23 @@ import { parseBody } from '../middleware/validate.js';
 import { badRequest } from '../utils/httpError.js';
 import { buildDigest, emailConfigured, getVapid, sendPush } from '../services/notify/index.js';
 import { computeAlerts } from '../services/alerts.js';
-import { emailService } from '../services/email.js';
+import { emailRoute, sendUserEmail } from '../services/email.js';
+import { GoogleAccount } from '../models/index.js';
+import { GMAIL_SEND_SCOPE, googleConfigured } from '../services/google/client.js';
 import { userCtx } from '../utils/userCtx.js';
 
 const r = Router();
 
 r.get('/status', async (req, res) => {
-  const [v, devices, settings] = await Promise.all([getVapid(), PushSubscription.find({ userId: req.userId }).select('userAgent createdAt endpoint').lean(), Settings.findOne({ userId: req.userId }).lean()]);
+  const [v, devices, settings, route, google] = await Promise.all([getVapid(), PushSubscription.find({ userId: req.userId }).select('userAgent createdAt endpoint').lean(), Settings.findOne({ userId: req.userId }).lean(), emailRoute(req.userId!), GoogleAccount.findOne({ userId: req.userId }).lean()]);
   res.json({
-    emailConfigured: emailConfigured(),
+    emailConfigured: Boolean(route),
+    /** 'gmail' = sent from your connected Google account, 'smtp' = the server's mail settings */
+    emailVia: route,
+    emailFrom: route === 'gmail' ? google?.googleEmail ?? null : null,
+    /** Google is connected but was not given permission to send email yet */
+    gmailNeedsPermission: Boolean(google && !google.needsReconnect && !(google.scopes ?? []).includes(GMAIL_SEND_SCOPE)),
+    googleAvailable: googleConfigured(),
     pushPublicKey: v.publicKey,
     devices: devices.map((d) => ({ id: String(d._id), userAgent: d.userAgent, addedAt: (d as { createdAt?: Date }).createdAt, endpoint: d.endpoint })),
     emailEnabled: Boolean(settings?.notifications?.emailEnabled),
@@ -45,13 +53,13 @@ r.post('/test', async (req, res) => {
     if (!sent) throw badRequest('No device is registered yet. Click “Turn on for this device” first.');
     return res.json({ ok: true, sent });
   }
-  if (!emailConfigured()) throw badRequest('Email is not set up on the server. Add SMTP_HOST, SMTP_USER and SMTP_PASS to .env (see docs/NOTIFICATIONS.md).');
+  if (!(await emailRoute(req.userId!))) throw badRequest('Email is not set up yet. Connect Google with permission to send email (Settings → Integrations), or add SMTP settings on the server (see docs/NOTIFICATIONS.md).');
   const { today, currency } = await userCtx(req);
   const user = await User.findById(req.userId).lean();
   const alerts = await computeAlerts(req.userId!, today, currency);
   const d = buildDigest(user!.name.split(' ')[0], today, alerts.length ? alerts : [{ id: 'test', type: 'task', severity: 'info', title: 'This is a test email', message: 'Your daily summary will look like this.' }]);
   try {
-    await emailService.send(user!.email, `[Test] ${d.subject}`, d.text, d.html);
+    await sendUserEmail(req.userId!, user!.email, `[Test] ${d.subject}`, d.text, d.html);
   } catch (e) {
     throw badRequest(`The email could not be sent: ${(e as Error).message}`);
   }

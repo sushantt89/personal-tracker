@@ -9,12 +9,15 @@ import { decrypt, encrypt } from '../../utils/crypto.js';
  * Least-privilege scopes:
  *  - calendar.events: create/update/delete the events this app manages
  *  - drive.file: only files and folders this app creates (cannot see the rest of your Drive)
+ *  - gmail.send: send email as you (password-reset links and the daily summary); it cannot read your mail
  */
+export const GMAIL_SEND_SCOPE = 'https://www.googleapis.com/auth/gmail.send';
 export const GOOGLE_SCOPES = [
   'openid',
   'email',
   'https://www.googleapis.com/auth/calendar.events',
   'https://www.googleapis.com/auth/drive.file',
+  GMAIL_SEND_SCOPE,
 ];
 
 export const googleConfigured = () => Boolean(env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET && env.GOOGLE_REDIRECT_URI);
@@ -25,6 +28,8 @@ export const oauthClient = () =>
 export interface GoogleApis {
   calendar: calendar_v3.Calendar;
   drive: drive_v3.Drive;
+  /** Sends one already-built email (base64url RFC 822 text) from the connected Google account. */
+  sendMail?: (raw: string) => Promise<void>;
 }
 
 type Factory = (userId: string) => Promise<GoogleApis | null>;
@@ -38,7 +43,13 @@ async function defaultFactory(userId: string): Promise<GoogleApis | null> {
   auth.on('tokens', (t) => {
     if (t.refresh_token) GoogleAccount.updateOne({ _id: acc._id }, { refreshTokenEnc: encrypt(t.refresh_token) }).catch(() => undefined);
   });
-  return { calendar: calendar({ version: 'v3', auth }), drive: drive({ version: 'v3', auth }) };
+  return {
+    calendar: calendar({ version: 'v3', auth }),
+    drive: drive({ version: 'v3', auth }),
+    sendMail: async (raw) => {
+      await auth.request({ url: 'https://gmail.googleapis.com/gmail/v1/users/me/messages/send', method: 'POST', data: { raw } });
+    },
+  };
 }
 
 let factory: Factory = defaultFactory;

@@ -1,3 +1,4 @@
+import dayjs from 'dayjs';
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
@@ -47,6 +48,20 @@ export default function Dashboard() {
   };
 
   const today = d?.today;
+
+  // "Need to earn" follows the period chosen at the top: the monthly requirement scaled to a day, week, year or custom range
+  const need = (() => {
+    const monthly = d?.required?.minimumMonthlyIncome ?? 0;
+    const days = dayjs(range.to).diff(dayjs(range.from), 'day') + 1;
+    const [label, required] = range.preset === 'today' ? ['day', (monthly * 12) / 365]
+      : range.preset === 'week' ? ['week', (monthly * 12) / 52]
+      : range.preset === 'year' ? ['year', monthly * 12]
+      : range.preset === 'month' ? ['month', monthly]
+      : [`${days} day${days === 1 ? '' : 's'}`, ((monthly * 12) / 365) * days];
+    const coming = (d?.money?.incomeReceived ?? 0) + (d?.money?.incomeExpected ?? 0);
+    const req = Math.round((required as number) * 100) / 100;
+    return { label: label as string, required: req, shortfall: Math.max(0, Math.round((req - coming) * 100) / 100) };
+  })();
   const schedule = today ? [
     ...today.jobs.map((j: any) => ({ key: 'j' + j.id, time: j.startTime, title: j.clientName ?? 'Job', sub: j.address?.formatted, chip: j.amount ? money(j.amount) : undefined, kind: 'Job', status: j.status, map: j.address?.formatted })),
     ...today.tasks.map((t: any) => ({ key: 't' + t.id, time: t.startTime, title: t.title, sub: t.location, kind: t.category, status: t.status })),
@@ -87,7 +102,7 @@ export default function Dashboard() {
             <Grid size={{ xs: 6, md: 4, xl: 2 }}><StatCard label="Expenses" value={money(d.money.expenses)} hint={`${money(d.money.avgDailySpending)} / day avg`} tone="negative" icon={<TrendingDownIcon />} onClick={() => nav('/expenses')} /></Grid>
             <Grid size={{ xs: 6, md: 4, xl: 2 }}><StatCard label="Net income" value={money(d.money.net)} hint={`Projected ${money(d.money.projectedNet)}`} tone={d.money.net >= 0 ? 'positive' : 'negative'} icon={<AccountBalanceWalletOutlinedIcon />} /></Grid>
             <Grid size={{ xs: 6, md: 4, xl: 2 }}><StatCard label="Left this month" value={money(d.month.remainingDisposable)} hint={`after ${money(d.month.unpaidBillsRemaining)} unpaid bills`} tone={d.month.remainingDisposable >= 0 ? 'neutral' : 'negative'} /></Grid>
-            <Grid size={{ xs: 6, md: 4, xl: 2 }}><StatCard label="Need to earn (month)" value={money(d.required.minimumMonthlyIncome)} hint={d.month.shortfall > 0 ? `${money(d.month.shortfall)} still needed` : 'Covered by received + expected'} tone={d.month.shortfall > 0 ? 'warning' : 'positive'} icon={<FlagOutlinedIcon />} onClick={() => nav('/budgets')} /></Grid>
+            <Grid size={{ xs: 6, md: 4, xl: 2 }}><StatCard label={`Need to earn (${need.label})`} value={money(need.required)} hint={need.shortfall > 0 ? `${money(need.shortfall)} still needed` : 'Covered by received + expected'} tone={need.shortfall > 0 ? 'warning' : 'positive'} icon={<FlagOutlinedIcon />} onClick={() => nav('/budgets')} /></Grid>
             <Grid size={{ xs: 6, md: 4, xl: 2 }}><StatCard label="Outstanding invoices" value={money(d.invoices.outstandingAmount)} hint={`${d.invoices.outstandingCount} open · ${d.invoices.overdueCount} overdue`} tone={d.invoices.overdueCount ? 'negative' : 'neutral'} icon={<ReceiptLongOutlinedIcon />} onClick={() => nav('/invoices')} /></Grid>
           </Grid>
 

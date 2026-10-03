@@ -8,12 +8,13 @@ Type what is in your account once (**Enter / Update**). From then on the app adj
 If you never enter a balance, the Assistant falls back to what is left of this month's income and tells you it is guessing.
 
 ## Safe to spend (next 30 days)
-`money you have + income expected − bills due − everyday spending − savings target`
+`money you have + income expected − bills due − everyday spending − savings target − saving goals`
 
 - **Income expected**: income records with status expected/pending dated in the next 30 days (for example jobs with an amount that aren't paid yet). Shifts whose pay you don't know yet count once you give them an expected amount (Jobs → Expected pay).
 - **Bills due**: unpaid recurring bills falling due in the next 30 days.
 - **Everyday spending**: "Expected variable expenses" from Budgets; if that is empty, the average of your non-bill spending over the last two full months.
 - **Savings target**: the monthly savings target from Budgets.
+- **Saving goals**: what you still have to put aside for your goals in the weeks starting within the next 30 days.
 
 ## Should I buy it?
 Enter a price (and optionally what it is). The verdict comes from these checks, each shown with its numbers:
@@ -22,12 +23,13 @@ Enter a price (and optionally what it is). The verdict comes from these checks, 
 2. **Are bills still covered until your next income?** Looks at bills and everyday spending up to your next expected income (or the next two weeks if none is recorded within three weeks).
 3. **Do the next 30 days still work?** Needs to leave at least about a week of normal costs as a cushion.
 4. **Is your savings target safe?** (only if you set one)
-5. **Is it a big purchase for you?** Flags anything over about 40% of a typical month's income.
+5. **Are your saving goals safe?** (only if you have goals under *Saving up for something*) Counts what you still have to put aside for them in the weeks starting within the next 30 days. If the purchase eats into that, it is flagged — and if one of those goals is due within 30 days, the answer is no.
+6. **Is it a big purchase for you?** Flags anything over about 40% of a typical month's income.
 
 | Verdict | Meaning |
 | --- | --- |
 | **Yes** | Every check passes. |
-| **Yes, but tight** | Nothing fails, but something is flagged (little slack, savings target, big purchase). |
+| **Yes, but tight** | Nothing fails, but something is flagged (little slack, savings target, saving goals, big purchase). |
 | **Wait** | It fails today, but there is a day in the next two months when it fits — the date is shown. |
 | **Not now** | It doesn't fit now or soon. Shows how much more you'd need and how many hours of work that is. |
 

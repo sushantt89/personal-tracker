@@ -26,7 +26,7 @@ interface Afford { name: string | null; amount: number; verdict: Verdict; headli
 interface Overview {
   today: string;
   balance: { amount: number; known: boolean; enteredAmount?: number; asOf?: string; incomeSince: number; expensesSince: number };
-  safeToSpend: { amount: number; beforeSavings: number; perDay: number; incomeExpected: number; billsDue: number; everyday: number; everydaySource: 'budget' | 'average' | 'none'; savingsTarget: number; days: number };
+  safeToSpend: { amount: number; beforeSavings: number; perDay: number; incomeExpected: number; billsDue: number; everyday: number; everydaySource: 'budget' | 'average' | 'none'; savingsTarget: number; goals: number; days: number };
   notes: { status: 'pass' | 'warn' | 'fail'; text: string }[];
   week: { bills: { name: string; amount: number; dueDate: string }[]; income: { label: string; amount: number; date: string }[]; jobs: number; jobHours: number; jobIncome: number };
   workNeeded: { shortfall: number; avgPerHour: number; hours: number | null; requiredIncome: number; incomeIncludingExpected: number };
@@ -141,7 +141,7 @@ export default function Assistant() {
           </SectionCard>
         </Grid>
         <Grid size={{ xs: 12, md: 7 }}>
-          <SectionCard title={`Safe to spend · next ${o.safeToSpend.days} days`} subtitle="What’s left after bills, everyday costs and your savings target">
+          <SectionCard title={`Safe to spend · next ${o.safeToSpend.days} days`} subtitle="What’s left after bills, everyday costs, your savings target and saving goals">
             <Stack direction={{ xs: 'column', sm: 'row' }} spacing={{ xs: 1.5, sm: 3 }} alignItems={{ sm: 'center' }}>
               <Box sx={{ minWidth: 150 }}>
                 <Typography variant="h4" color={o.safeToSpend.amount > 0 ? 'success.main' : 'error.main'} sx={{ fontVariantNumeric: 'tabular-nums' }}>{money(o.safeToSpend.amount)}</Typography>
@@ -153,6 +153,7 @@ export default function Assistant() {
                 <Row label="Bills due" value={o.safeToSpend.billsDue} sign="−" />
                 <Row label={`Everyday spending${o.safeToSpend.everydaySource === 'average' ? ' (your average)' : o.safeToSpend.everydaySource === 'none' ? ' (not set)' : ''}`} value={o.safeToSpend.everyday} sign="−" />
                 {o.safeToSpend.savingsTarget > 0 && <Row label="Savings target" value={o.safeToSpend.savingsTarget} sign="−" />}
+                {o.safeToSpend.goals > 0 && <Row label="Saving goals" value={o.safeToSpend.goals} sign="−" />}
               </Stack>
             </Stack>
             {o.safeToSpend.everydaySource === 'none' && <Typography variant="caption" color="text.secondary" component="div" sx={{ mt: 1 }}>Tip: set “Expected variable expenses” in <Box component="span" sx={{ color: 'primary.main', cursor: 'pointer' }} onClick={() => nav('/budgets')}>Budgets</Box> so food, fuel and the like are counted.</Typography>}
@@ -167,7 +168,7 @@ export default function Assistant() {
 
         {/* Should I buy it? */}
         <Grid size={{ xs: 12, lg: 7 }}>
-          <SectionCard title="Should I buy it?" subtitle="Type what it costs and I’ll check it against your balance, bills, income and savings">
+          <SectionCard title="Should I buy it?" subtitle="Type what it costs and I’ll check it against your balance, bills, income, savings and saving goals">
             <Stack component="form" onSubmit={check} direction={{ xs: 'column', sm: 'row' }} spacing={1.5} alignItems={{ sm: 'flex-start' }}>
               <TextField label="What is it? (optional)" value={name} onChange={(e) => setName(e.target.value)} slotProps={{ htmlInput: { maxLength: 120 } }} />
               <Box sx={{ minWidth: { sm: 170 } }}><MoneyInput label="How much?" value={amount} onChange={(x) => { setAmount(x); setResult(null); }} /></Box>

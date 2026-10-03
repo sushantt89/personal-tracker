@@ -175,4 +175,35 @@ describe('assistant', () => {
     o = (await b.delete(`/api/assistant/goals/${g.id}`).query(nextSun).expect(200)).body;
     expect(o.goals).toHaveLength(0);
   });
+  it('counts saving goals when deciding whether something can be bought', async () => {
+    const b = request.agent(app);
+    await b.post('/api/auth/register').send({ name: 'Buyer', email: 'buyer@example.com', password: 'password123' }).expect(201);
+    const q = { today: '2026-10-05' };
+    await b.put('/api/assistant/balance').query(q).send({ amount: 2000 }).expect(200);
+    const afford = async (amount: number) => (await b.post('/api/assistant/afford').query(q).send({ amount }).expect(200)).body;
+    // No goals: $1,500 of $2,000 is fine and no goal check appears
+    let r = await afford(1500);
+    expect(r.checks.find((c: any) => c.key === 'goals')).toBeUndefined();
+    expect(r.verdict).toBe('yes');
+    // A $1,200 fee due in four weeks: all of it has to be put aside inside the next 30 days
+    await b.post('/api/assistant/goals').query(q).send({ name: 'Uni fee', target: 1200, dueDate: '2026-11-01' }).expect(201);
+    const o = (await b.get('/api/assistant/overview').query(q).expect(200)).body;
+    expect(o.safeToSpend).toMatchObject({ goals: 1200, amount: 800 });
+    r = await afford(1500);
+    const c = r.checks.find((x: any) => x.key === 'goals');
+    expect(c.status).toBe('fail');
+    expect(c.title).toContain('Uni fee');
+    expect(c.detail).toContain('$700.00 short');
+    expect(r.verdict).toBe('no');
+    // Something small still fits alongside the goal
+    r = await afford(300);
+    expect(r.checks.find((x: any) => x.key === 'goals').status).toBe('pass');
+    expect(r.verdict).toBe('yes');
+    // A goal far in the future only needs the next few weeks' share, and overspending it is a warning, not a no
+    await b.delete(`/api/assistant/goals/${(await b.get('/api/assistant/goals').query(q)).body.goals[0].id}`).query(q).expect(200);
+    await b.post('/api/assistant/goals').query(q).send({ name: 'Trip', target: 2600, dueDate: '2027-04-04' }).expect(201); // 26 weeks → $100 a week
+    r = await afford(1800);
+    expect(r.checks.find((x: any) => x.key === 'goals')).toMatchObject({ status: 'warn', title: 'It eats into what you’re saving for' });
+    expect(r.verdict).toBe('tight');
+  });
 });

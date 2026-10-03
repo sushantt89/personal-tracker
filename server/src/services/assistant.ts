@@ -30,6 +30,8 @@ export interface Snapshot {
   free30: number;
   /** …and after also putting this month's savings target aside */
   free30AfterSavings: number;
+  /** Still to be put aside for saving goals in the weeks that start within the next 30 days */
+  goals: { total: number; items: { name: string; dueDate: string; remaining: number; thisWeek: number; amount: number }[] };
   /** A small cushion: about a week of normal outgoings */
   buffer: number;
   /** Cash position each day for the next SIM_DAYS, used to find when something becomes affordable */
@@ -55,6 +57,8 @@ export async function snapshot(userId: string, today: string): Promise<Snapshot>
     Category.find({ userId: uid }).select('name').lean(),
   ]);
 
+  const goalDocs = await SavingsGoal.find({ userId: uid, archived: { $ne: true } }).lean();
+
   // --- Balance: what the user last entered, rolled forward with what has been recorded since ---
   const entered = budget?.balance?.asOf && typeof budget.balance.amount === 'number' ? { amount: budget.balance.amount, asOf: budget.balance.asOf } : null;
   let balance: Snapshot['balance'];
@@ -65,7 +69,6 @@ export async function snapshot(userId: string, today: string): Promise<Snapshot>
     ]);
     const incomeSince = sum(inc.map((i) => i.amount)), expensesSince = sum(exp.map((e) => e.amount));
     // Money moved into a savings goal since then is no longer there to spend
-    const goalDocs = await SavingsGoal.find({ userId: uid }).select('contributions').lean();
     const savedSince = sum(goalDocs.flatMap((g: any) => (g.contributions ?? []).filter((c: any) => c.date > entered.asOf && c.date <= today).map((c: any) => c.amount)));
     balance = { amount: round2(entered.amount + incomeSince - expensesSince - savedSince), known: true, enteredAmount: entered.amount, asOf: entered.asOf, incomeSince, expensesSince, savedSince };
   } else {
@@ -89,6 +92,12 @@ export async function snapshot(userId: string, today: string): Promise<Snapshot>
   const billsTotal = sum(bills30.map((b) => b.amount)), incomeTotal = sum(income30.map((i) => i.amount));
   const savingsTarget = budget?.monthlySavingsTarget ?? 0;
   const free30 = round2(balance.amount + incomeTotal - billsTotal - everyday.daily * HORIZON);
+  // --- Saving goals: what still has to be put aside in the weeks that start inside the next 30 days ---
+  const goalItems = goalDocs.map((g: any) => goalPlan(g, today, user?.currency || 'AUD')).filter((p) => p.status !== 'done' && p.status !== 'overdue').map((p) => ({
+    name: p.name, dueDate: p.dueDate, remaining: p.remaining, thisWeek: p.thisWeek.stillToPut,
+    amount: round2(Math.min(p.remaining, p.thisWeek.stillToPut + sum(p.weeks.filter((w) => w.state === 'future' && w.from <= horizonEnd).map((w) => w.planned)))),
+  }));
+  const goals = { total: sum(goalItems.map((g) => g.amount)), items: goalItems };
   const hours = sum(recentJobs.map((j) => jobHours(j)));
   const avgPerHour = hours > 0 ? round2(sum(recentJobs.map((j) => j.amount ?? 0)) / hours) : 0;
 
@@ -118,7 +127,7 @@ export async function snapshot(userId: string, today: string): Promise<Snapshot>
     bills: { total: billsTotal, items: bills30.map((b) => ({ name: b.name, amount: b.amount, dueDate: b.dueDate })) },
     income: { total: incomeTotal, items: income30.map((i) => ({ label: i.clientName || i.description || 'Income', amount: i.amount, date: i.date })), nextDate: expected[0]?.date ?? null, overdueExpected: sum(overdue.map((i) => i.amount)) },
     everyday, savingsTarget, monthlyBills: d.required.monthlyBills, avgMonthlyIncome: d.money.avgMonthlyIncome, avgMonthlyExpenses: d.money.avgMonthlyExpenses, avgPerHour,
-    free30, free30AfterSavings: round2(free30 - savingsTarget),
+    free30, free30AfterSavings: round2(free30 - savingsTarget), goals,
     buffer: Math.max(50, Math.round((everyday.monthly + d.required.monthlyBills) / 4.33)),
     timeline,
     month: { shortfall: d.month.shortfall, requiredIncome: d.month.requiredIncome, incomeIncludingExpected: d.month.incomeIncludingExpected },
@@ -183,6 +192,17 @@ export function assessPurchase(s: Snapshot, amount: number): AffordResult {
       : { key: 'savings', status: 'warn', title: 'It eats into your savings target', detail: `You’d fall ${money(Math.min(-afterSavings, s.savingsTarget))} short of the ${money(s.savingsTarget)} you aim to save each month.` });
   }
 
+  // 4b. Things being saved up for by a date
+  if (s.goals.items.length) {
+    const names = s.goals.items.map((g) => g.name).join(', ');
+    const afterGoals = round2(s.free30 - amount - s.goals.total);
+    const short = round2(Math.min(-afterGoals, s.goals.total));
+    const dueSoon = s.goals.items.filter((g) => g.dueDate <= addDays(s.today, HORIZON));
+    if (afterGoals >= 0) checks.push({ key: 'goals', status: 'pass', title: 'Your saving goals are safe', detail: `You could still put aside the ${money(s.goals.total)} that ${names} need${s.goals.items.length === 1 ? 's' : ''} over the next 30 days.` });
+    else if (dueSoon.length) checks.push({ key: 'goals', status: 'fail', title: `It would stop you reaching ${dueSoon.map((g) => g.name).join(', ')}`, detail: `You’re saving for ${names} and still need to put aside ${money(s.goals.total)} in the next 30 days. After buying this you’d be ${money(short)} short, and ${dueSoon.map((g) => `${g.name} is due ${fmtDay(g.dueDate)}`).join(', ')}.` });
+    else checks.push({ key: 'goals', status: 'warn', title: 'It eats into what you’re saving for', detail: `You’re saving for ${names} and need to put aside ${money(s.goals.total)} over the next 30 days. After buying this you’d be ${money(short)} short of that, so the later weeks would have to make it up.` });
+  }
+
   // 5. How big is it for you?
   if (s.avgMonthlyIncome > 0) {
     const pct = Math.round((amount / s.avgMonthlyIncome) * 100);
@@ -193,7 +213,8 @@ export function assessPurchase(s: Snapshot, amount: number): AffordResult {
   // When does it become comfortable? The first day cash covers it and still leaves the cushion.
   let affordableFrom: string | null = null;
   for (let i = 0; i < s.timeline.length; i++) {
-    if (s.timeline[i].cash - amount < s.buffer) continue;
+    // Money earmarked for saving goals is not there to spend
+    if (s.timeline[i].cash - amount - s.goals.total < s.buffer) continue;
     let ok = true;
     // …and stays above zero for the two weeks after (income further out usually isn't recorded yet, so looking further would be too gloomy)
     for (let j = i; j < Math.min(s.timeline.length, i + 15); j++) if (s.timeline[j].cash - amount < 0) { ok = false; break; }
@@ -204,7 +225,7 @@ export function assessPurchase(s: Snapshot, amount: number): AffordResult {
   let verdict: Verdict, headline: string, summary: string;
   if (!fails.length && !warns.length) {
     verdict = 'yes'; headline = 'Yes — you can afford this';
-    summary = `Your bills are covered, the next 30 days still work${s.savingsTarget > 0 ? ' and your savings target is untouched' : ''}.`;
+    summary = `Your bills are covered, the next 30 days still work${s.goals.items.length ? ', your saving goals are safe' : ''}${s.savingsTarget > 0 ? ' and your savings target is untouched' : ''}.`;
   } else if (!fails.length) {
     verdict = 'tight'; headline = 'You can, but think about it';
     summary = `The money is there and your bills are covered, but ${warns.map((w) => w.title.charAt(0).toLowerCase() + w.title.slice(1)).join(', and ')}.`;
@@ -217,11 +238,12 @@ export function assessPurchase(s: Snapshot, amount: number): AffordResult {
   }
 
   // What would change the answer
-  const worstGap = Math.max(0, -Math.min(afterToday, afterToday >= 0 ? gapBefore : 0, after30));
+  const goalsDueSoon = s.goals.items.some((g) => g.dueDate <= addDays(s.today, HORIZON));
+  const worstGap = Math.max(0, -Math.min(afterToday, afterToday >= 0 ? gapBefore : 0, after30, goalsDueSoon ? round2(after30 - s.goals.total) : 0));
   if (verdict === 'no' || verdict === 'wait') {
     if (worstGap > 0 && s.avgPerHour > 0) suggestions.push(`Earning ${money(worstGap)} more would close the gap — about ${Math.ceil(worstGap / s.avgPerHour)} more hour${Math.ceil(worstGap / s.avgPerHour) === 1 ? '' : 's'} of work at your usual ${money(s.avgPerHour)}/hour.`);
     else if (worstGap > 0) suggestions.push(`You’d need about ${money(worstGap)} more to make this work.`);
-    const cheaper = round2(Math.max(0, Math.min(s.balance.amount - needBefore, s.free30 - s.buffer)));
+    const cheaper = round2(Math.max(0, Math.min(s.balance.amount - needBefore, s.free30 - s.buffer - s.goals.total)));
     if (cheaper >= 5 && cheaper < amount) suggestions.push(`Right now, up to about ${money(Math.floor(cheaper))} would be comfortable.`);
     if (s.income.overdueExpected > 0) suggestions.push(`${money(s.income.overdueExpected)} of income you were expecting hasn’t been marked as received. If it has arrived, mark it paid and check again.`);
     suggestions.push('Add it to your wishlist below and I’ll keep checking it for you.');
@@ -293,7 +315,7 @@ export async function overview(userId: string, today: string) {
   if (!notes.length) notes.push({ status: 'pass', text: 'Bills for the next 30 days are covered and nothing needs your attention.' });
   return {
     today, currency: s.currency, balance: s.balance,
-    safeToSpend: { amount: Math.max(0, round2(s.free30AfterSavings)), beforeSavings: s.free30, perDay, incomeExpected: s.income.total, billsDue: s.bills.total, everyday: round2(s.everyday.daily * HORIZON), everydaySource: s.everyday.source, savingsTarget: s.savingsTarget, days: HORIZON },
+    safeToSpend: { amount: Math.max(0, round2(s.free30AfterSavings - s.goals.total)), goals: s.goals.total, beforeSavings: s.free30, perDay, incomeExpected: s.income.total, billsDue: s.bills.total, everyday: round2(s.everyday.daily * HORIZON), everydaySource: s.everyday.source, savingsTarget: s.savingsTarget, days: HORIZON },
     notes, week,
     workNeeded: { shortfall: s.month.shortfall, avgPerHour: s.avgPerHour, hours: s.avgPerHour > 0 ? Math.ceil(s.month.shortfall / s.avgPerHour) : null, requiredIncome: s.month.requiredIncome, incomeIncludingExpected: s.month.incomeIncludingExpected },
     topCategories: s.topCategories,

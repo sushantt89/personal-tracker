@@ -154,7 +154,7 @@ export default function Documents({ kind }: { kind?: 'receipt' }) {
         fields={[
           { name: 'amount', label: 'Amount', type: 'money', required: true }, { name: 'date', label: 'Date', type: 'date', required: true },
           { name: 'merchant', label: 'Merchant', type: 'text' }, { name: 'categoryId', label: 'Category', type: 'category' },
-          { name: 'paymentMethod', label: 'Payment method', type: 'paymentMethod' }, { name: 'gst', label: 'GST', type: 'money' },
+          { name: 'paymentMethod', label: 'Payment method', type: 'paymentMethod' },
         ]}
         initial={{
           amount: expenseFor?.amount ?? expensePrefill?.total ?? '', date: expenseFor?.date ?? expensePrefill?.date ?? localToday(), merchant: expenseFor?.merchant ?? expensePrefill?.merchant ?? '',

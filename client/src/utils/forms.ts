@@ -10,7 +10,6 @@ export const expenseFields: FieldDef[] = [
   { name: 'paymentMethod', label: 'Payment method', type: 'paymentMethod', quick: true },
   { name: 'merchant', label: 'Merchant', type: 'text', quick: true },
   { name: 'description', label: 'Description', type: 'text' },
-  { name: 'gst', label: 'GST included', type: 'money' },
   { name: 'isRecurring', label: 'Recurring expense', type: 'switch' },
   { name: 'notes', label: 'Notes', type: 'textarea' },
 ];

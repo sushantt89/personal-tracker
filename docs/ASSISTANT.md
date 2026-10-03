@@ -36,8 +36,25 @@ It also shows the price as hours of work at your recent hourly rate, as a share 
 ## Wishlist
 Add anything you checked to the wishlist. Each item is re-checked every time the page opens, so you can see when it turns from "Not now" to "Yes". **I bought it** records the expense (dated today) and ticks it off.
 
-## Savings goal planner
-"I want to save $X by a date" → the amount per week, whether your usual weekly surplus (average income minus average spending) covers it, and if not, how many extra hours of work a week or how much less spending would.
+## Saving up for something
+For when you need a set amount by a set date — a fee, a bond, a trip. Press **New goal**, give it a name, the amount, the date, and anything you have already put aside.
+
+**What it works out**
+- **To earn this week / this month** — your normal costs (bills, everyday spending, usual savings target) plus what your goals need, less what you have already received or are expecting.
+- **This week** — how much to put aside this week. It is always *what is left ÷ weeks left*, so the plan corrects itself.
+- **This month** and **each week after**.
+- **What is spare** — income received this week, less what you spent and what you already put aside. The page tells you whether that covers this week's amount, and how much extra you could put in.
+
+**Putting money aside**
+Type an amount under *Put money aside* (or tap **Needed** / **All spare**). Before you save it, you see what it does to the plan:
+- More than needed — e.g. $300 needed and you put in $400: "$100 more than this week needs. The next 3 weeks drop to $266.67 each."
+- Less than needed — e.g. $300 needed and you put in $150: "$150 short of what this week needs. It gets made up over the next 3 weeks: $350 each instead of $300."
+
+Nothing is moved in your bank — this records what *you* moved. If you entered your balance under *Money I have right now*, money put aside is taken off it, so "Safe to spend" and "Should I buy it?" don't count it twice.
+
+**Show week-by-week plan** lists every week (extra / short / done) and each entry, which you can remove if you made a mistake.
+
+**Reminders** — from Friday to Sunday you get a notification if a goal still needs money that week, and another if a goal's date passes with money missing. Up to 10 goals.
 
 ## Also on the page
 - **Heads up** notes: days when money is on course to run short, expected income that is past its date, and this month's income gap.
@@ -49,4 +66,4 @@ Add anything you checked to the wishlist. Each item is re-checked every time the
 The answers are only as good as the records: income you expect but haven't entered isn't counted, and one-off costs you haven't recorded aren't either. Your hourly rate is taken from completed jobs with both pay and hours in the last 90 days.
 
 ## API
-`GET /api/assistant/overview` · `PUT /api/assistant/balance {amount}` · `POST /api/assistant/afford {amount, name?}` · `POST /api/assistant/goal {target, byDate, alreadySaved?}` · `GET|POST /api/assistant/wishlist` · `DELETE /api/assistant/wishlist/:id` · `POST /api/assistant/wishlist/:id/buy`
+`GET /api/assistant/overview` · `PUT /api/assistant/balance {amount}` · `POST /api/assistant/afford {amount, name?}` · `GET|POST /api/assistant/goals {name, target, dueDate, alreadySaved?}` · `PATCH|DELETE /api/assistant/goals/:id` · `POST /api/assistant/goals/:id/preview {amount}` · `POST /api/assistant/goals/:id/contributions {amount, date?, note?}` · `DELETE /api/assistant/goals/:id/contributions/:cid` · `GET|POST /api/assistant/wishlist` · `DELETE /api/assistant/wishlist/:id` · `POST /api/assistant/wishlist/:id/buy`

@@ -13,12 +13,12 @@ import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 import ShoppingBagOutlinedIcon from '@mui/icons-material/ShoppingBagOutlined';
 import PlaylistAddIcon from '@mui/icons-material/PlaylistAdd';
 import EditOutlinedIcon from '@mui/icons-material/EditOutlined';
-import dayjs from 'dayjs';
 import { del, get, post, put } from '../api/client';
 import { PageHeader, SectionCard, LoadingBlock, ErrorBlock, useConfirm } from '../components/common';
-import { money, fmtDate, fmtShort, localToday } from '../utils/format';
+import { money, fmtDate, fmtShort } from '../utils/format';
 import { useToast } from '../hooks/useToast';
 import { useInvalidateFinance } from '../hooks/useInvalidate';
+import SavingGoals from '../components/SavingGoals';
 
 type Verdict = 'yes' | 'tight' | 'wait' | 'no' | 'unknown';
 interface Check { key: string; status: 'pass' | 'warn' | 'fail'; title: string; detail: string }
@@ -34,7 +34,6 @@ interface Overview {
   averages: { monthlyIncome: number; monthlyExpenses: number };
 }
 interface Wish { id: string; name: string; amount: number; status: 'wanted' | 'bought'; boughtDate?: string; verdict: Verdict | null; headline: string | null; affordableFrom: string | null }
-interface Goal { target: number; byDate: string; weeks: number; perWeek: number; onTrack: boolean; headline: string; detail: string[] }
 
 const VERDICT: Record<Verdict, { color: 'success' | 'warning' | 'error' | 'info'; label: string; icon: ReactNode }> = {
   yes: { color: 'success', label: 'Yes', icon: <CheckCircleIcon /> },
@@ -109,15 +108,6 @@ export default function Assistant() {
   };
   const removeWish = async (w: Wish) => {
     try { await del(`/assistant/wishlist/${w.id}`); await qc.invalidateQueries({ queryKey: ['assistant', 'wishlist'] }); } catch (err) { toast((err as Error).message, 'error'); }
-  };
-
-  // Savings goal
-  const [goal, setGoal] = useState({ target: '', byDate: dayjs(localToday()).add(3, 'month').format('YYYY-MM-DD'), alreadySaved: '' });
-  const [goalResult, setGoalResult] = useState<Goal | null>(null);
-  const planGoal = async (e: FormEvent) => {
-    e.preventDefault();
-    try { setGoalResult(await post<Goal>('/assistant/goal', { target: Number(goal.target), byDate: goal.byDate, alreadySaved: goal.alreadySaved === '' ? undefined : Number(goal.alreadySaved) })); }
-    catch (err) { toast((err as Error).message, 'error'); }
   };
 
   if (overview.isLoading) return <LoadingBlock rows={6} />;
@@ -262,27 +252,8 @@ export default function Assistant() {
           </SectionCard>
         </Grid>
 
-        {/* Savings goal */}
-        <Grid size={{ xs: 12, md: 6 }}>
-          <SectionCard title="Savings goal planner" subtitle="How much a week, and is it realistic?">
-            <Stack component="form" onSubmit={planGoal} spacing={1.5}>
-              <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.5}>
-                <MoneyInput label="I want to save" value={goal.target} onChange={(x) => setGoal({ ...goal, target: x })} />
-                <TextField label="By" type="date" value={goal.byDate} onChange={(e) => e.target.value && setGoal({ ...goal, byDate: e.target.value })} slotProps={{ inputLabel: { shrink: true } }} />
-              </Stack>
-              <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.5} alignItems={{ sm: 'flex-start' }}>
-                <MoneyInput label="Already saved (optional)" value={goal.alreadySaved} onChange={(x) => setGoal({ ...goal, alreadySaved: x })} />
-                <Button type="submit" variant="outlined" disabled={!(Number(goal.target) > 0)} sx={{ height: 40, whiteSpace: 'nowrap', minWidth: 120 }}>Work it out</Button>
-              </Stack>
-            </Stack>
-            {goalResult && (
-              <Alert severity={goalResult.onTrack ? 'success' : 'warning'} sx={{ mt: 2 }} aria-live="polite">
-                <Typography variant="subtitle2">{goalResult.headline}</Typography>
-                {goalResult.detail.map((line, i) => <Typography key={i} variant="body2">{line}</Typography>)}
-              </Alert>
-            )}
-          </SectionCard>
-        </Grid>
+        {/* Saving up for something by a date */}
+        <Grid size={12}><SavingGoals /></Grid>
 
         {/* The week ahead */}
         <Grid size={{ xs: 12, md: 6 }}>
@@ -314,7 +285,7 @@ export default function Assistant() {
         </Grid>
 
         {/* Where the money goes */}
-        <Grid size={{ xs: 12, md: 6 }}>
+        <Grid size={12}>
           <SectionCard title="Where is my money going?" subtitle="This month so far against all of last month">
             {!o.topCategories.length ? <Typography variant="body2" color="text.secondary">No expenses recorded in the last two months.</Typography> : (
               <Stack spacing={0.75}>

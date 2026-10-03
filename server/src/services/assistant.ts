@@ -17,7 +17,7 @@ export interface Snapshot {
   today: string;
   currency: string;
   /** Money available now. `known` is false until the user has entered a balance. */
-  balance: { amount: number; known: boolean; enteredAmount?: number; asOf?: string; incomeSince: number; expensesSince: number };
+  balance: { amount: number; known: boolean; enteredAmount?: number; asOf?: string; incomeSince: number; expensesSince: number; savedSince?: number };
   bills: { total: number; items: { name: string; amount: number; dueDate: string }[] };
   income: { total: number; items: { label: string; amount: number; date: string }[]; nextDate: string | null; overdueExpected: number };
   everyday: { monthly: number; daily: number; source: 'budget' | 'average' | 'none' };
@@ -64,7 +64,10 @@ export async function snapshot(userId: string, today: string): Promise<Snapshot>
       Expense.find({ userId: uid, date: { $gt: entered.asOf, $lte: today } }).select('amount').lean(),
     ]);
     const incomeSince = sum(inc.map((i) => i.amount)), expensesSince = sum(exp.map((e) => e.amount));
-    balance = { amount: round2(entered.amount + incomeSince - expensesSince), known: true, enteredAmount: entered.amount, asOf: entered.asOf, incomeSince, expensesSince };
+    // Money moved into a savings goal since then is no longer there to spend
+    const goalDocs = await SavingsGoal.find({ userId: uid }).select('contributions').lean();
+    const savedSince = sum(goalDocs.flatMap((g: any) => (g.contributions ?? []).filter((c: any) => c.date > entered.asOf && c.date <= today).map((c: any) => c.amount)));
+    balance = { amount: round2(entered.amount + incomeSince - expensesSince - savedSince), known: true, enteredAmount: entered.amount, asOf: entered.asOf, incomeSince, expensesSince, savedSince };
   } else {
     // No balance entered: fall back to what is left of this month's income so far
     balance = { amount: round2(Math.max(0, d.month.incomeReceived - d.month.expenses)), known: false, incomeSince: 0, expensesSince: 0 };
@@ -296,4 +299,143 @@ export async function overview(userId: string, today: string) {
     topCategories: s.topCategories,
     averages: { monthlyIncome: s.avgMonthlyIncome, monthlyExpenses: s.avgMonthlyExpenses },
   };
+}
+
+// ---------- Saving up for something by a date ----------
+import { SavingsGoal } from '../models/index.js';
+import { weekStart } from '../utils/dates.js';
+
+export interface GoalWeek { from: string; to: string; planned: number; saved: number; state: 'past' | 'current' | 'future' }
+export interface GoalPlan {
+  id: string; name: string; target: number; dueDate: string; startDate: string;
+  saved: number; remaining: number; percent: number;
+  status: 'done' | 'overdue' | 'on_track' | 'ahead' | 'behind';
+  weeksLeft: number;
+  /** The even weekly amount when the goal was set up */
+  originalPerWeek: number;
+  thisWeek: { from: string; to: string; needed: number; saved: number; stillToPut: number; aheadBy: number };
+  /** What each remaining week (after this one) comes to, given what has been saved so far */
+  perWeekAfterThis: number;
+  thisMonth: { needed: number; saved: number; stillToPut: number };
+  weeks: GoalWeek[];
+  contributions: { id: string; date: string; amount: number; note?: string }[];
+  messages: { status: 'pass' | 'warn' | 'fail'; text: string }[];
+}
+
+const sumBy = <T>(xs: T[], f: (x: T) => number) => round2(xs.reduce((a, x) => a + f(x), 0));
+
+/**
+ * The weekly plan for one goal. Every week the amount still to save is shared evenly over the weeks left, so:
+ *  - putting in more than needed makes the following weeks smaller, and
+ *  - putting in less is carried forward and spread over the following weeks.
+ */
+export function goalPlan(g: any, today: string, currency: string): GoalPlan {
+  const money = (n: number) => new Intl.NumberFormat('en-AU', { style: 'currency', currency }).format(n);
+  const contributions = [...(g.contributions ?? [])].sort((a: any, b: any) => a.date.localeCompare(b.date));
+  const saved = round2((g.startingSaved ?? 0) + sumBy(contributions, (c: any) => c.amount));
+  const remaining = Math.max(0, round2(g.target - saved));
+  const ws = weekStart(today), we = addDays(ws, 6);
+  const dueWeek = weekStart(g.dueDate);
+  const startWeek = weekStart(g.startDate);
+  const totalWeeks = Math.max(1, Math.round(diffDays(startWeek, dueWeek) / 7) + 1);
+  const weeksLeft = g.dueDate < today ? 0 : Math.max(1, Math.round(diffDays(ws, dueWeek) / 7) + 1);
+  const originalPerWeek = round2(Math.max(0, g.target - (g.startingSaved ?? 0)) / totalWeeks);
+  const inWeek = (from: string) => sumBy(contributions.filter((c: any) => c.date >= from && c.date <= addDays(from, 6)), (c: any) => c.amount);
+
+  const savedThisWeek = inWeek(ws);
+  // What this week needed at its start: everything not yet saved before this week, shared over the weeks left
+  const remainingAtWeekStart = Math.max(0, round2(remaining + savedThisWeek));
+  const needed = weeksLeft > 0 ? round2(remainingAtWeekStart / weeksLeft) : remainingAtWeekStart;
+  const stillToPut = Math.max(0, round2(Math.min(needed - savedThisWeek, remaining)));
+  const aheadBy = Math.max(0, round2(savedThisWeek - needed));
+  const perWeekAfterThis = weeksLeft > 1 ? round2(remaining / (weeksLeft - 1)) : 0;
+
+  // Week-by-week: what was planned and saved in past weeks, and what the coming weeks look like now
+  const weeks: GoalWeek[] = [];
+  for (let from = startWeek, n = 0; from <= dueWeek && n < 104; from = addDays(from, 7), n++) {
+    const state: GoalWeek['state'] = from < ws ? 'past' : from === ws ? 'current' : 'future';
+    weeks.push({ from, to: addDays(from, 6), state, saved: inWeek(from), planned: state === 'past' ? originalPerWeek : state === 'current' ? needed : round2(Math.max(0, remaining - stillToPut) / Math.max(1, weeksLeft - 1)) });
+  }
+
+  // This month: this week's amount plus the following weeks that start before the month (or the goal) ends
+  const mEnd = monthEnd(today);
+  const laterWeeksThisMonth = weeks.filter((w) => w.state === 'future' && w.from <= mEnd).length;
+  const monthSaved = sumBy(contributions.filter((c: any) => c.date >= monthStart(today) && c.date <= mEnd), (c: any) => c.amount);
+  const monthStill = Math.min(remaining, round2(stillToPut + laterWeeksThisMonth * (weeksLeft > 1 ? round2(Math.max(0, remaining - stillToPut) / (weeksLeft - 1)) : 0)));
+  const thisMonth = { needed: round2(monthSaved + monthStill), saved: monthSaved, stillToPut: monthStill };
+
+  const expectedByNow = round2((g.startingSaved ?? 0) + originalPerWeek * weeks.filter((w) => w.state === 'past').length);
+  const status: GoalPlan['status'] = remaining === 0 ? 'done' : weeksLeft === 0 ? 'overdue' : saved - savedThisWeek > expectedByNow + 0.5 || aheadBy > 0 ? 'ahead' : saved - savedThisWeek < expectedByNow - 0.5 ? 'behind' : 'on_track';
+
+  const messages: GoalPlan['messages'] = [];
+  if (status === 'done') messages.push({ status: 'pass', text: `You’ve saved the full ${money(g.target)}. Well done.` });
+  else if (status === 'overdue') messages.push({ status: 'fail', text: `The date has passed and ${money(remaining)} is still missing.` });
+  else {
+    if (aheadBy > 0) messages.push({ status: 'pass', text: `You’ve put in ${money(savedThisWeek)} this week — ${money(aheadBy)} more than the ${money(needed)} needed. ${weeksLeft > 1 ? `The remaining ${weeksLeft - 1} week${weeksLeft - 1 === 1 ? '' : 's'} drop to ${money(perWeekAfterThis)} each.` : ''}`.trim() });
+    else if (stillToPut > 0) {
+      const planned = weeksLeft > 1 ? round2(Math.max(0, remaining - stillToPut) / (weeksLeft - 1)) : 0;
+      messages.push({ status: 'warn', text: `Put ${money(stillToPut)} aside this week${savedThisWeek > 0 ? ` (${money(savedThisWeek)} of ${money(needed)} done)` : ''}.${savedThisWeek > 0 && weeksLeft > 1 ? ` If that’s all you can manage, you’re ${money(stillToPut)} short this week and it’s made up over the next ${weeksLeft - 1} week${weeksLeft - 1 === 1 ? '' : 's'}: ${money(perWeekAfterThis)} each instead of ${money(planned)}.` : ''}` });
+    }
+    else messages.push({ status: 'pass', text: `This week’s ${money(needed)} is done.` });
+    if (status === 'behind') messages.push({ status: 'warn', text: `Earlier weeks came up ${money(round2(expectedByNow - (saved - savedThisWeek)))} short of the original plan of ${money(originalPerWeek)} a week. That has been spread over the weeks left, which is why the weekly amount is now ${money(needed)}.` });
+  }
+  return {
+    id: String(g._id), name: g.name, target: g.target, dueDate: g.dueDate, startDate: g.startDate, saved, remaining, percent: Math.min(100, Math.round((saved / g.target) * 100)),
+    status, weeksLeft, originalPerWeek, thisWeek: { from: ws, to: we, needed, saved: savedThisWeek, stillToPut, aheadBy }, perWeekAfterThis, thisMonth, weeks,
+    contributions: contributions.map((c: any) => ({ id: String(c._id), date: c.date, amount: c.amount, note: c.note })).reverse(),
+    messages,
+  };
+}
+
+/** What happens to the plan if this much is put in now. Used to show the effect before saving it. */
+export function previewContribution(plan: GoalPlan, amount: number, currency: string): { status: 'pass' | 'warn'; text: string } {
+  const money = (n: number) => new Intl.NumberFormat('en-AU', { style: 'currency', currency }).format(n);
+  const after = Math.max(0, round2(plan.remaining - amount));
+  const later = plan.weeksLeft > 1 ? round2(after / (plan.weeksLeft - 1)) : 0;
+  const diff = round2(amount - plan.thisWeek.stillToPut);
+  if (after === 0) return { status: 'pass', text: 'That completes the goal.' };
+  if (diff > 0.005) return { status: 'pass', text: `${money(diff)} more than this week needs. ${plan.weeksLeft > 1 ? `The next ${plan.weeksLeft - 1} week${plan.weeksLeft - 1 === 1 ? '' : 's'} drop to ${money(later)} each.` : ''}`.trim() };
+  if (diff < -0.005) return { status: 'warn', text: `${money(-diff)} short of what this week needs. ${plan.weeksLeft > 1 ? `It gets made up over the next ${plan.weeksLeft - 1} week${plan.weeksLeft - 1 === 1 ? '' : 's'}: ${money(later)} each instead of ${money(round2(Math.max(0, plan.remaining - plan.thisWeek.stillToPut) / (plan.weeksLeft - 1)))}.` : `There are no weeks left to make it up, so the goal would finish ${money(after)} short.`}` };
+  return { status: 'pass', text: `Exactly what this week needs.${plan.weeksLeft > 1 ? ` The following weeks stay at ${money(later)}.` : ''}` };
+}
+
+/** All active goals, plus what they mean for how much has to be earned this week and month, and how much is spare right now. */
+export async function goalsOverview(userId: string, today: string) {
+  const uid = new Types.ObjectId(userId);
+  const ws = weekStart(today), we = addDays(ws, 6), ms = monthStart(today), me = monthEnd(today);
+  const [user, goals, d, weekIncome, weekExpenses, budget] = await Promise.all([
+    User.findById(userId).select('currency').lean(),
+    SavingsGoal.find({ userId: uid, archived: { $ne: true } }).sort({ dueDate: 1 }).lean(),
+    dashboard(userId, { from: ms, to: me, today }),
+    Income.find({ userId: uid, status: { $ne: 'cancelled' }, date: { $gte: ws, $lte: we } }).select('amount status').lean(),
+    Expense.find({ userId: uid, date: { $gte: ws, $lte: we } }).select('amount').lean(),
+    Budget.findOne({ userId: uid }).select('balance').lean(),
+  ]);
+  const currency = user?.currency || 'AUD';
+  const money = (n: number) => new Intl.NumberFormat('en-AU', { style: 'currency', currency }).format(n);
+  const plans = goals.map((g) => goalPlan(g, today, currency));
+  const active = plans.filter((p) => p.status !== 'done' && p.status !== 'overdue');
+
+  // Earning needed = normal costs (bills, everyday spending, usual savings) + what the goals need
+  const normalMonth = d.required.minimumMonthlyIncome, normalWeek = round2((normalMonth * 12) / 52);
+  const goalsWeek = sumBy(active, (p) => p.thisWeek.needed), goalsMonth = sumBy(active, (p) => p.thisMonth.needed);
+  const weekGot = sumBy(weekIncome, (i) => i.amount), weekReceived = sumBy(weekIncome.filter((i) => i.status === 'paid'), (i) => i.amount);
+  const earn = {
+    week: { normal: normalWeek, goals: goalsWeek, total: round2(normalWeek + goalsWeek), soFar: weekGot, toGo: Math.max(0, round2(normalWeek + goalsWeek - weekGot)) },
+    month: { normal: normalMonth, goals: goalsMonth, total: round2(normalMonth + goalsMonth), soFar: d.month.incomeIncludingExpected, toGo: Math.max(0, round2(normalMonth + goalsMonth - d.month.incomeIncludingExpected)) },
+  };
+
+  // Spare this week = what actually came in this week, less what was spent and what has already gone to savings
+  const spent = sumBy(weekExpenses, (e) => e.amount);
+  const savedThisWeek = sumBy(plans, (p) => p.thisWeek.saved);
+  const spare = round2(weekReceived - spent - savedThisWeek);
+  const stillToPut = sumBy(active, (p) => p.thisWeek.stillToPut);
+  let capacity: { status: 'pass' | 'warn' | 'fail'; text: string } | null = null;
+  if (active.length) {
+    if (stillToPut === 0) capacity = { status: 'pass', text: `This week’s savings are done. ${spare > 0 ? `You still have about ${money(spare)} spare from this week if you want to get further ahead.` : ''}`.trim() };
+    else if (spare >= stillToPut) capacity = { status: 'pass', text: `This week you received ${money(weekReceived)} and spent ${money(spent)}, so about ${money(spare)} is spare. You need to put ${money(stillToPut)} aside — you could put in up to ${money(spare)}, which is ${money(round2(spare - stillToPut))} extra and makes the coming weeks smaller.` };
+    else if (spare > 0) capacity = { status: 'warn', text: `This week you received ${money(weekReceived)} and spent ${money(spent)}, so about ${money(spare)} is spare — ${money(round2(stillToPut - spare))} less than the ${money(stillToPut)} needed. Put in what you can; the rest is spread over the coming weeks.` };
+    else capacity = { status: 'fail', text: `Nothing is spare this week yet (${money(weekReceived)} received, ${money(spent)} spent), and ${money(stillToPut)} is needed. Whatever you can’t put in is spread over the coming weeks.` };
+  }
+  return { today, currency, week: { from: ws, to: we }, goals: plans, earn, spare: { amount: spare, received: weekReceived, spent, savedThisWeek, stillToPut }, capacity, hasBalance: Boolean(budget?.balance?.asOf) };
 }

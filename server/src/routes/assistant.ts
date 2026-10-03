@@ -1,12 +1,12 @@
 import { Router } from 'express';
 import { z } from 'zod';
-import { Budget, Category, Expense, WishItem } from '../models/index.js';
+import { Budget, Category, Expense, SavingsGoal, WishItem } from '../models/index.js';
 import { parseBody } from '../middleware/validate.js';
 import { userCtx } from '../utils/userCtx.js';
 import { badRequest, notFound } from '../utils/httpError.js';
 import { zDate, zMoney, zOptStr, zStr } from '../utils/zod.js';
 import { audit } from '../services/audit.js';
-import { assessPurchase, overview, planGoal, snapshot } from '../services/assistant.js';
+import { assessPurchase, goalPlan, goalsOverview, overview, planGoal, previewContribution, snapshot } from '../services/assistant.js';
 
 /** The Assistant: answers worked out from the user's own records. Nothing here changes data except the balance and the wishlist. */
 const r = Router();
@@ -76,6 +76,71 @@ r.post('/wishlist/:id/buy', async (req, res) => {
   w.set({ status: 'bought', boughtDate: exp.date, expenseId: exp._id });
   await w.save();
   res.status(201).json({ item: w.toJSON(), expense: exp.toJSON() });
+});
+
+// ---------- Saving up for something by a date ----------
+r.get('/goals', async (req, res) => {
+  const { today } = await userCtx(req);
+  res.json(await goalsOverview(req.userId!, today));
+});
+
+r.post('/goals', async (req, res) => {
+  const body = parseBody(z.object({ name: zStr(120).min(1, 'What are you saving for?'), target: amount, dueDate: zDate, alreadySaved: zMoney.optional() }), req.body);
+  const { today } = await userCtx(req);
+  if (body.dueDate < today) throw badRequest('Pick today or a later date');
+  if ((body.alreadySaved ?? 0) >= body.target) throw badRequest('You already have this much saved');
+  if ((await SavingsGoal.countDocuments({ userId: req.userId, archived: { $ne: true } })) >= 10) throw badRequest('You can have up to 10 goals at a time. Remove one first.');
+  await SavingsGoal.create({ userId: req.userId, name: body.name, target: body.target, dueDate: body.dueDate, startDate: today, startingSaved: body.alreadySaved ?? 0 });
+  res.status(201).json(await goalsOverview(req.userId!, today));
+});
+
+r.patch('/goals/:id', async (req, res) => {
+  const body = parseBody(z.object({ name: zStr(120).min(1).optional(), target: amount.optional(), dueDate: zDate.optional() }), req.body);
+  const g = await SavingsGoal.findOne({ _id: req.params.id, userId: req.userId });
+  if (!g) throw notFound('Goal not found');
+  g.set(body);
+  await g.save();
+  const { today } = await userCtx(req);
+  res.json(await goalsOverview(req.userId!, today));
+});
+
+r.delete('/goals/:id', async (req, res) => {
+  const g = await SavingsGoal.findOneAndDelete({ _id: req.params.id, userId: req.userId });
+  if (!g) throw notFound('Goal not found');
+  const { today } = await userCtx(req);
+  res.json(await goalsOverview(req.userId!, today));
+});
+
+/** What a contribution of this size would do to the plan (nothing is saved). */
+r.post('/goals/:id/preview', async (req, res) => {
+  const body = parseBody(z.object({ amount }), req.body);
+  const g = await SavingsGoal.findOne({ _id: req.params.id, userId: req.userId }).lean();
+  if (!g) throw notFound('Goal not found');
+  const { today, currency } = await userCtx(req);
+  res.json(previewContribution(goalPlan(g, today, currency), body.amount, currency));
+});
+
+/** Record money put aside for the goal. */
+r.post('/goals/:id/contributions', async (req, res) => {
+  const body = parseBody(z.object({ amount, date: zDate.optional(), note: zOptStr(200) }), req.body);
+  const { today } = await userCtx(req);
+  if (body.date && body.date > today) throw badRequest('The date can’t be in the future');
+  const g = await SavingsGoal.findOne({ _id: req.params.id, userId: req.userId });
+  if (!g) throw notFound('Goal not found');
+  g.contributions.push({ date: body.date ?? today, amount: body.amount, note: body.note });
+  await g.save();
+  res.status(201).json(await goalsOverview(req.userId!, today));
+});
+
+r.delete('/goals/:id/contributions/:cid', async (req, res) => {
+  const g = await SavingsGoal.findOne({ _id: req.params.id, userId: req.userId });
+  if (!g) throw notFound('Goal not found');
+  const c = g.contributions.id(req.params.cid);
+  if (!c) throw notFound('That entry was not found');
+  c.deleteOne();
+  await g.save();
+  const { today } = await userCtx(req);
+  res.json(await goalsOverview(req.userId!, today));
 });
 
 export default r;

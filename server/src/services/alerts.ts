@@ -1,5 +1,6 @@
 import { Types } from 'mongoose';
-import { Settings, Job, Budget, AlertState, Income } from '../models/index.js';
+import { Settings, Job, Budget, AlertState, Income, SavingsGoal } from '../models/index.js';
+import { goalPlan } from './assistant.js';
 import { addDays, diffDays, monthEnd, monthStart, weekStart } from '../utils/dates.js';
 import { dashboard } from './finance.js';
 
@@ -71,6 +72,18 @@ export async function computeAlerts(userId: string, today: string, currency: str
     if (budget?.monthlySavingsTarget && dayOfMonth > 7) {
       const expectedByNow = (budget.monthlySavingsTarget * dayOfMonth) / daysInMonth;
       if (d.month.savingsThisMonth < expectedByNow * 0.8) out.push({ id: 'savings-behind', type: 'savings', severity: 'info', title: 'Savings behind target pace', message: `Net this month ${money(d.month.savingsThisMonth)} vs ${money(budget.monthlySavingsTarget)} target`, link: '/budgets' });
+    }
+  }
+  if (n.budgetAlerts !== false) {
+    // Savings goals: from Friday, remind about anything this week still needs
+    const dow = new Date(`${today}T00:00:00Z`).getUTCDay();
+    const goals = await SavingsGoal.find({ userId: new Types.ObjectId(userId), archived: { $ne: true } }).lean();
+    for (const g of goals) {
+      const p = goalPlan(g, today, currency);
+      if (p.status === 'overdue') out.push({ id: `goal-${p.id}-overdue`, type: 'savings', severity: 'warning', title: `${p.name}: the date has passed`, message: `${money(p.remaining)} still to save.`, link: '/assistant' });
+      else if (p.status !== 'done' && p.thisWeek.stillToPut > 0 && (dow === 5 || dow === 6 || dow === 0)) {
+        out.push({ id: `goal-${p.id}-${p.thisWeek.from}`, type: 'savings', severity: 'info', title: `Put ${money(p.thisWeek.stillToPut)} aside for ${p.name}`, message: `This week needs ${money(p.thisWeek.needed)}${p.thisWeek.saved > 0 ? ` and you’ve put in ${money(p.thisWeek.saved)}` : ''}. ${money(p.remaining)} to go by ${day(p.dueDate)}.`, date: p.thisWeek.to, link: '/assistant' });
+      }
     }
   }
   if (n.taskReminders !== false) {

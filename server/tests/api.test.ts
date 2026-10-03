@@ -305,3 +305,37 @@ describe('API end-to-end', () => {
     expect(bad.status).toBe(400);
   });
 });
+
+describe('reset everything', () => {
+  it('deletes all of one account\'s data, keeps the login and leaves other accounts alone', async () => {
+    const a = request.agent(app), b = request.agent(app);
+    await a.post('/api/auth/register').send({ name: 'Reset Me', email: 'reset@example.com', password: 'password123' }).expect(201);
+    await b.post('/api/auth/register').send({ name: 'Bystander', email: 'bystander@example.com', password: 'password123' }).expect(201);
+    for (const x of [a, b]) {
+      await x.post('/api/jobs').send({ date: '2026-10-02', clientName: 'Sonia', amount: 25 }).expect(201);
+      await x.post('/api/expenses').send({ date: '2026-10-02', amount: 12.5, description: 'Lunch' }).expect(201);
+      await x.post('/api/bills').send({ name: 'Rent', amount: 320, frequency: 'weekly', dueDate: '2026-10-05' }).expect(201);
+      await x.patch('/api/settings').send({ notifications: { billReminderDays: 9 } }).expect(200);
+    }
+    const doc = await a.post('/api/documents').field('meta', JSON.stringify({ kind: 'receipt', title: 'Fuel', date: '2026-10-02' })).attach('file', Buffer.from('%PDF-1.4 receipt'), { filename: 'fuel.pdf', contentType: 'application/pdf' }).expect(201);
+
+    // Needs the right password and the word DELETE
+    await a.post('/api/auth/reset-data').send({ currentPassword: 'wrong-password', confirm: 'DELETE' }).expect(400);
+    await a.post('/api/auth/reset-data').send({ currentPassword: 'password123', confirm: 'yes' }).expect(400);
+    expect((await a.get('/api/jobs')).body.items).toHaveLength(1);
+
+    const r = await a.post('/api/auth/reset-data').send({ currentPassword: 'password123', confirm: 'delete' }).expect(200);
+    expect(r.body.deleted).toMatchObject({ Job: 1, Income: 1, Expense: 1, RecurringBill: 1, Document: 1 });
+    for (const path of ['jobs', 'income', 'expenses', 'bills', 'clients', 'documents', 'tasks']) expect((await a.get(`/api/${path}`)).body.items, path).toHaveLength(0);
+    await a.get(`/api/documents/${doc.body.id}/file`).expect(404);
+    // Still signed in, with the starting categories and default settings back
+    expect((await a.get('/api/auth/me')).body.user.email).toBe('reset@example.com');
+    expect((await a.get('/api/categories')).body.items.length).toBeGreaterThan(5);
+    expect((await a.get('/api/settings')).body.notifications.billReminderDays).not.toBe(9);
+
+    // The other account is untouched
+    expect((await b.get('/api/jobs')).body.items).toHaveLength(1);
+    expect((await b.get('/api/expenses')).body.items).toHaveLength(1);
+    expect((await b.get('/api/settings')).body.notifications.billReminderDays).toBe(9);
+  });
+});

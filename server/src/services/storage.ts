@@ -11,6 +11,8 @@ export interface StorageProvider {
   /** Put a file back at a known key (used when a copy is recovered from Google Drive). */
   restore(key: string, buffer: Buffer): Promise<void>;
   remove(key: string): Promise<void>;
+  /** Delete every file stored for one user. */
+  removeAll(userId: string): Promise<void>;
 }
 
 const root = path.resolve(env.UPLOAD_DIR);
@@ -37,6 +39,10 @@ class LocalStorage implements StorageProvider {
     const full = this.resolve(key);
     await fs.mkdir(path.dirname(full), { recursive: true });
     await fs.writeFile(full, buffer);
+  }
+  async removeAll(userId: string) {
+    if (!/^[a-f0-9]{24}$/i.test(userId)) throw new Error('Invalid user id');
+    await fs.rm(this.resolve(userId), { recursive: true, force: true });
   }
   async remove(key: string) {
     await fs.rm(this.resolve(key), { force: true });

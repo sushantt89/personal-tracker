@@ -3,7 +3,11 @@ import bcrypt from 'bcryptjs';
 import crypto from 'node:crypto';
 import rateLimit from 'express-rate-limit';
 import { z } from 'zod';
-import { User } from '../models/index.js';
+import mongoose from 'mongoose';
+import { User, GoogleAccount } from '../models/index.js';
+import { oauthClient } from '../services/google/client.js';
+import { decrypt } from '../utils/crypto.js';
+import { storage } from '../services/storage.js';
 import { parseBody } from '../middleware/validate.js';
 import { requireAuth, signToken, cookieOptions, COOKIE_NAME } from '../middleware/auth.js';
 import { badRequest, conflict, unauthorized } from '../utils/httpError.js';
@@ -72,6 +76,39 @@ r.post('/change-password', requireAuth, limiter, async (req, res) => {
   await user.save();
   res.cookie(COOKIE_NAME, signToken(String(user._id), user.tokenVersion), cookieOptions());
   res.json({ ok: true });
+});
+
+/**
+ * Start again: permanently deletes everything this account has stored (jobs, money, invoices, documents, settings…)
+ * and puts the default categories, income sources and settings back. The login itself is kept.
+ * Needs the current password and the word DELETE, so it can't happen by accident or from a stolen session alone.
+ */
+r.post('/reset-data', requireAuth, limiter, async (req, res) => {
+  const body = parseBody(z.object({ currentPassword: z.string().min(1, 'Enter your password'), confirm: z.string(), disconnectGoogle: z.boolean().default(false) }), req.body);
+  if (body.confirm.trim().toUpperCase() !== 'DELETE') throw badRequest('Type DELETE to confirm');
+  const user = await User.findById(req.userId).select('+passwordHash');
+  if (!user || !(await bcrypt.compare(body.currentPassword, user.passwordHash))) throw badRequest('Password is incorrect');
+  const userId = String(user._id);
+
+  if (body.disconnectGoogle) {
+    const acc = await GoogleAccount.findOne({ userId }).select('+refreshTokenEnc');
+    if (acc) {
+      try { await oauthClient().revokeToken(decrypt(acc.refreshTokenEnc)); } catch { /* already revoked or expired */ }
+    }
+  }
+  // Every collection that stores records per user, found automatically so new ones are never forgotten
+  const keep = new Set(['User', 'PushSubscription', ...(body.disconnectGoogle ? [] : ['GoogleAccount'])]);
+  const deleted: Record<string, number> = {};
+  for (const [name, m] of Object.entries(mongoose.models)) {
+    if (keep.has(name) || !m.schema.path('userId')) continue;
+    const r2 = await m.deleteMany({ userId: user._id });
+    if (r2.deletedCount) deleted[name] = r2.deletedCount;
+  }
+  if (!body.disconnectGoogle) await GoogleAccount.updateOne({ userId }, { $unset: { driveFolders: 1, lastCalendarSyncAt: 1, lastCalendarPullAt: 1 }, $set: { lastError: null } });
+  await storage.removeAll(userId).catch((e) => console.error('[reset] could not remove uploaded files:', (e as Error).message));
+  await ensureUserDefaults(userId);
+  console.log(`[reset] user ${userId} deleted all data:`, JSON.stringify(deleted));
+  res.json({ ok: true, deleted });
 });
 
 r.post('/forgot-password', limiter, async (req, res) => {

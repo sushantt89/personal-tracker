@@ -3,7 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useSearchParams } from 'react-router-dom';
 import {
   Box, Card, CardContent, Tabs, Tab, Grid, TextField, Button, Stack, Typography, MenuItem, Switch, FormControlLabel, Chip, Autocomplete, Alert, IconButton,
-  List, ListItem, ListItemText, Divider, ToggleButtonGroup, ToggleButton, Avatar, Checkbox,
+  List, ListItem, ListItemText, Divider, ToggleButtonGroup, ToggleButton, Avatar, Checkbox, Dialog, DialogTitle, DialogContent, DialogActions,
 } from '@mui/material';
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 import ArchiveOutlinedIcon from '@mui/icons-material/ArchiveOutlined';
@@ -34,6 +34,58 @@ function useSaver() {
   return async (fn: () => Promise<unknown>, keys: string[], msg = 'Saved') => {
     try { await fn(); await Promise.all(keys.map((k) => qc.invalidateQueries({ queryKey: [k] }))); toast(msg); } catch (e) { toast((e as Error).message, 'error'); }
   };
+}
+
+/** Delete everything and start again. Asks for the password and the word DELETE so it can't happen by accident. */
+function ResetEverything() {
+  const qc = useQueryClient();
+  const toast = useToast();
+  const integrations = useIntegrations();
+  const googleConnected = !!integrations.data?.googleCalendar.email;
+  const [open, setOpen] = useState(false);
+  const [confirmText, setConfirmText] = useState('');
+  const [pw, setPw] = useState('');
+  const [disconnectGoogle, setDisconnectGoogle] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const close = () => { if (busy) return; setOpen(false); setConfirmText(''); setPw(''); setError(null); setDisconnectGoogle(false); };
+  const run = async () => {
+    setBusy(true); setError(null);
+    try {
+      await post('/auth/reset-data', { currentPassword: pw, confirm: confirmText, disconnectGoogle });
+      try { localStorage.removeItem('pt-last-employer'); } catch { /* ignore */ }
+      setBusy(false); setOpen(false); setConfirmText(''); setPw('');
+      qc.clear();
+      toast('Everything was deleted. You’re starting fresh.');
+      window.location.assign('/');
+    } catch (e) {
+      setError((e as Error).message);
+      setBusy(false);
+    }
+  };
+  return (
+    <SectionCard title="Reset everything" subtitle="Delete all your data and start again">
+      <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>Removes every job, shift, income and expense record, bill, invoice, client, task, receipt, document, budget and setting. Your login stays, and the starting categories come back. This can’t be undone.</Typography>
+      <Button variant="outlined" color="error" startIcon={<DeleteOutlineIcon />} onClick={() => setOpen(true)}>Delete all my data…</Button>
+      <Dialog open={open} onClose={close} maxWidth="xs" fullWidth>
+        <DialogTitle>Delete all your data?</DialogTitle>
+        <DialogContent>
+          <Stack spacing={2} sx={{ pt: 0.5 }}>
+            <Alert severity="error">This permanently deletes everything in your account. There is no undo and no backup. If you might want the figures later, download them first from <b>Reports → More → Full financial report (Excel)</b>.</Alert>
+            <Typography variant="body2" color="text.secondary">Events already added to Google Calendar and files already saved to Google Drive stay in Google; delete them there if you want them gone.</Typography>
+            {googleConnected && <FormControlLabel control={<Checkbox checked={disconnectGoogle} onChange={(e) => setDisconnectGoogle(e.target.checked)} />} label="Also disconnect my Google account" />}
+            <TextField label="Type DELETE to confirm" value={confirmText} onChange={(e) => setConfirmText(e.target.value)} autoComplete="off" />
+            <TextField type="password" label="Your password" value={pw} onChange={(e) => setPw(e.target.value)} autoComplete="current-password" />
+            {error && <Alert severity="warning">{error}</Alert>}
+          </Stack>
+        </DialogContent>
+        <DialogActions sx={{ px: 3, pb: 2 }}>
+          <Button onClick={close} color="inherit" disabled={busy}>Cancel</Button>
+          <Button variant="contained" color="error" onClick={run} disabled={busy || confirmText.trim().toUpperCase() !== 'DELETE' || !pw}>{busy ? 'Deleting…' : 'Delete everything'}</Button>
+        </DialogActions>
+      </Dialog>
+    </SectionCard>
+  );
 }
 
 function AccountTab() {
@@ -70,6 +122,9 @@ function AccountTab() {
             <Button variant="outlined" disabled={!pw.currentPassword || pw.newPassword.length < 8} onClick={() => save(async () => { await post('/auth/change-password', pw); setPw({ currentPassword: '', newPassword: '' }); }, [], 'Password changed')}>Update password</Button>
           </Stack>
         </SectionCard>
+      </Grid>
+      <Grid size={{ xs: 12, md: 5 }} sx={{ order: 1 }}>
+        <ResetEverything />
       </Grid>
       <Grid size={{ xs: 12, md: 7 }}>
         <SectionCard title="Install the app" subtitle="Put Personal Tracker on your Home Screen so it opens full screen like any other app">

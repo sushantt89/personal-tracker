@@ -37,17 +37,18 @@ export const incomeDefaults = () => ({ date: localToday(), amount: '', status: '
 export const workTypeOptions = [
   { value: 'own', label: 'My own business (I invoice the client)' },
   { value: 'subcontract', label: 'Working under a contractor (I invoice the contractor)' },
+  { value: 'employee', label: 'Employee (shifts for an employer, paid as wages)' },
 ];
 
 export const jobFields: FieldDef[] = [
-  { name: 'clientId', label: 'Client (where the work is done)', type: 'client', clientType: 'client', required: false, quick: true, autoFocus: true },
+  { name: 'clientId', label: 'Client or employer', type: 'client', clientType: 'client', required: false, quick: true, autoFocus: true },
   { name: 'incomeSourceId', label: 'Income source', type: 'source', quick: true },
   { name: 'workType', label: 'Working as', type: 'select', options: workTypeOptions, quick: true, helper: 'Leave as-is to use the income source default' },
   { name: 'contractorId', label: 'Contractor (who pays you)', type: 'client', clientType: 'contractor', quick: true, showIf: (v) => v.workType === 'subcontract', helper: 'Pick one or type a new name' },
   { name: 'date', label: 'Date', type: 'date', required: true, quick: true, span: 4 },
   { name: 'startTime', label: 'Start', type: 'time', quick: true, span: 4 },
   { name: 'endTime', label: 'End', type: 'time', span: 4 },
-  { name: 'amount', label: 'Amount', type: 'money', quick: true, span: 4 },
+  { name: 'amount', label: 'Amount', type: 'money', quick: true, span: 4, helper: 'Leave empty if you don’t know the pay yet' },
   { name: 'hoursWorked', label: 'Hours worked', type: 'number', span: 4 },
   { name: 'status', label: 'Status', type: 'select', options: opts(['scheduled', 'in_progress', 'completed', 'cancelled']), span: 4 },
   { name: 'h-addr', label: 'Address', type: 'heading' },

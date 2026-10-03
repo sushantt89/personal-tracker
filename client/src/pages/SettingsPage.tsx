@@ -116,9 +116,10 @@ function FinanceTab({ settings }: { settings: Settings }) {
   const sourceExtra = (s: IncomeSource) => (
     <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} sx={{ mt: 0.75 }} onClick={(e) => e.stopPropagation()}>
       <TextField select size="small" label="Default: working as" value={s.workType ?? 'own'} sx={{ minWidth: 170 }} fullWidth={false}
-        onChange={(e) => save(() => patch(`/income-sources/${s.id}`, { workType: e.target.value, ...(e.target.value === 'own' ? { contractorId: null } : {}) }), ['income-sources'])}>
+        onChange={(e) => save(() => patch(`/income-sources/${s.id}`, { workType: e.target.value, ...(e.target.value !== 'subcontract' ? { contractorId: null } : {}) }), ['income-sources'])}>
         <MenuItem value="own">Own business</MenuItem>
         <MenuItem value="subcontract">Under a contractor</MenuItem>
+        <MenuItem value="employee">Employee (wages)</MenuItem>
       </TextField>
       {s.workType === 'subcontract' && (
         <TextField select size="small" label="Contractor" value={s.contractorId ?? ''} sx={{ minWidth: 170 }} fullWidth={false}

@@ -84,8 +84,10 @@ r.get('/candidates', async (req, res) => {
   if (q.clientId) filter.clientId = q.clientId;
   if (q.contractorId) filter.contractorId = q.contractorId;
   // Billing a contractor → only jobs done under contractors; billing a client directly → only your own jobs
+  // Shifts worked as an employee are paid as wages and never go on an invoice
   if (q.workType === 'subcontract') filter.workType = 'subcontract';
-  else if (q.workType === 'own') filter.workType = { $ne: 'subcontract' };
+  else if (q.workType === 'own') filter.workType = { $nin: ['subcontract', 'employee'] };
+  else filter.workType = { $ne: 'employee' };
   const jobs = await Job.find(filter).sort({ date: 1, startTime: 1 });
   const total = jobs.reduce((a, j) => a + (j.amount ?? 0), 0);
   res.json({ items: jobs.map((j) => j.toJSON()), total: Math.round(total * 100) / 100 });

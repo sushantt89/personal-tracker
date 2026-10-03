@@ -1,8 +1,12 @@
 import { Router } from 'express';
 import crypto from 'node:crypto';
 import { z } from 'zod';
-import { parseMessage, normaliseForHash, formatAddress } from '../services/parser/index.js';
+import multer from 'multer';
+import { parseMessage, parseRoster, normaliseForHash, formatAddress, type ParseResult } from '../services/parser/index.js';
+import { extractText, isHeic, OCR_IMAGE_TYPES } from '../services/ocr/engine.js';
+import { env } from '../config/env.js';
 import { ImportBatch, Job, Income, IncomeSource, Invoice, Settings } from '../models/index.js';
+import { WORK_TYPES } from '../models/Job.js';
 import { queueCalendarSync } from '../services/google/calendar.js';
 import { queueTravelDay } from '../services/travel/index.js';
 import { googleApis } from '../services/google/client.js';
@@ -28,12 +32,8 @@ async function findDuplicateJob(userId: string, j: { date?: string; startTime?: 
   return dup ? String(dup._id) : null;
 }
 
-/** Step 1: analyse pasted text. Nothing is saved. */
-r.post('/parse', async (req, res) => {
-  const { text } = parseBody(z.object({ text: z.string().min(1, 'Paste a message first').max(10000, 'Message is too long') }), req.body);
-  const { today } = await userCtx(req);
-  const result = parseMessage(text, { today });
-  const userId = req.userId!;
+/** Shared by pasted text and uploaded roster photos: add duplicate checks, payment matches and suggestions. Nothing is saved. */
+async function reviewPayload(userId: string, text: string, result: ParseResult, format: 'roster' | 'message') {
 
   for (const j of result.jobs) j.duplicateOfJobId = await findDuplicateJob(userId, j);
 
@@ -55,15 +55,68 @@ r.post('/parse', async (req, res) => {
   const hash = hashOf(text);
   const previous = await ImportBatch.findOne({ userId, messageHash: hash }).sort({ createdAt: -1 }).lean();
   const jobSources = await IncomeSource.find({ userId, archived: { $ne: true } }).sort({ isJobBased: -1, name: 1 }).lean();
-  res.json({
+  // A roster is shift work for an employer: prefer an income source already set up that way
+  const employeeSource = format === 'roster' ? jobSources.find((s) => s.workType === 'employee') : undefined;
+  if (format === 'roster') return {
     ...result,
+    format,
+    messageHash: hash,
+    alreadyImported: previous ? { at: previous.createdAt, jobCount: previous.jobIds.length } : null,
+    suggestedIncomeSourceId: employeeSource ? String(employeeSource._id) : null,
+    suggestedWorkType: 'employee',
+    suggestedContractorId: null,
+    paymentMatches,
+  };
+  return {
+    ...result,
+    format,
     messageHash: hash,
     alreadyImported: previous ? { at: previous.createdAt, jobCount: previous.jobIds.length } : null,
     suggestedIncomeSourceId: jobSources[0] ? String(jobSources[0]._id) : null,
     suggestedWorkType: jobSources[0]?.workType ?? 'own',
     suggestedContractorId: jobSources[0]?.contractorId ? String(jobSources[0].contractorId) : null,
     paymentMatches,
-  });
+  };
+}
+
+/** A roster (labelled start/finish times or a list of dated shifts) is read by the roster parser, anything else as a message. */
+function analyse(text: string, today: string, employer?: string): { result: ParseResult; format: 'roster' | 'message' } {
+  const roster = parseRoster(text, { today, employer });
+  return roster ? { result: roster, format: 'roster' } : { result: parseMessage(text, { today }), format: 'message' };
+}
+
+/** Step 1: analyse pasted text. Nothing is saved. */
+r.post('/parse', async (req, res) => {
+  const { text, employer } = parseBody(z.object({ text: z.string().min(1, 'Paste a message first').max(10000, 'Message is too long'), employer: zOptStr(120) }), req.body);
+  const { today } = await userCtx(req);
+  const { result, format } = analyse(text, today, employer ?? undefined);
+  res.json(await reviewPayload(req.userId!, text, result, format));
+});
+
+const rosterUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: env.MAX_UPLOAD_MB * 1024 * 1024, files: 1 },
+  fileFilter: (_req, file, cb) => ([...OCR_IMAGE_TYPES, 'application/pdf'].includes(file.mimetype) || isHeic(file.mimetype, file.originalname) ? cb(null, true) : cb(new Error('Upload a screenshot or photo (JPG, PNG, WebP, HEIC) or a PDF'))),
+});
+
+/** Step 1 for a roster screenshot/photo: read the text out of the image, then analyse it like pasted text. Nothing is saved. */
+r.post('/roster', rosterUpload.single('file'), async (req, res) => {
+  if (!req.file) throw badRequest('Choose a roster screenshot or photo first');
+  const { employer } = parseBody(z.object({ employer: zOptStr(120) }), req.body ?? {});
+  const { today } = await userCtx(req);
+  const mime = isHeic(req.file.mimetype, req.file.originalname) ? 'image/heic' : req.file.mimetype;
+  let ocr;
+  try {
+    ocr = await extractText(req.file.buffer, mime);
+  } catch (e) {
+    throw badRequest((e as Error).message);
+  }
+  const text = ocr.text.trim().slice(0, 10000);
+  if (!text) throw badRequest('No text could be read from that image. Try a sharper screenshot, or paste the roster as text instead.');
+  const { result, format } = analyse(text, today, employer ?? undefined);
+  if (ocr.source !== 'pdf-text' && ocr.confidence < 60) result.warnings.unshift('The image was hard to read — please check every date and time.');
+  if (!result.jobs.length && !result.payments.length) result.warnings.unshift('No shifts could be found in that image. The text that was read is shown in the box so you can fix it and analyse again.');
+  res.json({ ...(await reviewPayload(req.userId!, text, result, format)), text, ocrConfidence: ocr.confidence });
 });
 
 const commitJob = z.object({
@@ -82,7 +135,7 @@ const commitJob = z.object({
   meetingPoint: zOptStr(300),
   sourceText: zOptStr(5000),
   incomeSourceId: zOptId,
-  workType: z.enum(['own', 'subcontract']).optional(),
+  workType: z.enum(WORK_TYPES).optional(),
   contractorId: zOptId,
   contractorName: zOptStr(120),
 });
@@ -103,7 +156,7 @@ r.post('/commit', async (req, res) => {
     z.object({
       sourceMessage: z.string().max(10000).default(''),
       incomeSourceId: zOptId,
-      workType: z.enum(['own', 'subcontract']).optional(),
+      workType: z.enum(WORK_TYPES).optional(),
       contractorId: zOptId,
       contractorName: zOptStr(120),
       createIncome: z.boolean().default(true),

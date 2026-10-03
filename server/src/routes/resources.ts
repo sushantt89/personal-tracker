@@ -8,7 +8,7 @@ import { audit } from '../services/audit.js';
 import { queueCalendarSync } from '../services/google/calendar.js';
 import { queueTravelDay } from '../services/travel/index.js';
 import { materialiseRecurringIncome } from '../services/recurringIncome.js';
-import { conflict, notFound } from '../utils/httpError.js';
+import { conflict, notFound, badRequest } from '../utils/httpError.js';
 import { parseBody } from '../middleware/validate.js';
 import { zDate, zMoney, zOptStr } from '../utils/zod.js';
 import { billsDue, requiredIncome, jobHours } from '../services/finance.js';
@@ -82,6 +82,11 @@ const jobsCrud = crudRouter({
   searchFields: ['clientName', 'contractorName', 'title', 'description', 'address.formatted', 'address.suburb', 'notes'],
   filterFields: ['status', 'clientId', 'incomeSourceId', 'invoiceId', 'workType', 'contractorId'],
   dateField: 'date', sort: { date: -1, startTime: 1 }, calendarKind: 'job',
+  // ?pay=unset → jobs/shifts whose pay hasn't been entered yet; ?pay=set → the rest
+  extraFilter: (req, filter) => {
+    if (req.query.pay === 'unset') Object.assign(filter, { $and: [{ $or: [{ amount: null }, { amount: 0 }] }], status: filter.status ?? { $ne: 'cancelled' } });
+    else if (req.query.pay === 'set') filter.amount = { $gt: 0 };
+  },
   hooks: {
     beforeCreate: async (req, data) => {
       await resolveClient(req.userId!, data, { create: true, address: data.address, incomeSourceId: data.incomeSourceId });
@@ -158,6 +163,58 @@ jobsRouter.post('/complete-past', async (req, res) => {
     await audit(req.userId!, 'Job', j._id, 'update', before, j.toJSON(), 'Bulk complete past jobs');
   }
   res.json({ updated: jobs.length });
+});
+/**
+ * Record pay after the fact: one amount (e.g. a payslip) shared across the chosen shifts in proportion to their hours.
+ * Each shift gets its share as its amount, and its income record is marked as received.
+ */
+jobsRouter.post('/record-pay', async (req, res) => {
+  const body = parseBody(
+    z.object({
+      jobIds: z.array(z.string().regex(/^[a-f0-9]{24}$/i)).min(1, 'Choose at least one shift').max(200),
+      total: zMoney.refine((n) => n > 0, 'Enter the amount you were paid'),
+      paidDate: zDate.optional(),
+      paymentMethod: zOptStr(60),
+      markCompleted: z.boolean().default(true),
+    }),
+    req.body,
+  );
+  const userId = req.userId!;
+  const { today } = await userCtx(req);
+  const jobs = await Job.find({ _id: { $in: body.jobIds }, userId, status: { $ne: 'cancelled' } }).sort({ date: 1, startTime: 1 });
+  if (jobs.length !== new Set(body.jobIds).size) throw badRequest('Some of those shifts could not be found (or are cancelled). Refresh and try again.');
+  if (jobs.some((j) => j.invoiceId)) throw conflict('One of those jobs is on an invoice — its amount is set by the invoice.');
+
+  // Share by hours; if no hours are known, share equally. Work in cents so the parts add up exactly.
+  const hours = jobs.map((j) => jobHours(j));
+  const weights = hours.every((h) => h > 0) ? hours : jobs.map(() => 1);
+  const weightSum = weights.reduce((a, b) => a + b, 0);
+  const cents = Math.round(body.total * 100);
+  const shares = weights.map((w) => Math.floor((cents * w) / weightSum));
+  shares[shares.length - 1] += cents - shares.reduce((a, b) => a + b, 0);
+  const paidDate = body.paidDate ?? today;
+
+  const out: any[] = [];
+  for (const [i, job] of jobs.entries()) {
+    const before = job.toJSON();
+    job.amount = shares[i] / 100;
+    if (body.markCompleted && job.status !== 'completed' && job.date <= today) job.status = 'completed';
+    await job.save();
+    await audit(userId, 'Job', job._id, 'update', before, job.toJSON(), 'Pay recorded');
+    const fields = { amount: job.amount, date: job.date, ...payerOf(job), description: jobIncomeDescription(job), incomeSourceId: job.incomeSourceId, hoursWorked: jobHours(job) || undefined, status: 'paid', paidDate, ...(body.paymentMethod ? { paymentMethod: body.paymentMethod } : {}) };
+    const income = await Income.findOne({ userId, jobId: job._id });
+    if (income) {
+      const prev = income.toJSON();
+      income.set(fields);
+      await income.save();
+      await audit(userId, 'Income', income._id, 'update', prev, income.toJSON(), `Pay recorded for job ${job._id}`);
+    } else {
+      const created = await Income.create({ userId, jobId: job._id, ...fields });
+      await audit(userId, 'Income', created._id, 'create', undefined, created.toJSON(), `Pay recorded for job ${job._id}`);
+    }
+    out.push(job.toJSON());
+  }
+  res.json({ updated: out.length, total: cents / 100, perHour: hours.every((h) => h > 0) ? Math.round((cents / weightSum)) / 100 : null, jobs: out });
 });
 jobsRouter.use('/', jobsCrud);
 

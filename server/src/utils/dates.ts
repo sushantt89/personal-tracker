@@ -76,5 +76,6 @@ export function minutesBetween(start?: string, end?: string): number | undefined
   const [sh, sm] = start.split(':').map(Number);
   const [eh, em] = end.split(':').map(Number);
   const diff = eh * 60 + em - (sh * 60 + sm);
-  return diff > 0 ? diff : undefined;
+  // A finish time earlier than the start means the shift runs past midnight
+  return diff > 0 ? diff : diff < 0 ? diff + 24 * 60 : undefined;
 }

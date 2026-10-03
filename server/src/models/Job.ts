@@ -2,7 +2,7 @@ import { Schema, model } from 'mongoose';
 import { baseOptions, ownerField, addressSchema, dateReq, dateOpt, timeField, moneyReq, moneyOpt, ref, externalSyncSchema } from './_common.js';
 
 export const JOB_STATUSES = ['scheduled', 'in_progress', 'completed', 'cancelled'] as const;
-export const WORK_TYPES = ['own', 'subcontract'] as const;
+export const WORK_TYPES = ['own', 'subcontract', 'employee'] as const;
 
 const jobSchema = new Schema(
   {
@@ -11,7 +11,8 @@ const jobSchema = new Schema(
     clientId: ref('Client'),
     clientName: { type: String, trim: true, maxlength: 120 }, // denormalised display name
     incomeSourceId: ref('IncomeSource'),
-    /** own = you are the business and invoice the client; subcontract = you work under a contractor and invoice them */
+    /** own = you are the business and invoice the client; subcontract = you work under a contractor and invoice them;
+     *  employee = rostered shifts for an employer who pays wages (no invoice; pay is often only known after payday) */
     workType: { type: String, enum: WORK_TYPES, default: 'own' },
     contractorId: ref('Client'),
     contractorName: { type: String, trim: true, maxlength: 120 },

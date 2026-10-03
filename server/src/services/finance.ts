@@ -246,8 +246,10 @@ export async function dashboard(userId: string, f: FinanceFilters) {
       avgPerHour: rHours ? round2(rJobIncome / rHours) : 0,
       upcoming: upcomingJobs.slice(0, 10).map((j) => ({ ...j, id: String(j._id) })),
       pastUncompleted: jobs.filter((j) => j.date < f.today && j.status === 'scheduled').length,
+      /** Past shifts/jobs where the pay hasn't been entered yet */
+      payNotSet: jobs.filter((j) => j.date < f.today && j.status !== 'cancelled' && !j.amount).length,
       travel: { enabled: travel.settings.enabled, ...travel.totals, daily: travel.rows },
-      byArrangement: (['own', 'subcontract'] as const).map((w) => {
+      byArrangement: (['own', 'subcontract', 'employee'] as const).map((w) => {
         const js = rJobs.filter((j) => (j.workType ?? 'own') === w);
         return { workType: w, jobs: js.length, income: sum(js.map((j) => j.amount ?? 0)) };
       }),

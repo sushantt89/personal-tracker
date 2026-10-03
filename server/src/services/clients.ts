@@ -27,6 +27,7 @@ export async function resolveClient(userId: string, data: any, opts: { create?: 
  * Work arrangement for a job:
  *  - own:        you are the business → the client pays you and gets the invoice
  *  - subcontract: you work under a contractor → the contractor pays you and gets the invoice
+ *  - employee:   you work shifts for an employer (the "client" is the employer) → paid as wages, never invoiced
  * Fills workType/contractor from the income source defaults when not given, and resolves contractor name/id.
  */
 export async function applyWorkArrangement(userId: string, data: any, opts: { inheritFromSource?: boolean } = { inheritFromSource: true }) {
@@ -37,7 +38,7 @@ export async function applyWorkArrangement(userId: string, data: any, opts: { in
       if (data.workType === 'subcontract' && !data.contractorId && !data.contractorName && src.contractorId) data.contractorId = src.contractorId;
     }
   }
-  if (data.workType === 'own') {
+  if (data.workType === 'own' || data.workType === 'employee') {
     data.contractorId = null;
     data.contractorName = undefined;
     return;

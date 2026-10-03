@@ -1,9 +1,12 @@
+import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Button, Link, Typography, Stack, Chip } from '@mui/material';
+import { Box, Button, Link, Typography, Stack, Chip } from '@mui/material';
 import CheckCircleOutlineIcon from '@mui/icons-material/CheckCircleOutline';
 import CancelOutlinedIcon from '@mui/icons-material/CancelOutlined';
 import PlaceOutlinedIcon from '@mui/icons-material/PlaceOutlined';
 import ContentPasteGoIcon from '@mui/icons-material/ContentPasteGo';
+import PaidOutlinedIcon from '@mui/icons-material/PaidOutlined';
+import RecordPayDialog from '../components/RecordPayDialog';
 import { ResourcePage, type ResourceConfig } from '../components/ResourcePage';
 import { StatusChip, StatCard } from '../components/common';
 import type { Job } from '../api/types';
@@ -20,6 +23,9 @@ export default function Jobs() {
   const invalidate = useInvalidateFinance();
   const toast = useToast();
   const { sources, srcById } = useLookupMaps();
+  const [payOpen, setPayOpen] = useState(false);
+  const noPay = (j: Job) => !j.amount && j.status !== 'cancelled';
+  const payChip = <Chip size="small" color="warning" variant="outlined" label="Pay not set" />;
   const setStatus = async (j: Job, status: Job['status']) => {
     await patch(`/jobs/${j.id}`, { status });
     invalidate();
@@ -27,28 +33,29 @@ export default function Jobs() {
   };
   const config: ResourceConfig<Job> = {
     queryKey: 'jobs', endpoint: '/jobs', title: 'Jobs', singular: 'Job',
-    subtitle: 'Own-business jobs are billed to the client; jobs done under a contractor are billed to (and paid by) the contractor.',
+    subtitle: 'Own-business jobs are billed to the client; jobs under a contractor are billed to the contractor; employee shifts are paid as wages — add the pay once you know it.',
     fields: jobFields, defaults: jobDefaults, dateFilter: true, transform: withFormattedAddress,
     fromRecord: (j) => ({ ...j, address: j.address ?? {}, tasks: j.tasks ?? [] }),
     filters: [
       { name: 'status', label: 'Status', options: ['scheduled', 'in_progress', 'completed', 'cancelled'].map((s) => ({ value: s, label: s.replace('_', ' ') })) },
       { name: 'incomeSourceId', label: 'Source', options: sources.map((s) => ({ value: s.id, label: s.name })) },
-      { name: 'workType', label: 'Working as', options: [{ value: 'own', label: 'Own business' }, { value: 'subcontract', label: 'Under a contractor' }] },
+      { name: 'workType', label: 'Working as', options: [{ value: 'own', label: 'Own business' }, { value: 'subcontract', label: 'Under a contractor' }, { value: 'employee', label: 'Employee' }] },
+      { name: 'pay', label: 'Pay', options: [{ value: 'unset', label: 'Not set yet' }, { value: 'set', label: 'Set' }] },
     ],
-    headerActions: <Button startIcon={<ContentPasteGoIcon />} onClick={() => nav('/import')}>Paste schedule</Button>,
+    headerActions: <><Button startIcon={<PaidOutlinedIcon />} onClick={() => setPayOpen(true)}>Record pay</Button><Button startIcon={<ContentPasteGoIcon />} onClick={() => nav('/import')}>Paste or upload</Button></>,
     columns: [
       { key: 'date', label: 'Date', render: (j) => <>{fmtDate(j.date, 'ddd D MMM')}<Typography variant="caption" color="text.secondary" component="div">{fmtTime(j.startTime)}{j.endTime ? `–${fmtTime(j.endTime)}` : ''}</Typography></>, sortValue: (j) => j.date + (j.startTime ?? '') },
       { key: 'clientName', label: 'Client', render: (j) => <><Typography variant="body2" fontWeight={500}>{j.clientName ?? j.title ?? '—'}</Typography><Typography variant="caption" color="text.secondary">{[j.incomeSourceId && srcById.get(j.incomeSourceId)?.name, j.workType === 'subcontract' ? `via ${j.contractorName ?? 'contractor'}` : null].filter(Boolean).join(' · ')}</Typography></> },
-      { key: 'workType', label: 'Bill to', render: (j) => (j.workType === 'subcontract' ? <Chip size="small" color="secondary" variant="outlined" label={j.contractorName ?? 'Contractor'} /> : <Chip size="small" variant="outlined" label="Client" />), sortValue: (j) => (j.workType === 'subcontract' ? j.contractorName ?? 'zz' : '') },
+      { key: 'workType', label: 'Bill to', render: (j) => (j.workType === 'employee' ? <Chip size="small" color="info" variant="outlined" label="Wages" /> : j.workType === 'subcontract' ? <Chip size="small" color="secondary" variant="outlined" label={j.contractorName ?? 'Contractor'} /> : <Chip size="small" variant="outlined" label="Client" />), sortValue: (j) => (j.workType === 'subcontract' ? j.contractorName ?? 'zz' : '') },
       { key: 'address', label: 'Address', render: (j) => (j.address?.formatted ? <Link href={mapsUrl(j.address.formatted)} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()} underline="hover" color="inherit">{j.address.formatted}</Link> : '—'), sortValue: (j) => j.address?.suburb ?? '' },
-      { key: 'amount', label: 'Amount', align: 'right', render: (j) => money(j.amount), sortValue: (j) => j.amount ?? 0 },
+      { key: 'amount', label: 'Amount', align: 'right', render: (j) => (noPay(j) ? payChip : money(j.amount)), sortValue: (j) => j.amount ?? 0 },
       { key: 'travel', label: 'Drive', align: 'right', render: (j) => (j.distanceKm !== undefined && j.distanceKm !== null ? <Typography variant="body2" color="text.secondary" noWrap>{j.distanceKm ? `${j.distanceKm.toFixed(1)} km · ${j.travelMinutes ?? 0} min` : 'start'}</Typography> : '—'), sortValue: (j) => j.distanceKm ?? -1 },
       { key: 'hoursWorked', label: 'Hours', align: 'right', render: (j) => j.hoursWorked ? j.hoursWorked.toFixed(1) : '—' },
       { key: 'status', label: 'Status', render: (j) => <Stack direction="row" spacing={0.5}><StatusChip status={j.status} />{j.invoiceId && <Chip size="small" label="Invoiced" variant="outlined" />}</Stack> },
     ],
     mobileTitle: (j) => j.clientName ?? 'Job',
     mobileSubtitle: (j) => `${fmtDate(j.date, 'ddd D MMM')} ${fmtTime(j.startTime)} · ${j.address?.suburb ?? ''}${j.workType === 'subcontract' ? ` · via ${j.contractorName ?? 'contractor'}` : ''}`,
-    mobileRight: (j) => <><Typography variant="body2" fontWeight={600}>{money(j.amount)}</Typography><StatusChip status={j.status} /></>,
+    mobileRight: (j) => <>{noPay(j) ? payChip : <Typography variant="body2" fontWeight={600}>{money(j.amount)}</Typography>}<Box sx={{ mt: 0.25 }}><StatusChip status={j.status} /></Box></>,
     rowActions: [
       { label: 'Mark completed', icon: <CheckCircleOutlineIcon fontSize="small" />, onClick: (j) => setStatus(j, 'completed'), show: (j) => j.status !== 'completed' },
       { label: 'Cancel job', icon: <CancelOutlinedIcon fontSize="small" />, onClick: (j) => setStatus(j, 'cancelled'), show: (j) => j.status !== 'cancelled' },
@@ -69,5 +76,5 @@ export default function Jobs() {
       );
     },
   };
-  return <ResourcePage config={config} />;
+  return <><ResourcePage config={config} /><RecordPayDialog open={payOpen} onClose={() => setPayOpen(false)} /></>;
 }

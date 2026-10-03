@@ -30,6 +30,8 @@ export interface CrudOptions {
   searchFields?: string[];
   /** Query params mapped to exact-match filters, e.g. ['status', 'categoryId'] */
   filterFields?: string[];
+  /** Extra list filters that are not a plain field match */
+  extraFilter?: (req: Request, filter: Record<string, unknown>) => void;
   /** Field used for ?from=&to= ranges */
   dateField?: string;
   sort?: Record<string, 1 | -1>;
@@ -70,6 +72,7 @@ export function crudRouter(opts: CrudOptions) {
       const v = req.query[f];
       if (typeof v === 'string' && v !== '') filter[f] = v.includes(',') ? { $in: v.split(',') } : v === 'null' ? null : v;
     }
+    opts.extraFilter?.(req, filter);
     if (opts.dateField) {
       const range: Record<string, string> = {};
       if (typeof req.query.from === 'string' && DATE_RE.test(req.query.from)) range.$gte = req.query.from;

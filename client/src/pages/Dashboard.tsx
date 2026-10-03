@@ -174,7 +174,7 @@ export default function Dashboard() {
             <Typography variant="h6" sx={{ flex: 1 }}>Work</Typography>
             {(d.work.byArrangement ?? []).map((a: any) => (
               <Chip key={a.workType} variant="outlined" color={a.workType === 'subcontract' ? 'secondary' : 'default'}
-                label={`${a.workType === 'subcontract' ? 'Under contractors' : 'Own business'}: ${a.jobs} job${a.jobs === 1 ? '' : 's'} · ${money(a.income)}`} />
+                label={`${a.workType === 'subcontract' ? 'Under contractors' : a.workType === 'employee' ? 'Employee shifts' : 'Own business'}: ${a.jobs} job${a.jobs === 1 ? '' : 's'} · ${money(a.income)}`} sx={{ display: a.workType === 'employee' && !a.jobs ? 'none' : undefined }} />
             ))}
           </Stack>
           <Grid container spacing={2}>

@@ -21,7 +21,7 @@ const GROUPS: Record<T, string[]> = {
   cashflow: ['day', 'week', 'month', 'year'],
   work: ['day', 'week', 'month', 'year', 'client', 'contractor', 'workType', 'source'],
 };
-const GROUP_LABEL: Record<string, string> = { paymentMethod: 'Payment method', workType: 'Own business vs contractor' };
+const GROUP_LABEL: Record<string, string> = { paymentMethod: 'Payment method', workType: 'Own business, contractor or employee' };
 const CHART: Record<T, { key: string; name: string }[]> = {
   income: [{ key: 'paid', name: 'Received' }, { key: 'expected', name: 'Expected' }],
   expenses: [{ key: 'total', name: 'Spent' }],

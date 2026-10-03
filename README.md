@@ -140,3 +140,7 @@ The layout adapts to phones, tablets and computers, the app can be added to the 
 ## Going live (Render + Docker)
 
 The repository includes a `Dockerfile`, `docker-compose.yml` and a Render blueprint (`render.yaml`). Step-by-step guide, including what the free plan can't do: `docs/DEPLOY_RENDER.md`.
+
+## Rosters and pay added later
+
+Upload a roster screenshot on Paste & Import to add your shifts (any employer), then use Jobs → Record pay once you've been paid. See `docs/ROSTERS.md`.

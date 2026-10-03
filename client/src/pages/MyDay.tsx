@@ -50,7 +50,7 @@ export default function MyDay() {
     const sorted = [...timed].sort((a, b) => toMin(a.startTime) - toMin(b.startTime));
     const cols: number[] = [];
     return sorted.map((e) => {
-      const s = toMin(e.startTime), en = e.endTime ? Math.max(toMin(e.endTime), s + 30) : s + 60;
+      const s = toMin(e.startTime), en = e.endTime ? (toMin(e.endTime) < s ? 24 * 60 : Math.max(toMin(e.endTime), s + 30)) : s + 60; // a finish time before the start runs past midnight
       let col = cols.findIndex((end) => end <= s);
       if (col === -1) { col = cols.length; cols.push(en); } else cols[col] = en;
       return { e, s, en, col };

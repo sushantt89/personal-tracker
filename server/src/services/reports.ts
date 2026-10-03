@@ -79,8 +79,8 @@ export async function buildReport(userId: string, type: ReportType, from: string
     ]);
     const kmByDay = new Map(days.map((d: any) => [d.date, d.totalKm ?? 0]));
     const key = (j: any) => (isPeriod ? period(j.date) : groupBy === 'source' ? srcName.get(String(j.incomeSourceId)) ?? 'Unassigned'
-      : groupBy === 'contractor' ? (j.workType === 'subcontract' ? j.contractorName ?? 'Unknown contractor' : 'Own business')
-      : groupBy === 'workType' ? (j.workType === 'subcontract' ? 'Working under a contractor' : 'Own business') : j.clientName ?? 'Unknown');
+      : groupBy === 'contractor' ? (j.workType === 'subcontract' ? j.contractorName ?? 'Unknown contractor' : j.workType === 'employee' ? 'Employee (wages)' : 'Own business')
+      : groupBy === 'workType' ? (j.workType === 'subcontract' ? 'Working under a contractor' : j.workType === 'employee' ? 'Employee (wages)' : 'Own business') : j.clientName ?? 'Unknown');
     rows = group(jobs, key, (k, v) => {
       const total = sum(v.map((j) => j.amount ?? 0)), hours = round2(sum(v.map(jobHours)));
       const row: Record<string, any> = { group: k, jobs: v.length, total, avgPerJob: v.length ? round2(total / v.length) : 0, hours, avgPerHour: hours ? round2(total / hours) : 0 };

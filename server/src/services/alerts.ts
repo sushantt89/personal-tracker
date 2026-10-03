@@ -45,6 +45,8 @@ export async function computeAlerts(userId: string, today: string, currency: str
     for (const j of jobs) {
       out.push({ id: `job-${j._id}`, type: 'job', severity: 'info', title: `${j.date === today ? 'Today' : 'Tomorrow'} ${clock(j.startTime)} · ${j.clientName ?? j.title ?? 'Job'}`, message: j.address?.formatted ?? '', date: j.date, link: '/my-day' });
     }
+    const noPay = await Job.countDocuments({ userId: new Types.ObjectId(userId), date: { $lt: today, $gte: addDays(today, -90) }, status: { $ne: 'cancelled' }, $or: [{ amount: null }, { amount: 0 }] });
+    if (noPay) out.push({ id: 'job-nopay', type: 'job', severity: 'info', title: `${noPay} shift${noPay === 1 ? '' : 's'} with no pay recorded`, message: 'Add the pay once you know it so your income stays accurate.', link: '/jobs?pay=unset' });
     if (d.work.pastUncompleted) out.push({ id: 'job-uncompleted', type: 'job', severity: 'warning', title: `${d.work.pastUncompleted} past job(s) not marked completed`, message: 'Mark them completed or cancelled so income stats stay accurate.', link: '/jobs' });
   }
   if (n.budgetAlerts !== false) {

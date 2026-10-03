@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Box, Card, CardContent, TextField, Button, Stack, Typography, Chip, Alert, Grid, IconButton, Tooltip, FormControlLabel, Switch, Checkbox, MenuItem, Divider, LinearProgress, Collapse, ToggleButtonGroup, ToggleButton, Autocomplete,
@@ -10,7 +10,8 @@ import AddIcon from '@mui/icons-material/Add';
 import CheckCircleOutlineIcon from '@mui/icons-material/CheckCircleOutline';
 import WarningAmberIcon from '@mui/icons-material/WarningAmber';
 import PlaceOutlinedIcon from '@mui/icons-material/PlaceOutlined';
-import { post } from '../api/client';
+import AddPhotoAlternateOutlinedIcon from '@mui/icons-material/AddPhotoAlternateOutlined';
+import { post, api } from '../api/client';
 import type { ParseResponse, ParsedJob } from '../api/types';
 import { PageHeader } from '../components/common';
 import { FieldGrid, type FieldDef, type Values } from '../components/EntityForm';
@@ -36,11 +37,12 @@ Dusting and wipedown surfaces, vacuum and mop floor.
 Change the bed in master bedroom.`;
 
 const jobFields: FieldDef[] = [
-  { name: 'clientName', label: 'Client', type: 'text', required: true, span: 6 },
+  { name: 'clientName', label: 'Client / employer', type: 'text', required: true, span: 6 },
   { name: 'amount', label: 'Amount', type: 'money', span: 6 },
   { name: 'date', label: 'Date', type: 'date', required: true, span: 4 },
   { name: 'startTime', label: 'Start', type: 'time', span: 4 },
   { name: 'endTime', label: 'End', type: 'time', span: 4 },
+  { name: 'hoursWorked', label: 'Paid hours', type: 'number', span: 4, helper: 'Leave empty to work it out from the times' },
   { name: 'address.line1', label: 'Street address', type: 'text', span: 12 },
   { name: 'address.suburb', label: 'Suburb', type: 'text', span: 5 },
   { name: 'address.state', label: 'State', type: 'text', span: 3 },
@@ -87,23 +89,64 @@ export default function PasteImport() {
   const [importing, setImporting] = useState(false);
   const [done, setDone] = useState<{ jobs: number; income: number; updated: number; calendar?: boolean } | null>(null);
 
-  const analyse = async () => {
-    setParsing(true); setError(null); setDone(null);
-    try {
-      const r = await post<ParseResponse>('/import/parse', { text });
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [reading, setReading] = useState(false);
+  const [employer, setEmployer] = useState(() => { try { return localStorage.getItem('pt-last-employer') ?? ''; } catch { return ''; } });
+  const isRoster = result?.format === 'roster';
+
+  const show = (r: ParseResponse) => {
       setResult(r);
-      setJobs(r.jobs.map((j) => ({ tempId: j.tempId, include: true, parsed: j, clientName: j.clientName, amount: j.amount ?? '', date: j.date ?? '', startTime: j.startTime ?? '', endTime: j.endTime ?? '', address: { ...j.address }, description: j.description ?? '', tasks: j.tasks, rooms: j.rooms ?? '', bathrooms: j.bathrooms ?? '', specialInstructions: j.specialInstructions ?? '', meetingPoint: j.meetingPoint })));
+      // Shifts that are already in the app are left unticked, so re-uploading an updated roster only adds what's new
+      setJobs(r.jobs.map((j) => ({ tempId: j.tempId, include: !(r.format === 'roster' && j.duplicateOfJobId), parsed: j, hoursWorked: j.hours ?? '', clientName: j.clientName, amount: j.amount ?? '', date: j.date ?? '', startTime: j.startTime ?? '', endTime: j.endTime ?? '', address: { ...j.address }, description: j.description ?? '', tasks: j.tasks, rooms: j.rooms ?? '', bathrooms: j.bathrooms ?? '', specialInstructions: j.specialInstructions ?? '', meetingPoint: j.meetingPoint })));
       setPayments(r.payments.map((p) => ({ ...p, include: true, date: p.date ?? localToday(), matchIncomeId: r.paymentMatches[p.tempId]?.find((m) => m.incomeId)?.incomeId ?? '' })));
       setSourceId(r.suggestedIncomeSourceId ?? '');
       setWorkType(r.suggestedWorkType ?? 'own');
       const sc = contractors.find((x) => x.id === r.suggestedContractorId);
       setContractor(sc ? { id: sc.id, name: sc.name } : { name: '' });
       setAllowDuplicates(false);
+  };
+
+  const analyse = async () => {
+    setParsing(true); setError(null); setDone(null);
+    try {
+      show(await post<ParseResponse>('/import/parse', { text, employer: employer.trim() || undefined }));
     } catch (e) {
       setError((e as Error).message);
     } finally {
       setParsing(false);
     }
+  };
+
+  /** Roster screenshot or photo: the server reads the text out of it, then it is reviewed exactly like pasted text. */
+  const uploadRoster = async (file: File) => {
+    setReading(true); setError(null); setDone(null); setResult(null); setJobs([]); setPayments([]);
+    try {
+      const fd = new FormData();
+      fd.append('file', file);
+      if (employer.trim()) fd.append('employer', employer.trim());
+      const r = await api<ParseResponse>('/import/roster', { method: 'POST', form: fd });
+      setText(r.text ?? '');
+      show(r);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setReading(false);
+      if (fileRef.current) fileRef.current.value = '';
+    }
+  };
+
+  /** Employer chosen for a roster: name every shift, remember it for next time and re-check for shifts already imported. */
+  const applyEmployer = async (name: string) => {
+    const clean = name.trim();
+    setEmployer(name);
+    setJobs((js) => js.map((j) => ({ ...j, clientName: clean })));
+    if (!clean) return;
+    try { localStorage.setItem('pt-last-employer', clean); } catch { /* private mode */ }
+    try {
+      const r = await post<ParseResponse>('/import/parse', { text, employer: clean });
+      const dup = new Map(r.jobs.map((j) => [j.tempId, j.duplicateOfJobId ?? null]));
+      setJobs((js) => js.map((j) => (j.parsed && dup.has(j.tempId) ? { ...j, include: !dup.get(j.tempId), parsed: { ...j.parsed, duplicateOfJobId: dup.get(j.tempId), warnings: j.parsed.warnings.filter((w) => !/employer/i.test(w)) } } : j)));
+    } catch { /* the duplicate check also runs when importing */ }
   };
 
   const pasteFromClipboard = async () => {
@@ -113,6 +156,8 @@ export default function PasteImport() {
   const included = jobs.filter((j) => j.include);
   const includedPayments = payments.filter((p) => p.include);
   const total = included.reduce((a, j) => a + (Number(j.amount) || 0), 0);
+  const totalHours = included.reduce((a, j) => a + (Number(j.hoursWorked) || 0), 0);
+  const skippedDups = jobs.filter((j) => !j.include && j.parsed?.duplicateOfJobId).length;
   const invalid = included.filter((j) => !j.clientName?.trim() || !j.date);
   const dupCount = included.filter((j) => j.parsed?.duplicateOfJobId).length;
 
@@ -130,7 +175,7 @@ export default function PasteImport() {
         syncCalendar: calendarAvailable && syncCalendar,
         allowDuplicates,
         jobs: included.map((j) => ({
-          clientName: j.clientName.trim(), date: j.date, startTime: j.startTime || undefined, endTime: j.endTime || undefined, amount: num(j.amount),
+          clientName: j.clientName.trim(), date: j.date, startTime: j.startTime || undefined, endTime: j.endTime || undefined, amount: num(j.amount), hoursWorked: num(j.hoursWorked),
           address: j.address, description: j.description || undefined, tasks: j.tasks, rooms: num(j.rooms), bathrooms: num(j.bathrooms),
           specialInstructions: j.specialInstructions || undefined, meetingPoint: j.meetingPoint || undefined,
         })),
@@ -152,11 +197,11 @@ export default function PasteImport() {
 
   return (
     <Box>
-      <PageHeader title="Paste & Import" subtitle="Paste a work schedule or payment message. Nothing is saved until you review it and click Import." />
+      <PageHeader title="Paste & Import" subtitle="Paste a work schedule or payment message, or upload a photo of your roster. Nothing is saved until you review it and click Import." />
 
       {done && (
         <Alert severity="success" icon={<CheckCircleOutlineIcon />} sx={{ mb: 2 }} action={<Stack direction="row" spacing={1}><Button color="inherit" size="small" onClick={() => nav('/my-day')}>My Day</Button><Button color="inherit" size="small" onClick={() => nav('/jobs')}>Jobs</Button></Stack>}>
-          Created {done.jobs} job(s){done.income ? ` and ${done.income} income record(s)` : ''}{done.updated ? `, marked ${done.updated} income record(s) paid` : ''}{done.calendar ? ' and added them to Google Calendar' : ''}. Your dashboard is updated.
+          Created {done.jobs} job(s)/shift(s){done.income ? ` and ${done.income} income record(s)` : ''}{done.updated ? `, marked ${done.updated} income record(s) paid` : ''}{done.calendar ? ' and added them to Google Calendar' : ''}. Your dashboard is updated.
         </Alert>
       )}
 
@@ -165,11 +210,14 @@ export default function PasteImport() {
           <TextField multiline minRows={6} maxRows={18} placeholder="Paste your message here…" value={text} onChange={(e) => setText(e.target.value)} slotProps={{ htmlInput: { 'aria-label': 'Message to import', style: { fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontSize: 13 } } }} />
           <Stack direction="row" spacing={1} sx={{ mt: 1.5 }} flexWrap="wrap" useFlexGap>
             <Button variant="contained" startIcon={<AutoFixHighIcon />} onClick={analyse} disabled={!text.trim() || parsing}>{parsing ? 'Analysing…' : 'Analyse'}</Button>
+            <Button variant="outlined" startIcon={<AddPhotoAlternateOutlinedIcon />} onClick={() => fileRef.current?.click()} disabled={reading || parsing}>{reading ? 'Reading roster…' : 'Upload roster photo'}</Button>
+            <input ref={fileRef} type="file" hidden accept="image/*,.heic,.heif,application/pdf" aria-label="Roster screenshot or photo" onChange={(e) => { const f = e.target.files?.[0]; if (f) uploadRoster(f); }} />
             <Button startIcon={<ContentPasteIcon />} onClick={pasteFromClipboard}>Paste from clipboard</Button>
             <Button onClick={() => setText(EXAMPLE)} color="inherit">Try an example</Button>
             {text && <Button color="inherit" onClick={() => { setText(''); setResult(null); setJobs([]); setPayments([]); }}>Clear</Button>}
           </Stack>
-          {parsing && <LinearProgress sx={{ mt: 2 }} />}
+          {(parsing || reading) && <LinearProgress sx={{ mt: 2 }} />}
+          {reading && <Typography variant="caption" color="text.secondary" component="div" sx={{ mt: 1 }}>Reading the text in your image. This can take up to half a minute.</Typography>}
         </CardContent>
       </Card>
 
@@ -180,16 +228,18 @@ export default function PasteImport() {
           <Card>
             <CardContent>
               <Typography variant="h6" gutterBottom>
-                {result.kind === 'unknown' ? 'Nothing detected' : [result.summary.jobCount && `${result.summary.jobCount} job${result.summary.jobCount === 1 ? '' : 's'} detected`, result.summary.paymentCount && `${result.summary.paymentCount} payment${result.summary.paymentCount === 1 ? '' : 's'} detected`].filter(Boolean).join(' · ')}
+                {result.kind === 'unknown' ? 'Nothing detected' : [result.summary.jobCount && `${result.summary.jobCount} ${isRoster ? 'shift' : 'job'}${result.summary.jobCount === 1 ? '' : 's'} detected`, result.summary.paymentCount && `${result.summary.paymentCount} payment${result.summary.paymentCount === 1 ? '' : 's'} detected`].filter(Boolean).join(' · ')}
               </Typography>
               <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
-                <Chip label={`Found ${result.summary.jobCount} jobs`} />
-                <Chip label={`Found ${money(result.summary.totalAmount)} total income`} color="success" variant="outlined" />
+                <Chip label={`Found ${result.summary.jobCount} ${isRoster ? 'shifts' : 'jobs'}`} />
+                {isRoster ? <Chip label={`${totalHours.toFixed(1)} hours`} color="success" variant="outlined" /> : <Chip label={`Found ${money(result.summary.totalAmount)} total income`} color="success" variant="outlined" />}
                 <Chip label={`Found ${result.summary.addressCount} addresses`} />
                 <Chip label={`Found ${result.summary.dateCount} date${result.summary.dateCount === 1 ? '' : 's'}${result.summary.dates.length ? ': ' + result.summary.dates.map((d) => fmtDate(d, 'ddd D MMM')).join(', ') : ''}`} />
                 {result.meetingPoint && <Chip icon={<PlaceOutlinedIcon />} label={`Meet: ${result.meetingPoint}${result.meetingTime ? ' @ ' + result.meetingTime : ''}`} variant="outlined" />}
               </Stack>
               {result.warnings.map((w) => <Alert key={w} severity="info" sx={{ mt: 1.5 }}>{w}</Alert>)}
+              {isRoster && <Alert severity="info" sx={{ mt: 1.5 }}>Rosters don’t show pay. Import the shifts now; when you’ve been paid, open <b>Jobs → Record pay</b> and enter the amount.</Alert>}
+              {skippedDups > 0 && <Alert severity="success" sx={{ mt: 1.5 }}>{skippedDups} shift{skippedDups === 1 ? ' is' : 's are'} already in the app and {skippedDups === 1 ? 'has' : 'have'} been left unticked.</Alert>}
               {result.alreadyImported && <Alert severity="warning" sx={{ mt: 1.5 }}>This exact message was already imported on {fmtDate(result.alreadyImported.at.slice(0, 10))} ({result.alreadyImported.jobCount} jobs).</Alert>}
               {result.unparsedLines.length > 0 && (
                 <Typography variant="caption" color="text.secondary" component="div" sx={{ mt: 1.5 }}>Not used: {result.unparsedLines.join(' · ')}</Typography>
@@ -201,6 +251,15 @@ export default function PasteImport() {
             <Card>
               <CardContent>
                 <Grid container spacing={2} alignItems="center">
+                  {isRoster && (
+                    <Grid size={12}>
+                      <Autocomplete freeSolo options={(clients.data ?? []).map((c) => c.name)} value={employer}
+                        onChange={(_, v) => applyEmployer(v ?? '')}
+                        onInputChange={(_, v, reason) => { if (reason === 'input') { setEmployer(v); setJobs((js) => js.map((j) => ({ ...j, clientName: v.trim() }))); } }}
+                        onBlur={() => applyEmployer(employer)}
+                        renderInput={(p) => <TextField {...p} required label="Employer (who these shifts are for)" placeholder="e.g. the business name on your payslip" helperText="Used as the name on every shift below. Remembered for next time." />} />
+                    </Grid>
+                  )}
                   <Grid size={{ xs: 12, sm: 5 }}>
                     <TextField select label="Income source for these jobs" value={sourceId} onChange={(e) => { setSourceId(e.target.value); applySourceDefaults(e.target.value); }}>
                       <MenuItem value="">None</MenuItem>
@@ -220,6 +279,7 @@ export default function PasteImport() {
                     <ToggleButtonGroup exclusive size="small" value={workType} onChange={(_, v: WorkType | null) => v && setWorkType(v)} fullWidth>
                       <ToggleButton value="own">My own business</ToggleButton>
                       <ToggleButton value="subcontract">Under a contractor</ToggleButton>
+                      <ToggleButton value="employee">Employee</ToggleButton>
                     </ToggleButtonGroup>
                   </Grid>
                   <Grid size={{ xs: 12, sm: 7 }}>
@@ -229,6 +289,8 @@ export default function PasteImport() {
                         onChange={(_, v) => setContractor(v && typeof v === 'object' ? { id: v.id, name: v.name } : { name: (v as string) ?? '' })}
                         onInputChange={(_, v, reason) => reason === 'input' && setContractor({ name: v })}
                         renderInput={(p) => <TextField {...p} label="Contractor (who pays you & gets the invoice)" helperText={!contractor.id && contractor.name ? 'A new contractor will be created' : 'Pick one or type a new name'} />} />
+                    ) : workType === 'employee' ? (
+                      <Typography variant="body2" color="text.secondary" sx={{ pt: { sm: 2.5 } }}>Shifts for an employer who pays you wages. They never go on an invoice, and you can add the pay later.</Typography>
                     ) : (
                       <Typography variant="body2" color="text.secondary" sx={{ pt: { sm: 2.5 } }}>You'll invoice each client directly. Income is recorded against the client.</Typography>
                     )}
@@ -246,12 +308,12 @@ export default function PasteImport() {
                 <CardContent>
                   <Stack direction="row" alignItems="center" spacing={1} sx={{ mb: 1.5 }}>
                     <Checkbox checked={j.include} onChange={(e) => updateJob(j.tempId, () => ({ include: e.target.checked }))} slotProps={{ input: { 'aria-label': `Include job ${idx + 1}` } }} />
-                    <Typography variant="subtitle1" fontWeight={700} sx={{ flex: 1 }}>Job {idx + 1}{j.clientName ? ` · ${j.clientName}` : ''}</Typography>
+                    <Typography variant="subtitle1" fontWeight={700} sx={{ flex: 1 }}>{isRoster ? 'Shift' : 'Job'} {idx + 1}{isRoster && j.date ? ` · ${fmtDate(j.date, 'ddd D MMM')}` : j.clientName ? ` · ${j.clientName}` : ''}</Typography>
                     {p && <Chip size="small" label={`${conf}% confident`} color={conf >= 90 ? 'success' : conf >= 70 ? 'warning' : 'error'} variant="outlined" />}
                     {j.address?.line1 && <Tooltip title="Open in Google Maps"><IconButton size="small" component="a" href={mapsUrl([j.address.line1, j.address.suburb, j.address.state, j.address.postcode].filter(Boolean).join(', '))} target="_blank" rel="noreferrer"><PlaceOutlinedIcon fontSize="small" /></IconButton></Tooltip>}
                     <Tooltip title="Remove"><IconButton size="small" onClick={() => setJobs((js) => js.filter((x) => x.tempId !== j.tempId))}><DeleteOutlineIcon fontSize="small" /></IconButton></Tooltip>
                   </Stack>
-                  {p?.duplicateOfJobId && <Alert severity="warning" sx={{ mb: 1.5 }}>A job for {j.clientName} on this date/time already exists. Untick to skip it.</Alert>}
+                  {p?.duplicateOfJobId && <Alert severity="warning" sx={{ mb: 1.5 }}>{isRoster ? 'This shift is already in the app, so it is left unticked.' : `A job for ${j.clientName} on this date/time already exists. Untick to skip it.`}</Alert>}
                   {p && p.warnings.length > 0 && (
                     <Stack direction="row" spacing={1} sx={{ mb: 1.5 }} flexWrap="wrap" useFlexGap>
                       {p.warnings.map((w) => <Chip key={w} size="small" icon={<WarningAmberIcon />} label={w} color="warning" variant="outlined" />)}
@@ -269,7 +331,7 @@ export default function PasteImport() {
           {result.kind !== 'payment' && (
             <Button variant="outlined" startIcon={<AddIcon />} sx={{ alignSelf: 'flex-start' }}
               onClick={() => setJobs((js) => [...js, { tempId: `manual_${Date.now()}`, include: true, clientName: '', date: result.scheduleDate ?? localToday(), address: {}, tasks: [] }])}>
-              Add a missing job
+              {isRoster ? 'Add a missing shift' : 'Add a missing job'}
             </Button>
           )}
 
@@ -301,17 +363,17 @@ export default function PasteImport() {
               <CardContent sx={{ py: 1.5, '&:last-child': { pb: 1.5 } }}>
                 <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.5} alignItems={{ sm: 'center' }}>
                   <Box sx={{ flex: 1 }}>
-                    <Typography variant="subtitle2">{included.length} job(s) · {money(total)}{includedPayments.length ? ` · ${includedPayments.length} payment(s)` : ''}</Typography>
-                    {invalid.length > 0 && <Typography variant="caption" color="error">Every job needs a client and a date.</Typography>}
+                    <Typography variant="subtitle2">{included.length} {isRoster ? 'shift(s)' : 'job(s)'} · {isRoster && !total ? `${totalHours.toFixed(1)} hours` : money(total)}{includedPayments.length ? ` · ${includedPayments.length} payment(s)` : ''}</Typography>
+                    {invalid.length > 0 && <Typography variant="caption" color="error">{isRoster ? 'Enter the employer above (every shift needs one, and a date).' : 'Every job needs a client and a date.'}</Typography>}
                     {included.length > 0 && workType === 'subcontract' && !contractor.id && !contractor.name.trim() && <Typography variant="caption" color="error" component="div">Choose the contractor you're working under.</Typography>}
-                    {included.length > 0 && <Typography variant="caption" color="text.secondary" component="div">Bill to: {workType === 'subcontract' ? contractor.name || 'contractor' : 'each client'}</Typography>}
+                    {included.length > 0 && <Typography variant="caption" color="text.secondary" component="div">{workType === 'employee' ? 'Paid as wages — not invoiced' : `Bill to: ${workType === 'subcontract' ? contractor.name || 'contractor' : 'each client'}`}</Typography>}
                     {(dupCount > 0 || result.alreadyImported) && (
                       <FormControlLabel control={<Checkbox size="small" checked={allowDuplicates} onChange={(e) => setAllowDuplicates(e.target.checked)} />} label={<Typography variant="caption">Import anyway (I've checked these aren't duplicates)</Typography>} />
                     )}
                   </Box>
                   <Divider flexItem orientation="vertical" sx={{ display: { xs: 'none', sm: 'block' } }} />
                   <Button variant="contained" size="large" onClick={doImport} disabled={importing || (!included.length && !includedPayments.length) || invalid.length > 0 || (included.length > 0 && workType === 'subcontract' && !contractor.id && !contractor.name.trim()) || ((dupCount > 0 || !!result.alreadyImported) && !allowDuplicates)}>
-                    {importing ? 'Importing…' : `Import${included.length ? ` ${included.length} job${included.length === 1 ? '' : 's'}` : ''}${includedPayments.length ? `${included.length ? ' +' : ''} ${includedPayments.length} payment${includedPayments.length === 1 ? '' : 's'}` : ''}`}
+                    {importing ? 'Importing…' : `Import${included.length ? ` ${included.length} ${isRoster ? 'shift' : 'job'}${included.length === 1 ? '' : 's'}` : ''}${includedPayments.length ? `${included.length ? ' +' : ''} ${includedPayments.length} payment${includedPayments.length === 1 ? '' : 's'}` : ''}`}
                   </Button>
                 </Stack>
               </CardContent>

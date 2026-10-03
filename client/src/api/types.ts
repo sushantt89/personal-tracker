@@ -3,7 +3,7 @@ export type Id = string;
 export interface User { id: Id; name: string; email: string; currency: string; timezone: string; theme: 'light' | 'dark' | 'system' }
 export interface Address { line1?: string; suburb?: string; state?: string; postcode?: string; country?: string; formatted?: string }
 export interface Category { id: Id; name: string; color: string; archived?: boolean }
-export type WorkType = 'own' | 'subcontract';
+export type WorkType = 'own' | 'subcontract' | 'employee';
 export interface IncomeSource { id: Id; name: string; color: string; isJobBased?: boolean; defaultHourlyRate?: number; archived?: boolean; workType?: WorkType; contractorId?: Id | null }
 export interface Client { id: Id; name: string; type?: 'client' | 'contractor'; contactName?: string; abn?: string; email?: string; phone?: string; address?: Address; incomeSourceId?: Id | null; defaultRate?: number; notes?: string }
 
@@ -85,6 +85,8 @@ export interface ParseResponse {
   jobs: ParsedJob[]; payments: ParsedPayment[]; warnings: string[]; unparsedLines: string[];
   summary: { jobCount: number; paymentCount: number; totalAmount: number; addressCount: number; dateCount: number; dates: string[] };
   suggestedWorkType?: WorkType; suggestedContractorId?: string | null;
+  /** 'roster' = a shift list for an employer (pay usually unknown); 'message' = a schedule or payment message */
+  format?: 'roster' | 'message'; text?: string; ocrConfidence?: number;
   messageHash: string; alreadyImported: { at: string; jobCount: number } | null; suggestedIncomeSourceId: string | null;
   paymentMatches: Record<string, { incomeId?: string; invoiceId?: string; label: string }[]>;
 }

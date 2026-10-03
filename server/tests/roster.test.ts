@@ -137,6 +137,13 @@ describe('roster import and pay added later', () => {
     expect((await a.get('/api/jobs').query({ ...day, pay: 'unset' })).body.items).toHaveLength(0);
     expect((await a.get('/api/alerts').query(day)).body.items.some((x: any) => x.id === 'job-nopay')).toBe(false);
 
+    // A lump sum for a bunch of jobs can instead be split equally, whatever their hours
+    const mk = async (date: string, hoursWorked: number) => (await a.post('/api/jobs').query(day).send({ date, clientName: 'Lump Co', hoursWorked }).expect(201)).body.id;
+    const ids = [await mk('2026-10-13', 1), await mk('2026-10-14', 5), await mk('2026-10-15', 2)];
+    const eq = await a.post('/api/jobs/record-pay').query(day).send({ jobIds: ids, total: 100, split: 'equal' }).expect(200);
+    expect(eq.body.split).toBe('equal');
+    expect(eq.body.jobs.map((j: any) => j.amount)).toEqual([33.33, 33.33, 33.34]); // adds up to exactly 100
+
     // Another user's shifts can't be paid from this account
     const b = request.agent(app);
     await b.post('/api/auth/register').send({ name: 'Other', email: 'other-roster@example.com', password: 'password123' }).expect(201);

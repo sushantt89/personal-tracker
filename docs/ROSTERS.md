@@ -25,7 +25,10 @@ Weekly grid/table rosters (days across the top, people down the side) are not re
 **Jobs → Record pay**
 1. Tick the shifts the payment covers (all waiting shifts for that employer are ticked to start with).
 2. Enter the amount that reached your account and the date paid.
-3. **Record pay**. The amount is shared across the shifts by their hours (equally if hours are unknown), each shift gets its share, past shifts are marked completed, and the income is recorded as received. The dialog shows what it works out to per hour.
+3. Choose how to share it: **Equally per job** (a lump sum divided by the number of jobs ticked) or **By hours worked**. Your choice is remembered.
+4. **Record pay**. Each job gets its share, past jobs are marked completed, and the income is recorded as received.
+
+This works for any jobs without an amount, not only rostered shifts. Under **Paid by**, pick the contractor or employer, or **Everyone** to tick jobs across several of them.
 
 You can also open a single shift and type its amount.
 

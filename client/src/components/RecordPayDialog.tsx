@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import {
-  Alert, Box, Button, Checkbox, Dialog, DialogActions, DialogContent, DialogTitle, Divider, InputAdornment, MenuItem, Stack, TextField, Typography, useMediaQuery, useTheme,
+  Alert, Box, Button, Checkbox, Dialog, DialogActions, DialogContent, DialogTitle, Divider, InputAdornment, MenuItem, Stack, TextField, ToggleButton, ToggleButtonGroup, Typography, useMediaQuery, useTheme,
 } from '@mui/material';
 import dayjs from 'dayjs';
 import { get, post } from '../api/client';
@@ -11,6 +11,7 @@ import { fmtDate, fmtTime, localToday, money } from '../utils/format';
 import { useToast } from '../hooks/useToast';
 import { useInvalidateFinance } from '../hooks/useInvalidate';
 
+const ALL = '__all__';
 const hoursOf = (j: Job) => {
   if (j.hoursWorked) return j.hoursWorked;
   if (!j.startTime || !j.endTime) return 0;
@@ -21,8 +22,8 @@ const hoursOf = (j: Job) => {
 };
 
 /**
- * "I've been paid": pick the shifts a payment covers and enter the one amount you received.
- * It is shared across the shifts by their hours, and each shift's income is marked as received.
+ * "I've been paid": pick the jobs or shifts a payment covers and enter the one amount you received.
+ * It is shared between them — equally, or by their hours — and each one's income is marked as received.
  */
 export default function RecordPayDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
   const theme = useTheme();
@@ -33,7 +34,11 @@ export default function RecordPayDialog({ open, onClose }: { open: boolean; onCl
   const from = dayjs(today).subtract(120, 'day').format('YYYY-MM-DD');
   const q = useQuery({ queryKey: ['jobs', 'pay-unset', from, today], enabled: open, queryFn: () => get<{ items: Job[] }>('/jobs', { pay: 'unset', from, to: today, limit: 500 }) });
   const all = useMemo(() => [...(q.data?.items ?? [])].sort((a, b) => (a.date + (a.startTime ?? '')).localeCompare(b.date + (b.startTime ?? ''))), [q.data]);
-  const employers = useMemo(() => Array.from(new Set(all.map((j) => j.clientName ?? 'No name'))).sort(), [all]);
+  // Who pays: the contractor for jobs done under one, otherwise the client/employer
+  const payer = (j: Job) => (j.workType === 'subcontract' && j.contractorName ? j.contractorName : j.clientName ?? 'No name');
+  const employers = useMemo(() => Array.from(new Set(all.map(payer))).sort(), [all]);
+  const [split, setSplit] = useState<'equal' | 'hours'>(() => { try { return localStorage.getItem('pt-pay-split') === 'hours' ? 'hours' : 'equal'; } catch { return 'equal'; } });
+  const chooseSplit = (v: 'equal' | 'hours') => { setSplit(v); try { localStorage.setItem('pt-pay-split', v); } catch { /* private mode */ } };
   const [employer, setEmployer] = useState('');
   const [picked, setPicked] = useState<Set<string>>(new Set());
   const [total, setTotal] = useState('');
@@ -44,11 +49,12 @@ export default function RecordPayDialog({ open, onClose }: { open: boolean; onCl
   // Start with the employer that has the most waiting shifts, all of them ticked
   useEffect(() => {
     if (!open || !all.length) return;
-    const first = employers.map((e) => ({ e, n: all.filter((j) => (j.clientName ?? 'No name') === e).length })).sort((a, b) => b.n - a.n)[0].e;
-    setEmployer((cur) => (cur && employers.includes(cur) ? cur : first));
+    const first = employers.map((e) => ({ e, n: all.filter((j) => payer(j) === e).length })).sort((a, b) => b.n - a.n)[0].e;
+    setEmployer((cur) => (cur === ALL || (cur && employers.includes(cur)) ? cur : first));
   }, [open, all, employers]);
-  const shown = useMemo(() => all.filter((j) => (j.clientName ?? 'No name') === employer), [all, employer]);
-  useEffect(() => { setPicked(new Set(shown.map((j) => j.id))); }, [shown]);
+  const shown = useMemo(() => (employer === ALL ? all : all.filter((j) => payer(j) === employer)), [all, employer]);
+  // One payer: everything starts ticked. "Everyone": start empty and tick the jobs this payment covers.
+  useEffect(() => { setPicked(employer === ALL ? new Set() : new Set(shown.map((j) => j.id))); }, [shown, employer]);
   useEffect(() => { if (open) { setTotal(''); setPaidDate(today); setError(null); } }, [open, today]);
 
   const chosen = shown.filter((j) => picked.has(j.id));
@@ -56,13 +62,15 @@ export default function RecordPayDialog({ open, onClose }: { open: boolean; onCl
   const amount = Number(total);
   const valid = chosen.length > 0 && amount > 0;
   const allHaveHours = chosen.every((j) => hoursOf(j) > 0);
+  const byHours = split === 'hours' && allHaveHours;
+  const share = (j: Job) => (!valid ? null : byHours ? (amount * hoursOf(j)) / hours : amount / chosen.length);
 
   const save = async () => {
     setSaving(true); setError(null);
     try {
-      const r = await post<{ updated: number }>('/jobs/record-pay', { jobIds: chosen.map((j) => j.id), total: amount, paidDate });
+      const r = await post<{ updated: number }>('/jobs/record-pay', { jobIds: chosen.map((j) => j.id), total: amount, paidDate, split });
       await invalidate();
-      toast(`Pay recorded for ${r.updated} shift${r.updated === 1 ? '' : 's'}`);
+      toast(`Pay recorded for ${r.updated} job${r.updated === 1 ? '' : 's'}`);
       onClose();
     } catch (e) {
       setError((e as Error).message);
@@ -76,12 +84,13 @@ export default function RecordPayDialog({ open, onClose }: { open: boolean; onCl
       <DialogTitle>Record pay</DialogTitle>
       <DialogContent dividers>
         {q.isLoading ? <LoadingBlock rows={4} /> : !all.length ? (
-          <Typography variant="body2" color="text.secondary">Every shift up to today already has its pay recorded.</Typography>
+          <Typography variant="body2" color="text.secondary">Every job and shift up to today already has its pay recorded.</Typography>
         ) : (
           <Stack spacing={2}>
-            <Typography variant="body2" color="text.secondary">Tick the shifts this payment covers and enter the amount you received. It’s shared between them by hours, and each one is marked as paid.</Typography>
+            <Typography variant="body2" color="text.secondary">Tick the jobs this payment covers and enter the total you received. It’s shared between them and each one is marked as paid.</Typography>
             {employers.length > 1 && (
               <TextField select label="Paid by" value={employer} onChange={(e) => setEmployer(e.target.value)}>
+                <MenuItem value={ALL}>Everyone (pick jobs from any of them)</MenuItem>
                 {employers.map((e) => <MenuItem key={e} value={e}>{e}</MenuItem>)}
               </TextField>
             )}
@@ -89,7 +98,7 @@ export default function RecordPayDialog({ open, onClose }: { open: boolean; onCl
               <Stack direction="row" alignItems="center" sx={{ px: 0.5, bgcolor: 'action.hover' }}>
                 <Checkbox checked={chosen.length === shown.length && shown.length > 0} indeterminate={chosen.length > 0 && chosen.length < shown.length}
                   onChange={(e) => setPicked(e.target.checked ? new Set(shown.map((j) => j.id)) : new Set())} slotProps={{ input: { 'aria-label': 'Select all shifts' } }} />
-                <Typography variant="caption" fontWeight={600} sx={{ flex: 1 }}>{employers.length > 1 ? 'Shifts waiting for pay' : `${employer} · shifts waiting for pay`}</Typography>
+                <Typography variant="caption" fontWeight={600} sx={{ flex: 1 }}>{employers.length > 1 ? 'Jobs waiting for pay' : `${employer} · jobs waiting for pay`}</Typography>
               </Stack>
               {shown.map((j) => (
                 <Box key={j.id}>
@@ -97,10 +106,13 @@ export default function RecordPayDialog({ open, onClose }: { open: boolean; onCl
                   <Stack direction="row" alignItems="center" component="label" sx={{ px: 0.5, cursor: 'pointer' }}>
                     <Checkbox checked={picked.has(j.id)} onChange={(e) => setPicked((p) => { const n = new Set(p); if (e.target.checked) n.add(j.id); else n.delete(j.id); return n; })} />
                     <Box sx={{ flex: 1, minWidth: 0, py: 0.75 }}>
-                      <Typography variant="body2" fontWeight={500}>{fmtDate(j.date, 'ddd D MMM')}</Typography>
+                      <Typography variant="body2" fontWeight={500} noWrap>{fmtDate(j.date, 'ddd D MMM')}{employer === ALL || payer(j) !== (j.clientName ?? 'No name') ? ` · ${j.clientName ?? 'No name'}` : ''}</Typography>
                       <Typography variant="caption" color="text.secondary" noWrap component="div">{j.startTime ? `${fmtTime(j.startTime)}${j.endTime ? '–' + fmtTime(j.endTime) : ''}` : 'No time'}{j.address?.suburb ? ` · ${j.address.suburb}` : ''}</Typography>
                     </Box>
-                    <Typography variant="body2" sx={{ pr: 1.5, fontVariantNumeric: 'tabular-nums' }}>{hoursOf(j) ? `${hoursOf(j).toFixed(2).replace(/\.?0+$/, '')} h` : '—'}</Typography>
+                    <Box sx={{ pr: 1.5, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
+                      {picked.has(j.id) && share(j) !== null && <Typography variant="body2" fontWeight={600}>{money(share(j))}</Typography>}
+                      <Typography variant="caption" color="text.secondary">{hoursOf(j) ? `${hoursOf(j).toFixed(2).replace(/\.?0+$/, '')} h` : ''}</Typography>
+                    </Box>
                   </Stack>
                 </Box>
               ))}
@@ -110,11 +122,19 @@ export default function RecordPayDialog({ open, onClose }: { open: boolean; onCl
                 slotProps={{ input: { startAdornment: <InputAdornment position="start">$</InputAdornment> }, htmlInput: { min: 0, step: '0.01', inputMode: 'decimal' } }} helperText="What reached your account (after tax)" />
               <TextField label="Date paid" type="date" value={paidDate} onChange={(e) => e.target.value && setPaidDate(e.target.value)} slotProps={{ inputLabel: { shrink: true } }} />
             </Stack>
+            <Box>
+              <Typography variant="caption" color="text.secondary" component="div" sx={{ mb: 0.5 }}>Share the amount</Typography>
+              <ToggleButtonGroup exclusive size="small" fullWidth value={split} onChange={(_, v: 'equal' | 'hours' | null) => v && chooseSplit(v)}>
+                <ToggleButton value="equal">Equally per job</ToggleButton>
+                <ToggleButton value="hours">By hours worked</ToggleButton>
+              </ToggleButtonGroup>
+            </Box>
             <Typography variant="body2">
-              {chosen.length} shift{chosen.length === 1 ? '' : 's'} · {hours.toFixed(2).replace(/\.?0+$/, '')} hours
-              {valid && allHaveHours && hours > 0 ? <> · works out to <b>{money(amount / hours)}</b> an hour</> : null}
+              {chosen.length} job{chosen.length === 1 ? '' : 's'}{hours > 0 ? ` · ${hours.toFixed(2).replace(/\.?0+$/, '')} hours` : ''}
+              {valid && !byHours ? <> · <b>{money(amount / chosen.length)}</b> each</> : null}
+              {valid && byHours && hours > 0 ? <> · works out to <b>{money(amount / hours)}</b> an hour</> : null}
             </Typography>
-            {chosen.length > 0 && !allHaveHours && <Alert severity="info">Some of these shifts have no hours, so the amount will be shared equally between them.</Alert>}
+            {chosen.length > 0 && split === 'hours' && !allHaveHours && <Alert severity="info">Some of these jobs have no hours, so the amount will be shared equally between them.</Alert>}
             {error && <Alert severity="error">{error}</Alert>}
           </Stack>
         )}

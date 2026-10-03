@@ -176,6 +176,8 @@ jobsRouter.post('/record-pay', async (req, res) => {
       paidDate: zDate.optional(),
       paymentMethod: zOptStr(60),
       markCompleted: z.boolean().default(true),
+      /** 'hours' = in proportion to each job's hours; 'equal' = the same amount for every job */
+      split: z.enum(['hours', 'equal']).default('hours'),
     }),
     req.body,
   );
@@ -187,7 +189,8 @@ jobsRouter.post('/record-pay', async (req, res) => {
 
   // Share by hours; if no hours are known, share equally. Work in cents so the parts add up exactly.
   const hours = jobs.map((j) => jobHours(j));
-  const weights = hours.every((h) => h > 0) ? hours : jobs.map(() => 1);
+  const byHours = body.split === 'hours' && hours.every((h) => h > 0);
+  const weights = byHours ? hours : jobs.map(() => 1);
   const weightSum = weights.reduce((a, b) => a + b, 0);
   const cents = Math.round(body.total * 100);
   const shares = weights.map((w) => Math.floor((cents * w) / weightSum));
@@ -214,7 +217,7 @@ jobsRouter.post('/record-pay', async (req, res) => {
     }
     out.push(job.toJSON());
   }
-  res.json({ updated: out.length, total: cents / 100, perHour: hours.every((h) => h > 0) ? Math.round((cents / weightSum)) / 100 : null, jobs: out });
+  res.json({ updated: out.length, total: cents / 100, split: byHours ? 'hours' : 'equal', perHour: byHours ? Math.round((cents / weightSum)) / 100 : null, jobs: out });
 });
 jobsRouter.use('/', jobsCrud);
 

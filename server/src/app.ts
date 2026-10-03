@@ -15,6 +15,7 @@ import invoiceRoutes from './routes/invoices.js';
 import analyticsRoutes from './routes/analytics.js';
 import documentRoutes from './routes/documents.js';
 import settingsRoutes from './routes/settings.js';
+import assistantRoutes from './routes/assistant.js';
 import googleRoutes from './routes/google.js';
 import travelRoutes from './routes/travel.js';
 import notificationRoutes from './routes/notifications.js';
@@ -54,6 +55,7 @@ export function createApp() {
   api.use('/documents', documentRoutes);
   api.use('/travel', travelRoutes);
   api.use('/notifications', notificationRoutes);
+  api.use('/assistant', assistantRoutes);
   api.use('/', analyticsRoutes);
   api.use('/', settingsRoutes);
   app.use('/api', api);

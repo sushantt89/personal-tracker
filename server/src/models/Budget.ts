@@ -12,6 +12,8 @@ const budgetSchema = new Schema(
     emergencyFundTarget: { type: Number, default: 0, min: 0 },
     currentSavings: { type: Number, default: 0, min: 0 },
     currentEmergencyFund: { type: Number, default: 0, min: 0 },
+    /** Money available to spend right now (bank balance), as last entered by the user. The Assistant rolls it forward from `asOf` using the income and expenses recorded since. */
+    balance: { amount: { type: Number, min: -100_000_000, max: 100_000_000 }, asOf: { type: String } },
     categoryBudgets: {
       type: [new Schema({ categoryId: { ...ref('Category'), required: true }, amount: { type: Number, required: true, min: 0 } }, { _id: false })],
       default: [],

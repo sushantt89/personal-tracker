@@ -7,7 +7,7 @@ export function useInvalidateFinance() {
     // Routes are recalculated in the background on the server — refresh them again shortly
     setTimeout(() => { qc.invalidateQueries({ queryKey: ['travel'] }); qc.invalidateQueries({ queryKey: ['dashboard'] }); }, 3000);
     return Promise.all(
-      ['jobs', 'income', 'expenses', 'bills', 'tasks', 'invoices', 'dashboard', 'alerts', 'insights', 'calendar', 'clients', 'documents', 'reports', 'budget', 'bills-due', 'bills-summary', 'search', 'travel'].map((k) =>
+      ['jobs', 'income', 'expenses', 'bills', 'tasks', 'invoices', 'dashboard', 'alerts', 'insights', 'calendar', 'clients', 'documents', 'reports', 'budget', 'bills-due', 'bills-summary', 'search', 'travel', 'assistant'].map((k) =>
         qc.invalidateQueries({ queryKey: [k] }),
       ),
     );

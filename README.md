@@ -144,3 +144,7 @@ The repository includes a `Dockerfile`, `docker-compose.yml` and a Render bluepr
 ## Rosters and pay added later
 
 Upload a roster screenshot on Paste & Import to add your shifts (any employer), then use Jobs → Record pay once you've been paid. See `docs/ROSTERS.md`.
+
+## Assistant
+
+The Assistant tab answers "should I buy this?", "how much is safe to spend?" and savings-goal questions from your own records. See `docs/ASSISTANT.md`.

@@ -14,6 +14,7 @@ import FolderOutlinedIcon from '@mui/icons-material/FolderOutlined';
 import SettingsOutlinedIcon from '@mui/icons-material/SettingsOutlined';
 import PeopleOutlineIcon from '@mui/icons-material/PeopleOutline';
 import ContentPasteGoIcon from '@mui/icons-material/ContentPasteGo';
+import AutoAwesomeOutlinedIcon from '@mui/icons-material/AutoAwesomeOutlined';
 import type { ReactNode } from 'react';
 
 export interface NavItem { to: string; label: string; icon: ReactNode }
@@ -23,6 +24,7 @@ export const NAV: { section?: string; items: NavItem[] }[] = [
     { to: '/my-day', label: 'My Day', icon: <TodayOutlinedIcon /> },
     { to: '/calendar', label: 'Calendar', icon: <CalendarMonthOutlinedIcon /> },
     { to: '/import', label: 'Paste & Import', icon: <ContentPasteGoIcon /> },
+    { to: '/assistant', label: 'Assistant', icon: <AutoAwesomeOutlinedIcon /> },
   ] },
   { section: 'Work & money', items: [
     { to: '/jobs', label: 'Jobs', icon: <WorkOutlineIcon /> },

@@ -2,17 +2,19 @@ import dayjs from 'dayjs';
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { Grid, Box, Stack, Typography, Alert, Button, MenuItem, TextField, List, ListItem, ListItemText, Chip, Divider, Tooltip } from '@mui/material';
+import { Grid, Box, Stack, Typography, Alert, Button, MenuItem, TextField, List, ListItem, ListItemText, Chip, Divider, Tooltip, IconButton, Snackbar } from '@mui/material';
+import CheckCircleOutlineIcon from '@mui/icons-material/CheckCircleOutline';
+import SwipeAction from '../components/SwipeAction';
 import TrendingUpIcon from '@mui/icons-material/TrendingUp';
 import TrendingDownIcon from '@mui/icons-material/TrendingDown';
 import AccountBalanceWalletOutlinedIcon from '@mui/icons-material/AccountBalanceWalletOutlined';
 import FlagOutlinedIcon from '@mui/icons-material/FlagOutlined';
 import ReceiptLongOutlinedIcon from '@mui/icons-material/ReceiptLongOutlined';
 import SavingsOutlinedIcon from '@mui/icons-material/SavingsOutlined';
-import { get, post } from '../api/client';
+import { get, post, del } from '../api/client';
 import { PageHeader, StatCard, SectionCard, DateRangeBar, rangeFor, LoadingBlock, ErrorBlock, ProgressRow, StatusChip, type DateRange } from '../components/common';
 import { LineSeriesChart, BarSeriesChart, DonutChart, CashFlowChart } from '../components/charts';
-import { money, fmtMonth, fmtShort, fmtTime, fmtDate, mapsUrl } from '../utils/format';
+import { money, fmtMonth, fmtShort, fmtTime, fmtDate, mapsUrl, localToday } from '../utils/format';
 import { useLookupMaps } from '../hooks/useLookups';
 import { useAuth } from '../hooks/useAuth';
 import { useToast } from '../hooks/useToast';
@@ -45,6 +47,25 @@ export default function Dashboard() {
     const r = await post<{ updated: number }>('/jobs/complete-past');
     toast(`${r.updated} job(s) marked completed`);
     invalidate();
+  };
+
+  // Marking a bill paid from the dashboard records the expense straight away, with a few seconds to undo
+  const [justPaid, setJustPaid] = useState<{ name: string; expenseId: string } | null>(null);
+  const payBill = async (b: { billId: string; name: string; dueDate: string }) => {
+    try {
+      const now = localToday();
+      const exp = await post<{ id: string }>(`/bills/${b.billId}/pay`, { occurrence: b.dueDate, date: now > b.dueDate ? b.dueDate : now });
+      await invalidate();
+      setJustPaid({ name: b.name, expenseId: exp.id });
+    } catch (e) {
+      toast((e as Error).message, 'error');
+    }
+  };
+  const undoPay = async () => {
+    if (!justPaid) return;
+    const id = justPaid.expenseId;
+    setJustPaid(null);
+    try { await del(`/expenses/${id}`); await invalidate(); toast('Payment undone'); } catch (e) { toast((e as Error).message, 'error'); }
   };
 
   const today = d?.today;
@@ -132,13 +153,18 @@ export default function Dashboard() {
                     {d.bills.upcoming.slice(0, 7).map((b: any, i: number) => (
                       <Box key={b.billId + b.dueDate}>
                         {i > 0 && <Divider component="li" />}
-                        <ListItem disableGutters secondaryAction={<Typography variant="body2" fontWeight={600}>{money(b.amount)}</Typography>}>
-                          <ListItemText primary={b.name} secondary={`Due ${fmtShort(b.dueDate)}${b.autoPay ? ' · auto-pay' : ''}`} slotProps={{ primary: { variant: 'body2', fontWeight: 500 } }} />
-                        </ListItem>
+                        <SwipeAction label="Paid" onAction={() => payBill(b)}>
+                          <ListItem disableGutters sx={{ pr: 0 }}>
+                            <ListItemText primary={b.name} secondary={`Due ${fmtShort(b.dueDate)}${b.autoPay ? ' · auto-pay' : ''}`} slotProps={{ primary: { variant: 'body2', fontWeight: 500 } }} />
+                            <Typography variant="body2" fontWeight={600}>{money(b.amount)}</Typography>
+                            <Tooltip title="Mark as paid"><IconButton size="small" aria-label={`Mark ${b.name} as paid`} onClick={() => payBill(b)} sx={{ ml: 0.5 }}><CheckCircleOutlineIcon fontSize="small" /></IconButton></Tooltip>
+                          </ListItem>
+                        </SwipeAction>
                       </Box>
                     ))}
                   </List>
                 )}
+                {d.bills.upcoming.length > 0 && <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1 }}>Swipe or drag a bill to the left to mark it as paid, or use the tick.</Typography>}
               </SectionCard>
             </Grid>
             <Grid size={{ xs: 12, md: 12, xl: 4 }}>
@@ -291,6 +317,9 @@ export default function Dashboard() {
           )}
         </Stack>
       )}
+      <Snackbar open={!!justPaid} autoHideDuration={6000} onClose={(_, reason) => { if (reason !== 'clickaway') setJustPaid(null); }} anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }} sx={{ bottom: { xs: 'calc(76px + env(safe-area-inset-bottom))', sm: 24 } }}>
+        <Alert severity="success" variant="filled" action={<Button color="inherit" size="small" onClick={undoPay}>Undo</Button>} sx={{ width: '100%' }}>{justPaid?.name} marked as paid</Alert>
+      </Snackbar>
     </Box>
   );
 }

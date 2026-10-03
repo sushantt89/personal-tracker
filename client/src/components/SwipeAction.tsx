@@ -2,45 +2,54 @@ import { useRef, useState, type ReactNode } from 'react';
 import { Box, Typography } from '@mui/material';
 import CheckIcon from '@mui/icons-material/Check';
 
-const THRESHOLD = 88; // how far left a row has to be dragged before letting go counts
+const THRESHOLD = 72; // how far left a row has to be dragged before letting go counts
 
 /**
- * A row you can swipe left on a touch screen to do one thing (e.g. mark a bill paid).
+ * A row you can swipe left to do one thing (e.g. mark a bill paid) — with a finger, a mouse or a trackpad drag.
  * Dragging reveals the action behind the row; letting go past the threshold runs it, otherwise the row springs back.
- * Vertical scrolling is left alone, and a swipe never also counts as a tap.
+ * Vertical scrolling is left alone, and a swipe never also counts as a tap on something inside the row.
  */
 export default function SwipeAction({ children, label, onAction, disabled }: { children: ReactNode; label: string; onAction: () => void | Promise<void>; disabled?: boolean }) {
-  const start = useRef<{ x: number; y: number; locked: 'x' | 'y' | null } | null>(null);
+  const start = useRef<{ x: number; y: number; id: number; locked: 'x' | 'y' | null } | null>(null);
+  const swiped = useRef(false);
   const [dx, setDx] = useState(0);
   const [dragging, setDragging] = useState(false);
   const [busy, setBusy] = useState(false);
   const armed = dx <= -THRESHOLD;
 
-  const onTouchStart = (e: React.TouchEvent) => {
-    if (disabled || busy) return;
-    const t = e.touches[0];
-    start.current = { x: t.clientX, y: t.clientY, locked: null };
+  const reset = () => { start.current = null; setDragging(false); setDx(0); };
+
+  const onPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (disabled || busy || (e.pointerType === 'mouse' && e.button !== 0)) return;
+    start.current = { x: e.clientX, y: e.clientY, id: e.pointerId, locked: null };
+    swiped.current = false;
   };
-  const onTouchMove = (e: React.TouchEvent) => {
+  const onPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
     const s = start.current;
-    if (!s) return;
-    const t = e.touches[0];
-    const mx = t.clientX - s.x, my = t.clientY - s.y;
+    if (!s || s.id !== e.pointerId) return;
+    const mx = e.clientX - s.x, my = e.clientY - s.y;
     if (!s.locked) {
-      if (Math.abs(mx) < 8 && Math.abs(my) < 8) return;
+      if (Math.abs(mx) < 6 && Math.abs(my) < 6) return;
       s.locked = Math.abs(mx) > Math.abs(my) ? 'x' : 'y';
+      if (s.locked === 'x') {
+        // Keep receiving the drag even if the finger or cursor leaves the row
+        try { e.currentTarget.setPointerCapture(e.pointerId); } catch { /* not supported: still works while inside the row */ }
+        setDragging(true);
+      }
     }
     if (s.locked !== 'x') return; // the person is scrolling the page
-    setDragging(true);
-    setDx(Math.max(-160, Math.min(0, mx)));
+    swiped.current = true;
+    setDx(Math.max(-180, Math.min(0, mx)));
   };
-  const onTouchEnd = async () => {
-    const wasArmed = armed && start.current?.locked === 'x';
+  const onPointerUp = async (e: React.PointerEvent<HTMLDivElement>) => {
+    const s = start.current;
+    if (!s || s.id !== e.pointerId) return;
+    const go = s.locked === 'x' && armed;
     start.current = null;
     setDragging(false);
-    if (!wasArmed) { setDx(0); return; }
+    if (!go) { setDx(0); return; }
     setBusy(true);
-    setDx(-600); // slide the row away
+    setDx(-700); // slide the row away
     try { await onAction(); } finally { setBusy(false); setDx(0); }
   };
 
@@ -50,8 +59,12 @@ export default function SwipeAction({ children, label, onAction, disabled }: { c
         <CheckIcon fontSize="small" />
         <Typography variant="body2" fontWeight={700}>{label}</Typography>
       </Box>
-      <Box onTouchStart={onTouchStart} onTouchMove={onTouchMove} onTouchEnd={onTouchEnd} onTouchCancel={() => { start.current = null; setDragging(false); setDx(0); }}
-        sx={{ position: 'relative', bgcolor: 'background.paper', transform: `translateX(${dx}px)`, transition: dragging ? 'none' : 'transform .2s ease-out', touchAction: 'pan-y' }}>
+      <Box
+        onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onPointerCancel={reset}
+        // A drag must not also trigger a button inside the row
+        onClickCapture={(e) => { if (swiped.current) { e.preventDefault(); e.stopPropagation(); swiped.current = false; } }}
+        onDragStart={(e) => e.preventDefault()}
+        sx={{ position: 'relative', bgcolor: 'background.paper', transform: `translateX(${dx}px)`, transition: dragging ? 'none' : 'transform .2s ease-out', touchAction: 'pan-y', userSelect: 'none', WebkitUserSelect: 'none', cursor: dragging ? 'grabbing' : undefined }}>
         {children}
       </Box>
     </Box>

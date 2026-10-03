@@ -19,7 +19,8 @@ import { useInvalidateFinance } from '../hooks/useInvalidate';
 import { useToast } from '../hooks/useToast';
 import { useThemeMode } from '../theme/ThemeModeProvider';
 
-const START_HOUR = 6, END_HOUR = 22, HOUR_PX = 56;
+// The day grid runs from 6 am to midnight (the last row is 11 pm – 12 am)
+const START_HOUR = 6, END_HOUR = 23, HOUR_PX = 56;
 const toMin = (t?: string) => (t ? Number(t.slice(0, 2)) * 60 + Number(t.slice(3, 5)) : 0);
 const fromMin = (m: number) => `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
 
@@ -127,6 +128,9 @@ export default function MyDay() {
                     <Typography variant="caption" color="text.secondary" sx={{ position: 'absolute', left: -52, top: -9, width: 46, textAlign: 'right' }}>{fmtTime(fromMin(h * 60)).replace(':00', '')}</Typography>
                   </Box>
                 ))}
+                <Box sx={{ position: 'absolute', left: 0, right: 0, top: (END_HOUR - START_HOUR + 1) * HOUR_PX, borderTop: 1, borderColor: 'divider' }}>
+                  <Typography variant="caption" color="text.secondary" sx={{ position: 'absolute', left: -52, top: -9, width: 46, textAlign: 'right' }}>12 am</Typography>
+                </Box>
                 {date === localToday() && (() => { const n = new Date(); const m = n.getHours() * 60 + n.getMinutes(); return m >= START_HOUR * 60 && m <= END_HOUR * 60 + 59 ? <Box sx={{ position: 'absolute', left: -6, right: 0, top: ((m - START_HOUR * 60) / 60) * HOUR_PX, height: 2, bgcolor: 'error.main', zIndex: 3, '&::before': { content: '""', position: 'absolute', left: 0, top: -4, width: 10, height: 10, borderRadius: '50%', bgcolor: 'error.main' } }} /> : null; })()}
                 {layout.map(({ e, s, en, col, cols }) => {
                   const top = Math.max(0, ((s - START_HOUR * 60) / 60) * HOUR_PX);

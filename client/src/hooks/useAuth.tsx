@@ -37,9 +37,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [q.data?.id, q.data?.currency, q.data?.theme]);
   const logout = async () => {
-    await api('/auth/logout', { method: 'POST', body: {} });
-    qc.clear();
-    qc.setQueryData(['me'], null);
+    try {
+      await api('/auth/logout', { method: 'POST', body: {} });
+    } finally {
+      // Sign out on screen first (this is what sends you to the login page), then drop everything that was loaded for this account.
+      // Clearing the whole cache in one go would leave the page holding on to the old signed-in user.
+      qc.setQueryData(['me'], null);
+      qc.removeQueries({ predicate: (q) => q.queryKey[0] !== 'me' });
+    }
   };
   return <Ctx.Provider value={{ user: q.data ?? null, loading: q.isLoading, unreachable: q.isError && !q.data, refresh: q.refetch, logout }}>{children}</Ctx.Provider>;
 }

@@ -80,7 +80,7 @@ export default function Invoices() {
                     {mobile ? (
                       <TableCell>
                         <Stack direction="row" justifyContent="space-between" alignItems="center">
-                          <Box><Typography variant="body2" fontWeight={600}>{inv.number} · {inv.clientName}</Typography><Typography variant="caption" color="text.secondary">Due {fmtDate(inv.dueDate)}</Typography></Box>
+                          <Box><Typography variant="body2" fontWeight={600}>{inv.number} · {inv.clientName}</Typography><Typography variant="caption" color="text.secondary">{inv.dueDate ? `Due ${fmtDate(inv.dueDate)}` : 'No due date'}</Typography></Box>
                           <Box sx={{ textAlign: 'right' }}><Typography variant="body2" fontWeight={600}>{money(inv.total)}</Typography><StatusChip status={inv.effectiveStatus} /></Box>
                         </Stack>
                       </TableCell>

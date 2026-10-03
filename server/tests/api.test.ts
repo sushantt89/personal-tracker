@@ -338,4 +338,27 @@ describe('reset everything', () => {
     expect((await b.get('/api/expenses')).body.items).toHaveLength(1);
     expect((await b.get('/api/settings')).body.notifications.billReminderDays).toBe(9);
   });
+
+  it('lets an invoice have no due date, and lets one be removed later', async () => {
+    const b = request.agent(app);
+    await b.post('/api/auth/register').send({ name: 'Nodue', email: 'nodue@example.com', password: 'password123' }).expect(201);
+    const items = [{ description: 'Cleaning', quantity: 1, rate: 80 }];
+    const inv = (await b.post('/api/invoices').send({ issueDate: '2026-10-05', clientName: 'Agency', items, status: 'sent' }).expect(201)).body;
+    expect(inv.dueDate).toBeUndefined();
+    // Never overdue, however old it gets
+    expect((await b.get(`/api/invoices/${inv.id}?today=2027-06-01`)).body.effectiveStatus).toBe('sent');
+    expect((await b.get('/api/invoices?status=overdue&today=2027-06-01')).body.items).toHaveLength(0);
+    expect((await b.get('/api/dashboard?today=2027-06-01')).status).toBe(200);
+    const pdf = await b.get(`/api/invoices/${inv.id}/pdf`).expect(200);
+    expect(pdf.headers['content-type']).toContain('application/pdf');
+    // Add one, then take it away again
+    let u = (await b.put(`/api/invoices/${inv.id}`).send({ issueDate: '2026-10-05', dueDate: '2026-10-12', clientName: 'Agency', items, status: 'sent' }).expect(200)).body;
+    expect(u.dueDate).toBe('2026-10-12');
+    expect((await b.get(`/api/invoices/${inv.id}?today=2026-10-20`)).body.effectiveStatus).toBe('overdue');
+    u = (await b.put(`/api/invoices/${inv.id}`).send({ issueDate: '2026-10-05', dueDate: '', clientName: 'Agency', items, status: 'sent' }).expect(200)).body;
+    expect(u.dueDate).toBeUndefined();
+    expect((await b.get(`/api/invoices/${inv.id}?today=2026-10-20`)).body.effectiveStatus).toBe('sent');
+    const copy = (await b.post(`/api/invoices/${inv.id}/duplicate`).expect(201)).body;
+    expect(copy.dueDate).toBeUndefined();
+  });
 });

@@ -43,7 +43,7 @@ export interface Task {
 export interface InvoiceItem { _id?: string; date?: string; description: string; quantity: number; rate: number; amount?: number; jobId?: Id | null; incomeId?: Id | null }
 export type InvoiceStatus = 'draft' | 'sent' | 'paid' | 'overdue' | 'cancelled';
 export interface Invoice {
-  id: Id; number: string; issueDate: string; dueDate: string; incomeSourceId?: Id | null; clientId?: Id | null; clientName: string; billToType?: 'client' | 'contractor'; clientAddress?: string; clientEmail?: string;
+  id: Id; number: string; issueDate: string; dueDate?: string | null; incomeSourceId?: Id | null; clientId?: Id | null; clientName: string; billToType?: 'client' | 'contractor'; clientAddress?: string; clientEmail?: string;
   items: InvoiceItem[]; subtotal: number; gstRate: number; gstAmount: number; total: number; notes?: string; paymentDetails?: string; status: InvoiceStatus;
   effectiveStatus: InvoiceStatus; paidDate?: string; periodFrom?: string; periodTo?: string; sync?: { googleDriveLink?: string; googleDriveFileId?: string; googleCalendarEventId?: string; syncError?: string };
 }

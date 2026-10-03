@@ -36,8 +36,8 @@ export function computeTotals(items: ItemInput[], gstRate: number) {
   return { lines, subtotal, gstAmount, total: round2(subtotal + gstAmount) };
 }
 
-export function effectiveStatus(inv: { status: string; dueDate: string }, today: string) {
-  return inv.status === 'sent' && inv.dueDate < today ? 'overdue' : inv.status;
+export function effectiveStatus(inv: { status: string; dueDate?: string | null }, today: string) {
+  return inv.status === 'sent' && !!inv.dueDate && inv.dueDate < today ? 'overdue' : inv.status;
 }
 
 const fmtMoney = (n: number, currency: string) =>
@@ -62,12 +62,12 @@ export async function renderInvoicePdf(invoice: any, settings: any, currency: st
   const left = 50, right = 545;
 
   // Logo
-  let headerY = 50;
+  let headerY = 50, hasLogo = false;
   if (typeof biz.logoDataUrl === 'string' && /^data:image\/(png|jpe?g);base64,/.test(biz.logoDataUrl)) {
     try {
       const buf = Buffer.from(biz.logoDataUrl.split(',')[1], 'base64');
       doc.image(buf, left, headerY, { fit: [80, 60] });
-      headerY += 0;
+      hasLogo = true;
     } catch { /* ignore bad logo */ }
   }
 
@@ -75,10 +75,12 @@ export async function renderInvoicePdf(invoice: any, settings: any, currency: st
   doc.fillColor('#111827').fontSize(10).font('Helvetica');
   doc.text(`Invoice #: ${invoice.number}`, 300, headerY + 34, { width: right - 300, align: 'right' });
   doc.text(`Issue date: ${fmtDate(invoice.issueDate)}`, { width: right - 300, align: 'right' });
-  doc.text(`Due date: ${fmtDate(invoice.dueDate)}`, { width: right - 300, align: 'right' });
+  if (invoice.dueDate) doc.text(`Due date: ${fmtDate(invoice.dueDate)}`, { width: right - 300, align: 'right' });
   if (invoice.periodFrom && invoice.periodTo) doc.text(`Period: ${fmtDate(invoice.periodFrom)} – ${fmtDate(invoice.periodTo)}`, { width: right - 300, align: 'right' });
+  const metaBottom = doc.y;
 
-  const fromX = left, fromY = headerY + 70;
+  // Who it is from: top left (under the logo when there is one)
+  const fromX = left, fromY = hasLogo ? headerY + 70 : headerY + 6;
   doc.font('Helvetica-Bold').fontSize(11).text(biz.businessName || 'Your name', fromX, fromY, { width: 240 });
   doc.font('Helvetica').fontSize(9).fillColor(muted);
   if (biz.abn) doc.text(`ABN: ${biz.abn}`, { width: 240 });
@@ -86,14 +88,16 @@ export async function renderInvoicePdf(invoice: any, settings: any, currency: st
   if (biz.email) doc.text(biz.email, { width: 240 });
   if (biz.phone) doc.text(biz.phone, { width: 240 });
 
-  doc.fillColor(muted).fontSize(9).font('Helvetica-Bold').text('BILL TO', 300, fromY, { width: 245 });
-  doc.fillColor('#111827').font('Helvetica-Bold').fontSize(11).text(invoice.clientName, { width: 245 });
+  // Who it is to: on the left, underneath
+  const billY = Math.max(doc.y, metaBottom) + 22;
+  doc.fillColor(muted).fontSize(9).font('Helvetica-Bold').text('BILL TO', left, billY, { width: 300 });
+  doc.fillColor('#111827').font('Helvetica-Bold').fontSize(11).text(invoice.clientName, left, doc.y + 2, { width: 300 });
   doc.font('Helvetica').fontSize(9).fillColor(muted);
-  if (invoice.clientAddress) doc.text(invoice.clientAddress, { width: 245 });
-  if (invoice.clientEmail) doc.text(invoice.clientEmail, { width: 245 });
+  if (invoice.clientAddress) doc.text(invoice.clientAddress, { width: 300 });
+  if (invoice.clientEmail) doc.text(invoice.clientEmail, { width: 300 });
 
   // Items table
-  let y = Math.max(doc.y, fromY + 80) + 20;
+  let y = doc.y + 22;
   const cols = { date: left, desc: left + 75, qty: 370, rate: 420, amount: 480 };
   doc.rect(left, y, right - left, 22).fill('#eef2ff');
   doc.fillColor('#111827').font('Helvetica-Bold').fontSize(9);

@@ -34,7 +34,7 @@ export async function computeAlerts(userId: string, today: string, currency: str
   if (n.invoiceReminders !== false) {
     for (const inv of d.invoices.dueSoon) {
       const overdue = inv.effectiveStatus === 'overdue';
-      out.push({ id: `inv-${inv.id}`, type: 'invoice', severity: overdue ? 'error' : 'info', title: overdue ? `Invoice ${inv.number} is overdue` : `Invoice ${inv.number} due ${day(inv.dueDate)}`, message: `${inv.clientName} · ${money(inv.total)}`, date: inv.dueDate, link: `/invoices/${inv.id}` });
+      out.push({ id: `inv-${inv.id}`, type: 'invoice', severity: overdue ? 'error' : 'info', title: overdue ? `Invoice ${inv.number} is overdue` : `Invoice ${inv.number} due ${day(inv.dueDate!)}`, message: `${inv.clientName} · ${money(inv.total)}`, date: inv.dueDate ?? undefined, link: `/invoices/${inv.id}` });
     }
     if (d.invoices.overdueCount > d.invoices.dueSoon.filter((i) => i.effectiveStatus === 'overdue').length) {
       out.push({ id: 'inv-overdue-total', type: 'invoice', severity: 'error', title: `${d.invoices.overdueCount} overdue invoices`, message: `${money(d.invoices.overdueAmount)} outstanding`, link: '/invoices?status=overdue' });

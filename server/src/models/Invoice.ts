@@ -22,7 +22,8 @@ const invoiceSchema = new Schema(
     userId: ownerField,
     number: { type: String, required: true, trim: true, maxlength: 60 },
     issueDate: dateReq,
-    dueDate: dateReq,
+    /** Optional: an invoice without one never becomes overdue */
+    dueDate: { type: String, match: /^\d{4}-\d{2}-\d{2}$/ },
     incomeSourceId: ref('IncomeSource'),
     clientId: ref('Client'),
     clientName: { type: String, required: true, trim: true, maxlength: 120 },

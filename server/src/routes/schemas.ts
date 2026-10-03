@@ -137,7 +137,7 @@ export const invoiceItemSchema = z.object({
 export const invoiceSchema = z.object({
   number: zOptStr(60),
   issueDate: zDate,
-  dueDate: zDate,
+  dueDate: zOptDate,
   incomeSourceId: zOptId,
   clientId: zOptId,
   clientName: zStr(120).min(1, 'Client is required'),

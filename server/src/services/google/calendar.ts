@@ -126,7 +126,8 @@ export function shouldSync(kind: SyncKind, doc: any, cal: { enabled?: boolean; s
   if (!(cal.syncTypes ?? []).includes(syncTypeOf(kind, doc))) return false;
   if (kind === 'job' || kind === 'task') return doc.status !== 'cancelled';
   if (kind === 'bill') return doc.active !== false;
-  return doc.status === 'sent';
+  // An invoice with no due date has nothing to put in the calendar
+  return doc.status === 'sent' && Boolean(doc.dueDate);
 }
 
 function toEvent(kind: SyncKind, doc: any, tz: string): Event {

@@ -72,7 +72,7 @@ export default function InvoiceEditor() {
     const s = settings.data?.invoice;
     if (id && existing.data) {
       const i = existing.data;
-      setForm({ number: i.number, issueDate: i.issueDate, dueDate: i.dueDate, incomeSourceId: i.incomeSourceId ?? '', clientId: i.clientId ?? '', clientName: i.clientName, billToType: i.billToType ?? 'client', clientAddress: i.clientAddress ?? '', clientEmail: i.clientEmail ?? '', items: i.items, gstRate: i.gstRate, notes: i.notes ?? '', paymentDetails: i.paymentDetails ?? '', periodFrom: i.periodFrom, periodTo: i.periodTo });
+      setForm({ number: i.number, issueDate: i.issueDate, dueDate: i.dueDate ?? '', incomeSourceId: i.incomeSourceId ?? '', clientId: i.clientId ?? '', clientName: i.clientName, billToType: i.billToType ?? 'client', clientAddress: i.clientAddress ?? '', clientEmail: i.clientEmail ?? '', items: i.items, gstRate: i.gstRate, notes: i.notes ?? '', paymentDetails: i.paymentDetails ?? '', periodFrom: i.periodFrom, periodTo: i.periodTo });
     } else if (!id && settings.data) {
       const today = localToday();
       setForm({ number: '', issueDate: today, dueDate: addDays(today, s?.paymentTermsDays ?? 7), incomeSourceId: '', clientId: '', clientName: '', billToType: 'client', clientAddress: '', clientEmail: '', items: [{ description: '', quantity: 1, rate: 0 }], gstRate: s?.gstRegistered ? s.gstRate : 0, notes: s?.defaultNotes ?? '', paymentDetails: s?.paymentDetails ?? '' });
@@ -165,7 +165,7 @@ export default function InvoiceEditor() {
   const act = async (fn: () => Promise<unknown>, msg: string) => { try { await fn(); invalidate(); existing.refetch(); toast(msg); } catch (e) { toast((e as Error).message, 'error'); } };
   const saveTemplate = async () => {
     if (!saveTpl?.name.trim()) return;
-    const terms = Math.max(0, dayjs(form.dueDate).diff(dayjs(form.issueDate), 'day'));
+    const terms = form.dueDate ? Math.max(0, dayjs(form.dueDate).diff(dayjs(form.issueDate), 'day')) : undefined;
     try {
       await post('/invoice-templates', {
         name: saveTpl.name.trim(), billToType: form.billToType, clientId: form.clientId || null, clientName: form.clientName, clientAddress: form.clientAddress, clientEmail: form.clientEmail,
@@ -284,7 +284,7 @@ export default function InvoiceEditor() {
           <Grid container spacing={2}>
             <Grid size={{ xs: 12, sm: 4 }}><TextField label="Invoice number" value={form.number} placeholder={nextNumber.data?.number ? `Auto: ${nextNumber.data.number}` : 'Auto'} onChange={(e) => set('number', e.target.value)} slotProps={{ inputLabel: { shrink: true } }} /></Grid>
             <Grid size={{ xs: 6, sm: 4 }}><TextField type="date" label="Issue date" value={form.issueDate} onChange={(e) => set('issueDate', e.target.value)} slotProps={{ inputLabel: { shrink: true } }} /></Grid>
-            <Grid size={{ xs: 6, sm: 4 }}><TextField type="date" label="Due date" value={form.dueDate} onChange={(e) => set('dueDate', e.target.value)} slotProps={{ inputLabel: { shrink: true } }} /></Grid>
+            <Grid size={{ xs: 6, sm: 4 }}><TextField type="date" label="Due date (optional)" value={form.dueDate} onChange={(e) => set('dueDate', e.target.value)} slotProps={{ inputLabel: { shrink: true }, htmlInput: { min: form.issueDate } }} helperText={form.dueDate ? <Box component="span" role="button" tabIndex={0} sx={{ color: 'primary.main', cursor: 'pointer' }} onClick={() => set('dueDate', '')} onKeyDown={(e) => { if (e.key === 'Enter') set('dueDate', ''); }}>Remove due date</Box> : 'None — it won’t be marked overdue'} /></Grid>
             <Grid size={{ xs: 12, sm: 6 }}>
               <Autocomplete freeSolo options={clients.data ?? []} getOptionLabel={(o) => (typeof o === 'string' ? o : o.name)} value={clients.data?.find((c) => c.id === form.clientId) ?? form.clientName}
                 onChange={(_, v) => pickClient(v as Client | string | null)} onInputChange={(_, v, reason) => reason === 'input' && pickClient(v)}

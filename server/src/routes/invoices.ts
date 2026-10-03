@@ -34,7 +34,7 @@ async function prepare(userId: string, data: any, currentInvoiceId?: string) {
   const totals = computeTotals(data.items, gstRate);
   data.items = data.items.map((i: any, idx: number) => ({ ...i, amount: totals.lines[idx] }));
   Object.assign(data, { gstRate, subtotal: totals.subtotal, gstAmount: totals.gstAmount, total: totals.total });
-  if (data.dueDate < data.issueDate) throw badRequest('Due date cannot be before the issue date');
+  if (data.dueDate && data.dueDate < data.issueDate) throw badRequest('Due date cannot be before the issue date');
   if (data.status === 'paid' && !data.paidDate) data.paidDate = data.issueDate;
   return jobIds;
 }
@@ -125,6 +125,7 @@ r.put('/:id', async (req, res) => {
   if (data.number !== inv.number && (await Invoice.exists({ userId: req.userId, number: data.number }))) throw conflict(`Invoice number ${data.number} already exists`);
   const before = inv.toJSON();
   inv.set(data);
+  if (!data.dueDate) inv.set('dueDate', undefined); // due date removed
   await inv.save();
   await linkRecords(req.userId!, inv, jobIds);
   await audit(req.userId!, 'Invoice', inv._id, 'update', before, inv.toJSON());
@@ -176,7 +177,7 @@ r.post('/:id/duplicate', async (req, res) => {
   const settings = await Settings.findOne({ userId: req.userId }).lean();
   const number = await nextInvoiceNumber(req.userId!, today);
   const copy = await Invoice.create({
-    userId: req.userId, number, issueDate: today, dueDate: addDays(today, settings?.invoice?.paymentTermsDays ?? 7),
+    userId: req.userId, number, issueDate: today, dueDate: src.dueDate ? addDays(today, settings?.invoice?.paymentTermsDays ?? 7) : undefined,
     incomeSourceId: src.incomeSourceId, clientId: src.clientId, clientName: src.clientName, billToType: src.billToType, clientAddress: src.clientAddress, clientEmail: src.clientEmail,
     // Job links are not copied: a job can only be invoiced once
     items: src.items.map((i) => ({ date: i.date, description: i.description, quantity: i.quantity, rate: i.rate, amount: i.amount })),

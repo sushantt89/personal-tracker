@@ -234,7 +234,7 @@ export async function dashboard(userId: string, f: FinanceFilters) {
       paidAmount: sum(paidInv.map((i) => i.total)),
       unpaidCount: unpaidInv.length,
       unpaidAmount: sum(unpaidInv.map((i) => i.total)),
-      dueSoon: outstanding.filter((i) => i.dueDate <= addDays(f.today, 14)).sort((a, b) => a.dueDate.localeCompare(b.dueDate)).slice(0, 8),
+      dueSoon: outstanding.filter((i) => i.dueDate && i.dueDate <= addDays(f.today, 14)).sort((a, b) => a.dueDate!.localeCompare(b.dueDate!)).slice(0, 8),
     },
     work: {
       jobsThisWeek: completed.filter((j) => j.date >= ws && j.date <= f.today).length,

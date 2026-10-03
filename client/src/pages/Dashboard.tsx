@@ -308,7 +308,7 @@ export default function Dashboard() {
               <Stack spacing={1}>{d.invoices.dueSoon.map((i: any) => (
                 <Stack key={i.id} direction="row" spacing={1} alignItems="center" sx={{ cursor: 'pointer' }} onClick={() => nav(`/invoices/${i.id}`)}>
                   <Typography variant="body2" sx={{ flex: 1 }}>{i.number} · {i.clientName}</Typography>
-                  <Typography variant="body2" color="text.secondary">Due {fmtShort(i.dueDate)}</Typography>
+                  <Typography variant="body2" color="text.secondary">{i.dueDate ? `Due ${fmtShort(i.dueDate)}` : 'No due date'}</Typography>
                   <StatusChip status={i.effectiveStatus} />
                   <Typography variant="body2" fontWeight={600}>{money(i.total)}</Typography>
                 </Stack>

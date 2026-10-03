@@ -316,6 +316,17 @@ billsRouter.use('/', billsCrud);
 const tasksCrud = crudRouter({
   model: Task, entity: 'Task', schema: taskSchema, searchFields: ['title', 'description', 'location', 'notes'],
   filterFields: ['status', 'category', 'priority'], dateField: 'date', sort: { date: 1, startTime: 1 }, audited: false, calendarKind: 'task',
+  hooks: {
+    // "Add to Google Calendar" on the form is stored on the record's sync settings (dotted paths keep the linked event id)
+    beforeCreate: (_req, data) => {
+      if (data.addToGoogle !== undefined) data.sync = { calendarInclude: data.addToGoogle === true, calendarOptOut: data.addToGoogle === false };
+      delete data.addToGoogle;
+    },
+    beforeUpdate: (_req, data) => {
+      if (data.addToGoogle !== undefined) { data['sync.calendarInclude'] = data.addToGoogle === true; data['sync.calendarOptOut'] = data.addToGoogle === false; }
+      delete data.addToGoogle;
+    },
+  },
 });
 export const tasksRouter = Router();
 /** Set status of a single occurrence of a recurring task. */

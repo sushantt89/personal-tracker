@@ -16,8 +16,14 @@ export function createFakeGoogle() {
       insert: async ({ requestBody }: any) => { maybeFail(); const e = { ...requestBody, id: id('evt'), status: 'confirmed', updated: new Date().toISOString() }; events.set(e.id, e); return { data: e }; },
       update: async ({ eventId, requestBody }: any) => { maybeFail(); if (!events.has(eventId)) throw notFound(); const e = { ...requestBody, id: eventId, status: 'confirmed', updated: new Date().toISOString() }; events.set(eventId, e); return { data: e }; },
       delete: async ({ eventId }: any) => { maybeFail(); if (!events.delete(eventId)) throw notFound(); return { data: {} }; },
-      list: async ({ privateExtendedProperty, updatedMin, showDeleted }: any) => {
+      list: async ({ privateExtendedProperty, updatedMin, showDeleted, timeMin, timeMax }: any) => {
         maybeFail();
+        if (!privateExtendedProperty) {
+          // Plain listing of a time window, as used to show the person's own Google events
+          const at = (e: any, k: 'start' | 'end') => e[k]?.dateTime ?? `${e[k]?.date}T00:00:00Z`;
+          const inWindow = [...events.values()].filter((e) => (!timeMax || at(e, 'start') < timeMax) && (!timeMin || at(e, 'end') > timeMin));
+          return { data: { items: inWindow.sort((a, b) => at(a, 'start').localeCompare(at(b, 'start'))) } };
+        }
         const [k, v] = String(privateExtendedProperty?.[0] ?? '').split('=');
         const live = [...events.values()].filter((e) => e.extendedProperties?.private?.[k] === v && (!updatedMin || e.updated >= updatedMin));
         return { data: { items: showDeleted ? [...live, ...userDeleted.filter((e) => e.extendedProperties?.private?.[k] === v)] : live } };
@@ -69,6 +75,8 @@ export function createFakeGoogle() {
     events, files, sent,
     uploaded: () => [...files.values()].filter((f) => f.mimeType !== 'application/vnd.google-apps.folder').map((f) => ({ ...f, path: pathOf(f) })),
     folders: () => [...files.values()].filter((f) => f.mimeType === 'application/vnd.google-apps.folder').map(pathOf),
+    /** Simulate the person adding their own event in the Google Calendar app. */
+    userCreates: (event: any) => { const e = { ...event, id: id('own'), status: 'confirmed', htmlLink: 'https://calendar.example/event', updated: new Date().toISOString() }; events.set(e.id, e); return e.id as string; },
     /** Simulate the person editing or deleting an event in the Google Calendar app. */
     userEdits: (eventId: string, patch: any) => { events.set(eventId, { ...events.get(eventId), ...patch, updated: later() }); },
     userDeletes: (eventId: string) => { const e = events.get(eventId); events.delete(eventId); userDeleted.push({ ...e, status: 'cancelled', updated: later() }); },

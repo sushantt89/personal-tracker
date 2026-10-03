@@ -368,7 +368,7 @@ function IntegrationsTab({ settings }: { settings: Settings }) {
     setBusy(key);
     try { toast(await fn()); await refresh(); } catch (e) { toast((e as Error).message, 'error'); } finally { setBusy(null); }
   };
-  const saveCal = (next = cal) => save(() => patch('/settings', { integrations: { googleCalendar: next } }), ['settings', 'integrations']);
+  const saveCal = (next = cal) => save(() => patch('/settings', { integrations: { googleCalendar: next } }), ['settings', 'integrations', 'calendar']);
   const saveDrive = (next = drive) => save(() => patch('/settings', { integrations: { googleDrive: next } }), ['settings', 'integrations']);
   const Status = ({ s }: { s?: IntegrationStatus }) => <Chip size="small" label={s?.connected ? 'Connected' : s?.needsReconnect ? 'Reconnect needed' : 'Not connected'} color={s?.connected ? 'success' : s?.needsReconnect ? 'warning' : 'default'} variant={s?.connected ? 'filled' : 'outlined'} />;
 
@@ -418,6 +418,7 @@ function IntegrationsTab({ settings }: { settings: Settings }) {
               </Stack>
             </Box>
             <FormControlLabel control={<Switch checked={cal.twoWay !== false} onChange={(e) => { const next = { ...cal, twoWay: e.target.checked }; setCal(next); saveCal(next); }} />} label="Two-way: when I move or retime a job or appointment in Google Calendar, update it here too" />
+            <FormControlLabel control={<Switch checked={cal.showGoogleEvents !== false} onChange={(e) => { const next = { ...cal, showGoogleEvents: e.target.checked }; setCal(next); saveCal(next); }} />} label="Show my Google Calendar events in the app’s Calendar and My Day" />
             <TextField label="Calendar ID" value={cal.calendarId} onChange={(e) => setCal({ ...cal, calendarId: e.target.value })} helperText="'primary' is your main calendar. To use a separate calendar, paste its ID from Google Calendar → Settings → Integrate calendar." sx={{ maxWidth: 520 }} />
             <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
               <Button variant="outlined" onClick={() => saveCal()}>Save calendar settings</Button>

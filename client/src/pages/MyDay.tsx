@@ -13,7 +13,8 @@ import { get, patch, post, del } from '../api/client';
 import type { CalendarEvent, Task, Job, TravelDay } from '../api/types';
 import { PageHeader, SectionCard, LoadingBlock, StatusChip, useConfirm } from '../components/common';
 import { EntityFormDialog } from '../components/EntityForm';
-import { taskFields, taskDefaults, jobFields, withFormattedAddress } from '../utils/forms';
+import { taskFields, taskDefaults, jobFields, withFormattedAddress, addToGoogleField, taskInGoogle } from '../utils/forms';
+import { useIntegrations, useSettings } from '../hooks/useLookups';
 import { addDays, fmtDay, fmtTime, money, localToday, directionsUrl, fmtDate } from '../utils/format';
 import { useInvalidateFinance } from '../hooks/useInvalidate';
 import { useToast } from '../hooks/useToast';
@@ -36,6 +37,9 @@ export default function MyDay() {
   const setDate = (d: string) => setParams(d === localToday() ? {} : { date: d });
   const [editingTask, setEditingTask] = useState<{ id?: string; initial: Record<string, unknown> } | null>(null);
   const [editingJob, setEditingJob] = useState<Job | null>(null);
+  const integrations = useIntegrations();
+  const googleConnected = !!integrations.data?.googleCalendar.connected;
+  const calSettings = useSettings().data?.integrations.googleCalendar;
 
   const day = useQuery({ queryKey: ['calendar', date, date], queryFn: () => get<{ items: CalendarEvent[] }>('/calendar', { from: date, to: date }) });
   const week = useQuery({ queryKey: ['calendar', addDays(date, 1), addDays(date, 7)], queryFn: () => get<{ items: CalendarEvent[] }>('/calendar', { from: addDays(date, 1), to: addDays(date, 7) }) });
@@ -44,7 +48,7 @@ export default function MyDay() {
   const timed = events.filter((e) => e.startTime);
   const untimed = events.filter((e) => !e.startTime);
   const jobs = events.filter((e) => e.type === 'job' && e.status !== 'cancelled');
-  const color: Record<string, string> = { job: chart[0], task: chart[2], bill: chart[1], invoice: chart[6] };
+  const color: Record<string, string> = { job: chart[0], task: chart[2], bill: chart[1], invoice: chart[6], google: chart[4] };
 
   // Simple overlap layout: assign columns to overlapping events
   const layout = useMemo(() => {
@@ -77,8 +81,9 @@ export default function MyDay() {
   };
 
   const open = async (ev: CalendarEvent) => {
-    if (ev.type === 'task') { const t = await get<Task>(`/tasks/${ev.refId}`); setEditingTask({ id: t.id, initial: { ...t, recurrence: t.recurrence ?? { frequency: 'none' } } }); }
+    if (ev.type === 'task') { const t = await get<Task>(`/tasks/${ev.refId}`); setEditingTask({ id: t.id, initial: { ...t, recurrence: t.recurrence ?? { frequency: 'none' }, ...(googleConnected ? { addToGoogle: taskInGoogle(t, calSettings?.syncTypes, !!calSettings?.enabled) } : {}) } }); }
     else if (ev.type === 'job') setEditingJob(await get<Job>(`/jobs/${ev.refId}`));
+    else if (ev.type === 'google') { if (ev.link) window.open(ev.link, '_blank', 'noopener'); }
     else if (ev.type === 'bill') nav('/bills');
     else nav(`/invoices/${ev.refId}`);
   };
@@ -92,7 +97,7 @@ export default function MyDay() {
         <Typography variant="body2" fontWeight={600} noWrap sx={{ textDecoration: ev.status === 'completed' ? 'line-through' : undefined }}>
           {ev.title}{ev.amount ? ` · ${money(ev.amount)}` : ''}
         </Typography>
-        {!compact && <Typography variant="caption" color="text.secondary" noWrap component="div">{ev.startTime ? `${fmtTime(ev.startTime)}${ev.endTime ? '–' + fmtTime(ev.endTime) : ''}` : ev.type}{ev.location ? ` · ${ev.location}` : ''}</Typography>}
+        {!compact && <Typography variant="caption" color="text.secondary" noWrap component="div">{ev.startTime ? `${fmtTime(ev.startTime)}${ev.endTime ? '–' + fmtTime(ev.endTime) : ''}` : ev.type === 'google' ? 'Google Calendar · all day' : ev.type}{ev.location ? ` · ${ev.location}` : ''}</Typography>}
       </Box>
       {ev.recurring && <RepeatIcon sx={{ fontSize: 14, color: 'text.secondary', mt: 0.5 }} />}
     </Stack>
@@ -160,7 +165,7 @@ export default function MyDay() {
                 <Stack spacing={1}>
                   {untimed.map((e) => (
                     <Box key={e.id} onClick={() => open(e)} sx={{ cursor: 'pointer', borderLeft: 3, borderColor: color[e.type], pl: 1, py: 0.5, borderRadius: 1, '&:hover': { bgcolor: 'action.hover' } }}>
-                      <Stack direction="row" alignItems="center" spacing={1}><Box sx={{ flex: 1, minWidth: 0 }}><EventChip ev={e} /></Box>{e.type !== 'task' && <StatusChip status={e.status} />}</Stack>
+                      <Stack direction="row" alignItems="center" spacing={1}><Box sx={{ flex: 1, minWidth: 0 }}><EventChip ev={e} /></Box>{e.type === 'google' ? <Chip size="small" variant="outlined" label="Google" /> : e.type !== 'task' && <StatusChip status={e.status} />}</Stack>
                     </Box>
                   ))}
                 </Stack>
@@ -252,8 +257,12 @@ export default function MyDay() {
         </Grid>
       </Grid>
 
-      <EntityFormDialog open={!!editingTask} title={editingTask?.id ? 'Edit task' : 'Add task'} fields={taskFields} initial={editingTask?.initial ?? {}} onClose={() => setEditingTask(null)}
-        onSubmit={async (v) => { if (editingTask?.id) await patch(`/tasks/${editingTask.id}`, v); else await post('/tasks', v); invalidate(); toast('Task saved'); }}
+      <EntityFormDialog open={!!editingTask} title={editingTask?.id ? 'Edit task' : 'Add task'} fields={googleConnected ? [...taskFields, addToGoogleField] : taskFields} initial={editingTask?.initial ?? {}} onClose={() => setEditingTask(null)}
+        onSubmit={async (raw) => {
+          // Only send the Google switch when it was actually changed, so untouched tasks keep following the sync settings
+          const v = { ...raw };
+          if (!googleConnected || !!v.addToGoogle === !!editingTask?.initial.addToGoogle) delete v.addToGoogle;
+          if (editingTask?.id) await patch(`/tasks/${editingTask.id}`, v); else await post('/tasks', v); invalidate(); toast('Task saved'); }}
         extra={editingTask?.id ? <Button color="error" sx={{ mt: 2 }} onClick={async () => { const id = editingTask.id!; if (await confirm({ title: 'Delete this task?', message: 'Recurring tasks are deleted for all dates.', confirmText: 'Delete', danger: true })) { await del(`/tasks/${id}`); setEditingTask(null); invalidate(); toast('Task deleted'); } }}>Delete task</Button> : undefined} />
       <EntityFormDialog open={!!editingJob} title="Edit job" fields={jobFields} initial={editingJob ? { ...editingJob, address: editingJob.address ?? {} } : {}} onClose={() => setEditingJob(null)}
         onSubmit={async (v) => { await patch(`/jobs/${editingJob!.id}`, withFormattedAddress(v)); invalidate(); toast('Job saved'); }} />

@@ -120,6 +120,8 @@ export const taskSchema = z.object({
   category: z.enum(TASK_CATEGORIES).optional(),
   notes: zOptStr(2000),
   recurrence: z.object({ frequency: z.enum(['none', 'daily', 'weekly', 'fortnightly', 'monthly']), until: zOptDate }).optional(),
+  /** true = put this in Google Calendar even if its category isn't in "what to sync"; false = keep it out */
+  addToGoogle: z.boolean().optional(),
 });
 
 export const invoiceItemSchema = z.object({

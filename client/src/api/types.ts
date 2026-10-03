@@ -64,14 +64,15 @@ export interface Settings {
   travel: TravelSettings;
   notifications: { billReminders: boolean; billReminderDays: number; invoiceReminders: boolean; jobReminders: boolean; budgetAlerts: boolean; taskReminders: boolean; emailEnabled: boolean; emailHour: number; pushEnabled: boolean; inAppPopups?: boolean };
   invoice: { businessName: string; abn: string; address: string; email: string; phone: string; paymentDetails: string; numberFormat: string; nextSequence: number; paymentTermsDays: number; defaultNotes: string; gstRegistered: boolean; gstRate: number; logoDataUrl: string };
-  integrations: { googleDrive: { enabled: boolean; rootFolderName: string; rootFolderId?: string; autoUploadInvoices: boolean; autoUploadDocuments: boolean }; googleCalendar: { enabled: boolean; calendarId: string; syncTypes: string[]; twoWay?: boolean } };
+  integrations: { googleDrive: { enabled: boolean; rootFolderName: string; rootFolderId?: string; autoUploadInvoices: boolean; autoUploadDocuments: boolean }; googleCalendar: { enabled: boolean; calendarId: string; syncTypes: string[]; twoWay?: boolean; showGoogleEvents?: boolean } };
 }
 
 export interface Alert { id: string; type: string; severity: 'info' | 'warning' | 'error'; title: string; message: string; date?: string; link?: string }
 export interface InboxAlert extends Alert { key: string; read: boolean; firstSeenAt: string }
 export interface AlertInbox { items: InboxAlert[]; unread: number }
 export interface Insight { id: string; kind: string; tone: 'neutral' | 'positive' | 'attention'; text: string; value?: number }
-export interface CalendarEvent { id: string; type: 'task' | 'job' | 'bill' | 'invoice'; refId: string; date: string; startTime?: string; endTime?: string; title: string; amount?: number; status?: string; location?: string; category?: string; priority?: string; recurring?: boolean }
+/** type 'google' = an event from your own Google Calendar, shown read-only */
+export interface CalendarEvent { id: string; type: 'task' | 'job' | 'bill' | 'invoice' | 'google'; link?: string; allDay?: boolean; refId: string; date: string; startTime?: string; endTime?: string; title: string; amount?: number; status?: string; location?: string; category?: string; priority?: string; recurring?: boolean }
 export interface List<T> { items: T[]; total: number }
 
 export interface ParsedJob {

@@ -93,3 +93,10 @@ Once the three `GOOGLE_*` values are set, the login and sign-up pages show **Con
 - The first time, an account is created for that Google email. If an account with the same email already exists (for example one you made with a password), you are signed in to that account and keep all its data.
 - Accounts created this way have no password. You can add one under Settings → Account → **Set a password** if you also want to log in with email and password.
 - Google must report the email as verified, and the sign-in has to finish in the same browser that started it.
+
+## Your Google Calendar inside the app
+Once Google is connected (Settings → Integrations → Connect Google — signing in with Google is not enough on its own):
+
+- **Your existing Google events appear in the app.** The Calendar page and My Day show the events from your main Google calendar in their own colour, next to your jobs, tasks and bills. They are read live each time and never copied into the app. Tap one in My Day to open it in Google Calendar, which is where you edit or delete it. Switch this off with *Show my Google Calendar events in the app* under Integrations.
+- **Create events from the app.** Calendar → **Add event** (or add/edit a task in My Day) has an **Add to Google Calendar** switch. With it on, the event is created in Google too and stays in step when you edit or delete it here. This works even if "Sync to Google Calendar" is off or that category isn't ticked under "What to sync".
+- Only your main calendar is read. Other calendars in your Google account (shared, holidays, birthdays) are not shown, because the app only asks Google for permission to manage events, not to list all your calendars.

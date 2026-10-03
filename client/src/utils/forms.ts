@@ -81,6 +81,12 @@ export const taskFields: FieldDef[] = [
   { name: 'description', label: 'Description', type: 'textarea' },
   { name: 'notes', label: 'Notes', type: 'textarea' },
 ];
+/** Extra switch for the task/event form, added only when a Google account is connected. */
+export const addToGoogleField: FieldDef = { name: 'addToGoogle', label: 'Add to Google Calendar', type: 'switch' };
+/** Whether a saved task is (or would be) in Google Calendar, for pre-setting that switch. */
+export const taskInGoogle = (t: { category?: string; sync?: { calendarInclude?: boolean; calendarOptOut?: boolean; googleCalendarEventId?: string } }, syncTypes: string[] = [], syncOn = false) =>
+  !t.sync?.calendarOptOut && (!!t.sync?.calendarInclude || !!t.sync?.googleCalendarEventId || (syncOn && syncTypes.includes(t.category === 'appointment' ? 'appointment' : t.category === 'event' ? 'event' : 'task')));
+
 export const taskDefaults = (date = localToday()) => ({ date, category: 'personal', priority: 'medium', status: 'not_started', recurrence: { frequency: 'none' } });
 
 export const billFields: FieldDef[] = [

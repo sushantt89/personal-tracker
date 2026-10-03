@@ -119,7 +119,10 @@ export function syncTypeOf(kind: SyncKind, doc: any): string {
 }
 
 export function shouldSync(kind: SyncKind, doc: any, cal: { enabled?: boolean; syncTypes?: string[] } | null | undefined): boolean {
-  if (!cal?.enabled || !doc || doc.sync?.calendarOptOut) return false;
+  if (!doc || doc.sync?.calendarOptOut) return false;
+  // Asked for explicitly on this record ("Add to Google Calendar"): only needs a Google connection
+  if (doc.sync?.calendarInclude && (kind === 'job' || kind === 'task')) return doc.status !== 'cancelled';
+  if (!cal?.enabled) return false;
   if (!(cal.syncTypes ?? []).includes(syncTypeOf(kind, doc))) return false;
   if (kind === 'job' || kind === 'task') return doc.status !== 'cancelled';
   if (kind === 'bill') return doc.active !== false;
@@ -224,6 +227,59 @@ export function eventToLocal(event: Event, tz: string): { date?: string; startTi
   const e = event.end?.dateTime ? local(event.end.dateTime) : undefined;
   return { date: s.date, startTime: s.time, endTime: e && e.date === s.date ? e.time : undefined };
 }
+
+export interface GoogleCalendarItem { id: string; type: 'google'; refId: string; date: string; startTime?: string; endTime?: string; title: string; location?: string; link?: string; allDay?: boolean }
+const googleCache = new Map<string, { at: number; items: GoogleCalendarItem[] }>();
+const addDay = (d: string, n: number) => { const x = new Date(`${d}T00:00:00Z`); x.setUTCDate(x.getUTCDate() + n); return x.toISOString().slice(0, 10); };
+
+/**
+ * The events already in the user's Google Calendar (not the ones this app put there), for showing on the app's calendar.
+ * Read live and never stored. Returns null when Google isn't connected or the option is off.
+ */
+export async function listGoogleEvents(userId: string, from: string, to: string): Promise<{ items: GoogleCalendarItem[]; error?: string } | null> {
+  const c = await context(userId);
+  if (!c.apis || c.cal?.showGoogleEvents === false) return null;
+  const key = `${userId}|${c.calendarId}|${from}|${to}`;
+  const hit = googleCache.get(key);
+  if (hit && Date.now() - hit.at < 45_000) return { items: hit.items };
+  try {
+    const items: GoogleCalendarItem[] = [];
+    let pageToken: string | undefined;
+    const load = async () => {
+      for (let page = 0; page < 4; page++) {
+        // A day either side covers every timezone; the exact days are picked below in the user's own timezone
+        const r = await c.apis!.calendar.events.list({ calendarId: c.calendarId, timeMin: `${addDay(from, -1)}T00:00:00Z`, timeMax: `${addDay(to, 2)}T00:00:00Z`, singleEvents: true, orderBy: 'startTime', maxResults: 250, pageToken });
+        for (const ev of r.data.items ?? []) {
+          if (!ev.id || ev.status === 'cancelled' || ev.extendedProperties?.private?.ptRef) continue; // ours are already on the calendar as jobs, tasks and bills
+          const base = { type: 'google' as const, refId: ev.id, title: ev.summary || '(No title)', location: ev.location ?? undefined, link: ev.htmlLink ?? undefined };
+          if (ev.start?.date) {
+            // All-day, possibly several days: one entry per day (the end date is exclusive)
+            const end = ev.end?.date && ev.end.date > ev.start.date ? ev.end.date : addDay(ev.start.date, 1);
+            for (let d = ev.start.date, n = 0; d < end && n < 62; d = addDay(d, 1), n++) if (d >= from && d <= to) items.push({ ...base, id: `google-${ev.id}-${d}`, date: d, allDay: true });
+          } else {
+            const t = eventToLocal(ev, c.tz);
+            if (t.date && t.date >= from && t.date <= to) items.push({ ...base, id: `google-${ev.id}`, date: t.date, startTime: t.startTime, endTime: t.endTime });
+          }
+        }
+        pageToken = r.data.nextPageToken ?? undefined;
+        if (!pageToken) break;
+      }
+    };
+    let timer: NodeJS.Timeout | undefined;
+    try {
+      await Promise.race([load(), new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error('Google Calendar took too long to answer')), 8000); })]);
+    } finally {
+      clearTimeout(timer);
+    }
+    googleCache.set(key, { at: Date.now(), items });
+    if (googleCache.size > 200) for (const [k, v] of googleCache) if (Date.now() - v.at > 45_000) googleCache.delete(k);
+    return { items };
+  } catch (e) {
+    const msg = await recordGoogleError(userId, e, 'Reading Google Calendar');
+    return { items: hit?.items ?? [], error: msg };
+  }
+}
+export const clearGoogleEventCache = () => googleCache.clear();
 
 export interface PullCounts { updated: number; detached: number; skipped: number }
 

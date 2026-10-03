@@ -31,7 +31,7 @@ const settingsPatch = z.object({
   }).partial().optional(),
   integrations: z.object({
     googleDrive: z.object({ enabled: z.boolean(), rootFolderName: z.string().trim().min(1).max(120), autoUploadInvoices: z.boolean(), autoUploadDocuments: z.boolean() }).partial(),
-    googleCalendar: z.object({ enabled: z.boolean(), calendarId: z.string().max(200), syncTypes: z.array(z.enum(['job', 'appointment', 'bill', 'task', 'event', 'invoice'])), twoWay: z.boolean() }).partial(),
+    googleCalendar: z.object({ enabled: z.boolean(), calendarId: z.string().max(200), syncTypes: z.array(z.enum(['job', 'appointment', 'bill', 'task', 'event', 'invoice'])), twoWay: z.boolean(), showGoogleEvents: z.boolean() }).partial(),
   }).partial().optional(),
 });
 

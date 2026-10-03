@@ -59,6 +59,8 @@ const settingsSchema = new Schema(
         syncTypes: { type: [String], default: ['job', 'appointment', 'bill'] },
         /** Bring time/date changes made in Google Calendar back into the app */
         twoWay: { type: Boolean, default: true },
+        /** Show the events already in your Google Calendar on the app's calendar and My Day (read-only) */
+        showGoogleEvents: { type: Boolean, default: true },
       },
     },
   },

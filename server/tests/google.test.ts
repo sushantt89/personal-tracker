@@ -269,6 +269,55 @@ describe('Google integration (fake Google APIs)', () => {
     await a().patch('/api/settings').send({ integrations: { googleCalendar: { twoWay: true } } }).expect(200);
   });
 
+  it('shows the person\'s own Google events on the app calendar and adds app-made events to Google', async () => {
+    const { clearGoogleEventCache } = await import('../src/services/google/calendar.js');
+    clearGoogleEventCache();
+    // Things already in Google Calendar, added there by the person (Adelaide is UTC+10:30 in mid-October)
+    const dentist = fake.userCreates({ summary: 'Dentist', location: 'Unley', start: { dateTime: '2026-10-14T04:30:00Z' }, end: { dateTime: '2026-10-14T05:15:00Z' } });
+    fake.userCreates({ summary: 'Trip', start: { date: '2026-10-16' }, end: { date: '2026-10-18' } });
+    fake.userCreates({ summary: 'Late call', start: { dateTime: '2026-10-19T14:00:00Z' }, end: { dateTime: '2026-10-19T14:30:00Z' } }); // 00:30 on the 20th in Adelaide
+    await a().post('/api/jobs').send({ date: '2026-10-14', startTime: '09:00', clientName: 'Calendar Client', amount: 40 }).expect(201);
+    await flush();
+
+    let cal = (await a().get('/api/calendar').query({ from: '2026-10-12', to: '2026-10-18' })).body;
+    const g = cal.items.filter((e: any) => e.type === 'google');
+    expect(g.map((e: any) => [e.title, e.date, e.startTime ?? null, e.endTime ?? null, !!e.allDay])).toEqual([
+      ['Dentist', '2026-10-14', '15:00', '15:45', false], ['Trip', '2026-10-16', null, null, true], ['Trip', '2026-10-17', null, null, true],
+    ]);
+    expect(g[0]).toMatchObject({ refId: dentist, location: 'Unley', link: 'https://calendar.example/event' });
+    expect(cal.google).toEqual({ shown: 3, error: null });
+    // The job the app itself put in Google appears once, as a job — not a second time as a Google event
+    expect(cal.items.filter((e: any) => e.title.includes('Calendar Client'))).toHaveLength(1);
+    // Local day, not UTC day
+    clearGoogleEventCache();
+    cal = (await a().get('/api/calendar').query({ from: '2026-10-20', to: '2026-10-20' })).body;
+    expect(cal.items.filter((e: any) => e.type === 'google').map((e: any) => [e.title, e.startTime])).toEqual([['Late call', '00:30']]);
+
+    // Can be switched off
+    await a().patch('/api/settings').send({ integrations: { googleCalendar: { showGoogleEvents: false } } }).expect(200);
+    cal = (await a().get('/api/calendar').query({ from: '2026-10-12', to: '2026-10-18' })).body;
+    expect(cal.google).toBeNull();
+    expect(cal.items.some((e: any) => e.type === 'google')).toBe(false);
+    await a().patch('/api/settings').send({ integrations: { googleCalendar: { showGoogleEvents: true } } }).expect(200);
+
+    // An event made in the app with "Add to Google Calendar" goes to Google even though its category isn't in "what to sync"
+    const before = fake.events.size;
+    const made = (await a().post('/api/tasks').send({ title: 'Housewarming', date: '2026-10-24', startTime: '18:00', endTime: '21:00', category: 'event', addToGoogle: true }).expect(201)).body;
+    await flush();
+    expect(fake.events.size).toBe(before + 1);
+    const ev = [...fake.events.values()].find((e) => e.summary?.includes('Housewarming'));
+    expect(ev.start).toEqual({ dateTime: '2026-10-24T18:00:00', timeZone: 'Australia/Adelaide' });
+    // …while one made without it stays out
+    await a().post('/api/tasks').send({ title: 'Private thing', date: '2026-10-24', category: 'event' }).expect(201);
+    await flush();
+    expect(fake.events.size).toBe(before + 1);
+    // Turning it off later removes it from Google; the task itself stays
+    await a().patch(`/api/tasks/${made.id}`).send({ addToGoogle: false }).expect(200);
+    await flush();
+    expect([...fake.events.values()].some((e) => e.summary?.includes('Housewarming'))).toBe(false);
+    expect((await a().get(`/api/tasks/${made.id}`)).body.title).toBe('Housewarming');
+  });
+
   it('sends email from the connected Google account once permission is given', async () => {
     const { GoogleAccount, User } = await import('../src/models/index.js');
     const me = await User.findById(userId).lean();

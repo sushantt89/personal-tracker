@@ -55,6 +55,7 @@ export const externalSyncSchema = new Schema(
     googleDriveLink: String,
     syncedAt: Date,
     calendarOptOut: { type: Boolean, default: false }, // user chose not to put this record in Google Calendar
+    calendarInclude: { type: Boolean, default: false }, // user asked for this record to be in Google Calendar, whatever the "what to sync" settings say
     syncError: String,
   },
   { _id: false },

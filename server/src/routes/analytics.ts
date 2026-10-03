@@ -13,7 +13,7 @@ import { round2, sum } from '../utils/money.js';
 import { toCsv } from '../utils/csv.js';
 import { buildReport, type GroupBy } from '../services/reports.js';
 import { materialiseRecurringIncome } from '../services/recurringIncome.js';
-import { queueCalendarPull } from '../services/google/calendar.js';
+import { queueCalendarPull, listGoogleEvents } from '../services/google/calendar.js';
 import { reportsToXlsx, reportsToPdf, XLSX_TYPE } from '../services/reportExport.js';
 import { escapeRegex } from '../services/crud.js';
 import { taskOccurrences } from '../services/recurrence.js';
@@ -57,7 +57,8 @@ r.get('/calendar', async (req, res) => {
   queueCalendarPull(userId); // two-way sync: pick up edits made in Google Calendar (throttled, in the background)
   const { today } = await userCtx(req);
   const uid = new Types.ObjectId(userId);
-  const [tasks, jobs, bills, invoices] = await Promise.all([
+  const [google, tasks, jobs, bills, invoices] = await Promise.all([
+    listGoogleEvents(userId, q.from, q.to),
     Task.find({ userId: uid, date: { $lte: q.to }, $or: [{ date: { $gte: q.from } }, { 'recurrence.frequency': { $ne: 'none' } }] }).lean(),
     Job.find({ userId: uid, date: { $gte: q.from, $lte: q.to } }).lean(),
     billsDue(userId, q.from, q.to),
@@ -72,8 +73,10 @@ r.get('/calendar', async (req, res) => {
   for (const j of jobs) events.push({ id: `job-${j._id}`, type: 'job', refId: String(j._id), date: j.date, startTime: j.startTime, endTime: j.endTime, title: j.clientName || j.title || 'Job', amount: j.amount, status: j.status, location: j.address?.formatted });
   for (const b of bills) events.push({ id: `bill-${b.billId}-${b.dueDate}`, type: 'bill', refId: b.billId, date: b.dueDate, title: b.name, amount: b.amount, status: b.paid ? 'paid' : 'due' });
   for (const i of invoices) events.push({ id: `inv-${i._id}`, type: 'invoice', refId: String(i._id), date: i.dueDate, title: `Invoice ${i.number} due`, amount: i.total, status: effectiveStatus(i, today) });
+  if (google) events.push(...google.items);
   events.sort((a, b) => (a.date + (a.startTime ?? '')).localeCompare(b.date + (b.startTime ?? '')));
-  res.json({ items: events });
+  // google: null = not connected (or switched off); otherwise how many of Google's own events are included
+  res.json({ items: events, google: google ? { shown: google.items.length, error: google.error ?? null } : null });
 });
 
 /** Global search across records. Matches text, amounts (e.g. "30" or "$30.00") and dates (YYYY-MM-DD or YYYY-MM). */

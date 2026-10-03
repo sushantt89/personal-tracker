@@ -5,7 +5,13 @@ import dayjs from 'dayjs';
 import { Box, Card, Stack, IconButton, Button, Typography, Chip, alpha, useTheme, useMediaQuery } from '@mui/material';
 import ChevronLeftIcon from '@mui/icons-material/ChevronLeft';
 import ChevronRightIcon from '@mui/icons-material/ChevronRight';
-import { get } from '../api/client';
+import AddIcon from '@mui/icons-material/Add';
+import { get, post } from '../api/client';
+import { EntityFormDialog } from '../components/EntityForm';
+import { taskFields, taskDefaults, addToGoogleField } from '../utils/forms';
+import { useIntegrations } from '../hooks/useLookups';
+import { useInvalidateFinance } from '../hooks/useInvalidate';
+import { useToast } from '../hooks/useToast';
 import type { CalendarEvent } from '../api/types';
 import { PageHeader, LoadingBlock } from '../components/common';
 import { money, fmtTime, localToday } from '../utils/format';
@@ -16,6 +22,7 @@ const TYPES = [
   { key: 'task', label: 'Tasks & appointments', slot: 2 },
   { key: 'bill', label: 'Bills', slot: 1 },
   { key: 'invoice', label: 'Invoice due dates', slot: 6 },
+  { key: 'google', label: 'Google Calendar', slot: 4 },
 ] as const;
 
 export default function CalendarPage() {
@@ -27,7 +34,13 @@ export default function CalendarPage() {
   const [hidden, setHidden] = useState<Set<string>>(new Set());
   const gridStart = month.subtract((month.day() + 6) % 7, 'day');
   const gridEnd = gridStart.add(41, 'day');
-  const q = useQuery({ queryKey: ['calendar', gridStart.format('YYYY-MM-DD'), gridEnd.format('YYYY-MM-DD')], queryFn: () => get<{ items: CalendarEvent[] }>('/calendar', { from: gridStart.format('YYYY-MM-DD'), to: gridEnd.format('YYYY-MM-DD') }) });
+  const q = useQuery({ queryKey: ['calendar', gridStart.format('YYYY-MM-DD'), gridEnd.format('YYYY-MM-DD')], queryFn: () => get<{ items: CalendarEvent[]; google?: { shown: number; error: string | null } | null }>('/calendar', { from: gridStart.format('YYYY-MM-DD'), to: gridEnd.format('YYYY-MM-DD') }) });
+  const integrations = useIntegrations();
+  const googleConnected = !!integrations.data?.googleCalendar.connected;
+  const invalidate = useInvalidateFinance();
+  const toast = useToast();
+  const [adding, setAdding] = useState<Record<string, unknown> | null>(null);
+  const types = TYPES.filter((t) => t.key !== 'google' || !!q.data?.google);
   const events = (q.data?.items ?? []).filter((e) => !hidden.has(e.type));
   const color = Object.fromEntries(TYPES.map((t) => [t.key, chart[t.slot]]));
   const today = localToday();
@@ -42,9 +55,10 @@ export default function CalendarPage() {
           <Typography variant="subtitle1" sx={{ minWidth: 150, textAlign: 'center' }}>{month.format('MMMM YYYY')}</Typography>
           <IconButton aria-label="Next month" onClick={() => setMonth(month.add(1, 'month'))}><ChevronRightIcon /></IconButton>
           <Button onClick={() => setMonth(dayjs(today).startOf('month'))}>Today</Button>
+          <Button variant="contained" startIcon={<AddIcon />} sx={{ ml: 1 }} onClick={() => setAdding({ ...taskDefaults(month.isSame(dayjs(today), 'month') ? today : month.format('YYYY-MM-DD')), category: 'event', addToGoogle: googleConnected })}>Add event</Button>
         </Stack>} />
       <Stack direction="row" spacing={1} sx={{ mb: 2 }} flexWrap="wrap" useFlexGap>
-        {TYPES.map((t) => (
+        {types.map((t) => (
           <Chip key={t.key} label={t.label} onClick={() => setHidden((h) => { const n = new Set(h); if (n.has(t.key)) n.delete(t.key); else n.add(t.key); return n; })}
             variant={hidden.has(t.key) ? 'outlined' : 'filled'} icon={<Box sx={{ width: 10, height: 10, borderRadius: '3px', bgcolor: color[t.key], ml: '8px !important' }} />} />
         ))}
@@ -81,7 +95,12 @@ export default function CalendarPage() {
           </Box>
         )}
       </Card>
-      <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1 }}>Tap a day to open it in My Day. To see these in Google Calendar too, connect it under Settings → Integrations.</Typography>
+      {q.data?.google?.error && <Typography variant="caption" color="warning.main" sx={{ display: 'block', mt: 1 }}>Your Google Calendar events couldn’t be loaded just now. Check the connection under Settings → Integrations.</Typography>}
+      <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1 }}>
+        Tap a day to open it in My Day. {q.data?.google ? 'Events from your Google Calendar are shown here too; tap one in My Day to open it in Google.' : 'Connect Google under Settings → Integrations to see your Google Calendar events here and add new ones to it.'}
+      </Typography>
+      <EntityFormDialog open={!!adding} title="Add event" fields={googleConnected ? [...taskFields, addToGoogleField] : taskFields} initial={adding ?? {}} onClose={() => setAdding(null)}
+        onSubmit={async (v) => { await post('/tasks', googleConnected ? v : { ...v, addToGoogle: undefined }); await invalidate(); toast(googleConnected && v.addToGoogle ? 'Event added — it will appear in Google Calendar shortly' : 'Event added'); }} />
     </Box>
   );
 }

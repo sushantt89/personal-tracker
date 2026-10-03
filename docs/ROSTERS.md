@@ -21,7 +21,16 @@ Uploading an updated roster later is safe: shifts that are already in the app ar
 
 Weekly grid/table rosters (days across the top, people down the side) are not read reliably — crop to your own shifts or type them in.
 
-## 2. Add the pay when you know it
+## 2. Optional: pencil in expected pay
+So the dashboard and the Assistant can count shifts before you're paid, give them an estimate:
+
+- **When uploading a roster:** fill in *Expected pay per hour*. Each shift gets hours × rate.
+- **Later, for any jobs:** Jobs → **Expected pay**. Tick the jobs and enter an amount per hour, per job, or a total to share.
+- **One job:** edit it, type the amount and switch on *This amount is an estimate*.
+
+Estimated jobs show an **Expected** label, create an "expected" income record, and still count as waiting for actual pay.
+
+## 3. Record the pay when you know it
 **Jobs → Record pay**
 1. Tick the shifts the payment covers (all waiting shifts for that employer are ticked to start with).
 2. Enter the amount that reached your account and the date paid.
@@ -38,5 +47,6 @@ Until then, shifts show a **Pay not set** label, the Jobs page has a **Pay → N
 - `POST /api/import/roster` — multipart `file` (+ optional `employer`); returns the same review data as `/import/parse` plus `text` (what was read) and `format: 'roster'`. Nothing is saved.
 - `POST /api/import/parse` — also accepts `employer`; roster-shaped text is detected automatically.
 - `GET /api/jobs?pay=unset|set`
-- `POST /api/jobs/record-pay` — `{ jobIds, total, paidDate?, paymentMethod? }`
+- `POST /api/jobs/record-pay` — `{ jobIds, total, paidDate?, paymentMethod?, split?: 'equal' | 'hours' }` (replaces any estimate)
+- `POST /api/jobs/expected-pay` — `{ jobIds, mode: 'perHour' | 'perJob' | 'total', value }` (sets `amountEstimated`)
 - Work types: `own`, `subcontract`, `employee`.

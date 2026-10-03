@@ -10,7 +10,7 @@ If you never enter a balance, the Assistant falls back to what is left of this m
 ## Safe to spend (next 30 days)
 `money you have + income expected − bills due − everyday spending − savings target`
 
-- **Income expected**: income records with status expected/pending dated in the next 30 days (for example jobs with an amount that aren't paid yet).
+- **Income expected**: income records with status expected/pending dated in the next 30 days (for example jobs with an amount that aren't paid yet). Shifts whose pay you don't know yet count once you give them an expected amount (Jobs → Expected pay).
 - **Bills due**: unpaid recurring bills falling due in the next 30 days.
 - **Everyday spending**: "Expected variable expenses" from Budgets; if that is empty, the average of your non-bill spending over the last two full months.
 - **Savings target**: the monthly savings target from Budgets.

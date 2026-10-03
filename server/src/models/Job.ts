@@ -20,6 +20,8 @@ const jobSchema = new Schema(
     startTime: timeField,
     endTime: timeField,
     amount: moneyOpt,
+    /** true = `amount` is only what you expect to be paid; the real figure replaces it when pay is recorded */
+    amountEstimated: { type: Boolean, default: false },
     hoursWorked: { type: Number, min: 0, max: 24 },
     address: addressSchema,
     meetingPoint: { type: String, maxlength: 300 },

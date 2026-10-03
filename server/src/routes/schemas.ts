@@ -44,6 +44,7 @@ export const jobSchema = z.object({
   startTime: zOptTime,
   endTime: zOptTime,
   amount: zOptMoney,
+  amountEstimated: z.boolean().optional(),
   hoursWorked: z.coerce.number().min(0).max(24).optional().nullable(),
   address: zAddress,
   meetingPoint: zOptStr(300),

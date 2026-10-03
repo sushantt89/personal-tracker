@@ -10,7 +10,7 @@ export interface Client { id: Id; name: string; type?: 'client' | 'contractor'; 
 export type JobStatus = 'scheduled' | 'in_progress' | 'completed' | 'cancelled';
 export interface Job {
   id: Id; title?: string; clientId?: Id | null; clientName?: string; incomeSourceId?: Id | null; workType?: WorkType; contractorId?: Id | null; contractorName?: string; date: string; startTime?: string; endTime?: string;
-  amount?: number; hoursWorked?: number; address?: Address; meetingPoint?: string; description?: string; tasks: string[]; rooms?: number; bathrooms?: number;
+  amount?: number; /** the amount is only an estimate until real pay is recorded */ amountEstimated?: boolean; hoursWorked?: number; address?: Address; meetingPoint?: string; description?: string; tasks: string[]; rooms?: number; bathrooms?: number;
   specialInstructions?: string; status: JobStatus; notes?: string; invoiceId?: Id | null; sourceMessage?: string; distanceKm?: number; travelMinutes?: number;
 }
 

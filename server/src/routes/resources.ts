@@ -14,6 +14,7 @@ import { zDate, zMoney, zOptStr } from '../utils/zod.js';
 import { billsDue, requiredIncome, jobHours } from '../services/finance.js';
 import { userCtx } from '../utils/userCtx.js';
 import { minutesBetween } from '../utils/dates.js';
+import { round2 } from '../utils/money.js';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -82,16 +83,17 @@ const jobsCrud = crudRouter({
   searchFields: ['clientName', 'contractorName', 'title', 'description', 'address.formatted', 'address.suburb', 'notes'],
   filterFields: ['status', 'clientId', 'incomeSourceId', 'invoiceId', 'workType', 'contractorId'],
   dateField: 'date', sort: { date: -1, startTime: 1 }, calendarKind: 'job',
-  // ?pay=unset → jobs/shifts whose pay hasn't been entered yet; ?pay=set → the rest
+  // ?pay=unset → jobs/shifts still waiting for their actual pay (no amount, or only an estimate); ?pay=set → the rest
   extraFilter: (req, filter) => {
-    if (req.query.pay === 'unset') Object.assign(filter, { $and: [{ $or: [{ amount: null }, { amount: 0 }] }], status: filter.status ?? { $ne: 'cancelled' } });
-    else if (req.query.pay === 'set') filter.amount = { $gt: 0 };
+    if (req.query.pay === 'unset') Object.assign(filter, { $and: [{ $or: [{ amount: null }, { amount: 0 }, { amountEstimated: true }] }], status: filter.status ?? { $ne: 'cancelled' } });
+    else if (req.query.pay === 'set') Object.assign(filter, { amount: { $gt: 0 }, amountEstimated: { $ne: true } });
   },
   hooks: {
     beforeCreate: async (req, data) => {
       await resolveClient(req.userId!, data, { create: true, address: data.address, incomeSourceId: data.incomeSourceId });
       await applyWorkArrangement(req.userId!, data);
       if (!data.hoursWorked) data.hoursWorked = (minutesBetween(data.startTime, data.endTime) ?? 0) / 60 || undefined;
+      if (!data.amount) data.amountEstimated = false; // nothing to be an estimate of
     },
     afterCreate: async (req, job) => {
       if (req.body?.createIncome !== false) await createIncomeForJob(req.userId!, job);
@@ -201,6 +203,7 @@ jobsRouter.post('/record-pay', async (req, res) => {
   for (const [i, job] of jobs.entries()) {
     const before = job.toJSON();
     job.amount = shares[i] / 100;
+    job.amountEstimated = false; // this is the real figure now
     if (body.markCompleted && job.status !== 'completed' && job.date <= today) job.status = 'completed';
     await job.save();
     await audit(userId, 'Job', job._id, 'update', before, job.toJSON(), 'Pay recorded');
@@ -218,6 +221,51 @@ jobsRouter.post('/record-pay', async (req, res) => {
     out.push(job.toJSON());
   }
   res.json({ updated: out.length, total: cents / 100, split: byHours ? 'hours' : 'equal', perHour: byHours ? Math.round((cents / weightSum)) / 100 : null, jobs: out });
+});
+/**
+ * Pencil in what you expect to be paid for jobs whose pay isn't known yet, so forecasts (dashboard, Assistant) can count it.
+ * The amount is flagged as an estimate and the linked income stays "expected"; Record pay later replaces it with the real figure.
+ */
+jobsRouter.post('/expected-pay', async (req, res) => {
+  const body = parseBody(
+    z.object({
+      jobIds: z.array(z.string().regex(/^[a-f0-9]{24}$/i)).min(1, 'Choose at least one job').max(200),
+      /** perHour: each job = its hours × value · perJob: each job = value · total: value shared equally across the jobs */
+      mode: z.enum(['perHour', 'perJob', 'total']),
+      value: zMoney.refine((n) => n > 0, 'Enter an amount above zero'),
+    }),
+    req.body,
+  );
+  const userId = req.userId!;
+  const jobs = await Job.find({ _id: { $in: body.jobIds }, userId, status: { $ne: 'cancelled' } }).sort({ date: 1, startTime: 1 });
+  if (jobs.length !== new Set(body.jobIds).size) throw badRequest('Some of those jobs could not be found (or are cancelled). Refresh and try again.');
+  if (jobs.some((j) => j.invoiceId)) throw conflict('One of those jobs is on an invoice — its amount is set by the invoice.');
+  if (body.mode === 'perHour' && jobs.some((j) => !(jobHours(j) > 0))) throw badRequest('Some of those jobs have no hours, so an hourly rate can’t be applied. Use “per job” or add their hours first.');
+  const cents = Math.round(body.value * 100);
+  const each = Math.floor(cents / jobs.length);
+  const out: any[] = [];
+  let skippedPaid = 0;
+  for (const [i, job] of jobs.entries()) {
+    const income = await Income.findOne({ userId, jobId: job._id });
+    if (income?.status === 'paid') { skippedPaid++; continue; } // already paid for real: leave it alone
+    const before = job.toJSON();
+    job.amount = body.mode === 'perHour' ? round2(jobHours(job) * body.value) : body.mode === 'perJob' ? body.value : (each + (i === jobs.length - 1 ? cents - each * jobs.length : 0)) / 100;
+    job.amountEstimated = true;
+    await job.save();
+    await audit(userId, 'Job', job._id, 'update', before, job.toJSON(), 'Expected pay set');
+    const fields = { amount: job.amount, date: job.date, ...payerOf(job), description: jobIncomeDescription(job), incomeSourceId: job.incomeSourceId, hoursWorked: jobHours(job) || undefined };
+    if (income) {
+      const prev = income.toJSON();
+      income.set({ ...fields, status: income.status === 'cancelled' ? 'expected' : income.status });
+      await income.save();
+      await audit(userId, 'Income', income._id, 'update', prev, income.toJSON(), `Expected pay set for job ${job._id}`);
+    } else {
+      const created = await Income.create({ userId, jobId: job._id, status: 'expected', ...fields });
+      await audit(userId, 'Income', created._id, 'create', undefined, created.toJSON(), `Expected pay set for job ${job._id}`);
+    }
+    out.push(job.toJSON());
+  }
+  res.json({ updated: out.length, skippedPaid, total: round2(out.reduce((a, j) => a + (j.amount ?? 0), 0)), jobs: out });
 });
 jobsRouter.use('/', jobsCrud);
 
@@ -238,6 +286,8 @@ const incomeCrud = crudRouter({
       if (doc.recurring?.enabled) await materialiseRecurringIncome(req.userId!, (await userCtx(req)).today);
     },
     afterUpdate: async (req, doc, before) => {
+      // Marking a job's income as received confirms the amount: the job stops being an estimate
+      if (doc.jobId && doc.status === 'paid' && (before as any).status !== 'paid') await Job.updateOne({ _id: doc.jobId, userId: req.userId, amountEstimated: true }, { amountEstimated: false, amount: doc.amount });
       if (!doc.recurring?.enabled || doc.recurringParentId) return;
       // Changing the amount/source/etc. of a repeating record updates its future, still-expected entries
       const fields = ['amount', 'incomeSourceId', 'clientId', 'clientName', 'description', 'paymentMethod', 'hoursWorked'];

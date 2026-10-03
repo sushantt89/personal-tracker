@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
-  Box, Card, CardContent, TextField, Button, Stack, Typography, Chip, Alert, Grid, IconButton, Tooltip, FormControlLabel, Switch, Checkbox, MenuItem, Divider, LinearProgress, Collapse, ToggleButtonGroup, ToggleButton, Autocomplete,
+  Box, Card, CardContent, TextField, InputAdornment, Button, Stack, Typography, Chip, Alert, Grid, IconButton, Tooltip, FormControlLabel, Switch, Checkbox, MenuItem, Divider, LinearProgress, Collapse, ToggleButtonGroup, ToggleButton, Autocomplete,
 } from '@mui/material';
 import AutoFixHighIcon from '@mui/icons-material/AutoFixHigh';
 import ContentPasteIcon from '@mui/icons-material/ContentPaste';
@@ -93,11 +93,23 @@ export default function PasteImport() {
   const [reading, setReading] = useState(false);
   const [employer, setEmployer] = useState(() => { try { return localStorage.getItem('pt-last-employer') ?? ''; } catch { return ''; } });
   const isRoster = result?.format === 'roster';
+  // Rosters don't show pay: an optional expected hourly rate fills each shift with an estimate (hours × rate)
+  const [rate, setRate] = useState(() => { try { return localStorage.getItem('pt-expected-rate') ?? ''; } catch { return ''; } });
+  const applyRate = (r: string, list?: EditJob[]) => {
+    const n = Number(r);
+    const fill = (js: EditJob[]) => js.map((j) => ({ ...j, amount: n > 0 && Number(j.hoursWorked) > 0 ? Math.round(Number(j.hoursWorked) * n * 100) / 100 : '' }) as EditJob);
+    if (list) return fill(list);
+    setRate(r);
+    setJobs(fill);
+    try { if (n > 0) localStorage.setItem('pt-expected-rate', r); } catch { /* private mode */ }
+    return [];
+  };
 
   const show = (r: ParseResponse) => {
       setResult(r);
       // Shifts that are already in the app are left unticked, so re-uploading an updated roster only adds what's new
-      setJobs(r.jobs.map((j) => ({ tempId: j.tempId, include: !(r.format === 'roster' && j.duplicateOfJobId), parsed: j, hoursWorked: j.hours ?? '', clientName: j.clientName, amount: j.amount ?? '', date: j.date ?? '', startTime: j.startTime ?? '', endTime: j.endTime ?? '', address: { ...j.address }, description: j.description ?? '', tasks: j.tasks, rooms: j.rooms ?? '', bathrooms: j.bathrooms ?? '', specialInstructions: j.specialInstructions ?? '', meetingPoint: j.meetingPoint })));
+      const mapped = r.jobs.map((j) => ({ tempId: j.tempId, include: !(r.format === 'roster' && j.duplicateOfJobId), parsed: j, hoursWorked: j.hours ?? '', clientName: j.clientName, amount: j.amount ?? '', date: j.date ?? '', startTime: j.startTime ?? '', endTime: j.endTime ?? '', address: { ...j.address }, description: j.description ?? '', tasks: j.tasks, rooms: j.rooms ?? '', bathrooms: j.bathrooms ?? '', specialInstructions: j.specialInstructions ?? '', meetingPoint: j.meetingPoint })) as EditJob[];
+      setJobs(r.format === 'roster' && Number(rate) > 0 ? applyRate(rate, mapped) : mapped);
       setPayments(r.payments.map((p) => ({ ...p, include: true, date: p.date ?? localToday(), matchIncomeId: r.paymentMatches[p.tempId]?.find((m) => m.incomeId)?.incomeId ?? '' })));
       setSourceId(r.suggestedIncomeSourceId ?? '');
       setWorkType(r.suggestedWorkType ?? 'own');
@@ -175,7 +187,7 @@ export default function PasteImport() {
         syncCalendar: calendarAvailable && syncCalendar,
         allowDuplicates,
         jobs: included.map((j) => ({
-          clientName: j.clientName.trim(), date: j.date, startTime: j.startTime || undefined, endTime: j.endTime || undefined, amount: num(j.amount), hoursWorked: num(j.hoursWorked),
+          clientName: j.clientName.trim(), date: j.date, startTime: j.startTime || undefined, endTime: j.endTime || undefined, amount: num(j.amount), amountEstimated: isRoster && Number(j.amount) > 0, hoursWorked: num(j.hoursWorked),
           address: j.address, description: j.description || undefined, tasks: j.tasks, rooms: num(j.rooms), bathrooms: num(j.bathrooms),
           specialInstructions: j.specialInstructions || undefined, meetingPoint: j.meetingPoint || undefined,
         })),
@@ -238,7 +250,7 @@ export default function PasteImport() {
                 {result.meetingPoint && <Chip icon={<PlaceOutlinedIcon />} label={`Meet: ${result.meetingPoint}${result.meetingTime ? ' @ ' + result.meetingTime : ''}`} variant="outlined" />}
               </Stack>
               {result.warnings.map((w) => <Alert key={w} severity="info" sx={{ mt: 1.5 }}>{w}</Alert>)}
-              {isRoster && <Alert severity="info" sx={{ mt: 1.5 }}>Rosters don’t show pay. Import the shifts now; when you’ve been paid, open <b>Jobs → Record pay</b> and enter the amount.</Alert>}
+              {isRoster && <Alert severity="info" sx={{ mt: 1.5 }}>Rosters don’t show pay. Add an expected hourly rate below if you’d like your forecasts to count these shifts; when you’ve been paid, open <b>Jobs → Record pay</b> and enter the real amount.</Alert>}
               {skippedDups > 0 && <Alert severity="success" sx={{ mt: 1.5 }}>{skippedDups} shift{skippedDups === 1 ? ' is' : 's are'} already in the app and {skippedDups === 1 ? 'has' : 'have'} been left unticked.</Alert>}
               {result.alreadyImported && <Alert severity="warning" sx={{ mt: 1.5 }}>This exact message was already imported on {fmtDate(result.alreadyImported.at.slice(0, 10))} ({result.alreadyImported.jobCount} jobs).</Alert>}
               {result.unparsedLines.length > 0 && (
@@ -258,6 +270,13 @@ export default function PasteImport() {
                         onInputChange={(_, v, reason) => { if (reason === 'input') { setEmployer(v); setJobs((js) => js.map((j) => ({ ...j, clientName: v.trim() }))); } }}
                         onBlur={() => applyEmployer(employer)}
                         renderInput={(p) => <TextField {...p} required label="Employer (who these shifts are for)" placeholder="e.g. the business name on your payslip" helperText="Used as the name on every shift below. Remembered for next time." />} />
+                    </Grid>
+                  )}
+                  {isRoster && (
+                    <Grid size={{ xs: 12, sm: 5 }}>
+                      <TextField label="Expected pay per hour (optional)" type="number" value={rate} onChange={(e) => applyRate(e.target.value)}
+                        slotProps={{ input: { startAdornment: <InputAdornment position="start">$</InputAdornment> }, htmlInput: { min: 0, step: '0.01', inputMode: 'decimal' } }}
+                        helperText={Number(rate) > 0 ? `About ${money(total)} expected — saved as an estimate` : 'Fills each shift with hours × rate as an estimate'} />
                     </Grid>
                   )}
                   <Grid size={{ xs: 12, sm: 5 }}>

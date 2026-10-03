@@ -144,6 +144,33 @@ describe('roster import and pay added later', () => {
     expect(eq.body.split).toBe('equal');
     expect(eq.body.jobs.map((j: any) => j.amount)).toEqual([33.33, 33.33, 33.34]); // adds up to exactly 100
 
+    // Pencil in expected pay first (so forecasts can count it), then replace it with the real pay later
+    const e1 = await mk('2026-10-17', 3), e2 = await mk('2026-10-18', 5);
+    await a.post('/api/jobs/expected-pay').query(day).send({ jobIds: [e1, e2], mode: 'perHour', value: 0 }).expect(400);
+    const est = await a.post('/api/jobs/expected-pay').query(day).send({ jobIds: [e1, e2], mode: 'perHour', value: 25.5 }).expect(200);
+    expect(est.body.jobs.map((j: any) => [j.amount, j.amountEstimated])).toEqual([[76.5, true], [127.5, true]]);
+    expect(est.body.total).toBe(204);
+    let inc = (await a.get('/api/income').query({ ...day, jobId: e1 })).body.items;
+    expect(inc).toHaveLength(1);
+    expect(inc[0]).toMatchObject({ amount: 76.5, status: 'expected' });
+    // Still counted as waiting for actual pay, even though they have an amount
+    expect((await a.get('/api/jobs').query({ ...day, pay: 'unset' })).body.items.map((j: any) => j.id).sort()).toEqual([e1, e2].sort());
+    // Changing the estimate updates the same income record rather than adding another
+    await a.post('/api/jobs/expected-pay').query(day).send({ jobIds: [e1, e2], mode: 'total', value: 201 }).expect(200);
+    inc = (await a.get('/api/income').query({ ...day, jobId: e1 })).body.items;
+    expect(inc).toHaveLength(1);
+    expect(inc[0].amount).toBe(100.5);
+    // The real pay arrives: the estimate is replaced and the income is marked received
+    const paid = await a.post('/api/jobs/record-pay').query(day).send({ jobIds: [e1, e2], total: 190, split: 'equal', paidDate: '2026-10-21' }).expect(200);
+    expect(paid.body.jobs.map((j: any) => [j.amount, j.amountEstimated])).toEqual([[95, false], [95, false]]);
+    inc = (await a.get('/api/income').query({ ...day, jobId: e1 })).body.items;
+    expect(inc).toHaveLength(1);
+    expect(inc[0]).toMatchObject({ amount: 95, status: 'paid', paidDate: '2026-10-21' });
+    expect((await a.get('/api/jobs').query({ ...day, pay: 'unset' })).body.items).toHaveLength(0);
+    // An estimate never overwrites pay that has really been recorded
+    const again = await a.post('/api/jobs/expected-pay').query(day).send({ jobIds: [e1], mode: 'perJob', value: 10 }).expect(200);
+    expect(again.body).toMatchObject({ updated: 0, skippedPaid: 1 });
+
     // Another user's shifts can't be paid from this account
     const b = request.agent(app);
     await b.post('/api/auth/register').send({ name: 'Other', email: 'other-roster@example.com', password: 'password123' }).expect(201);

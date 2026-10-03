@@ -125,6 +125,8 @@ const commitJob = z.object({
   startTime: zOptTime,
   endTime: zOptTime,
   amount: zOptMoney,
+  /** The amount is an estimate (e.g. roster hours × expected hourly rate); real pay is recorded later */
+  amountEstimated: z.boolean().optional(),
   hoursWorked: z.coerce.number().min(0).max(24).optional().nullable(),
   address: zAddress,
   description: zOptStr(2000),
@@ -191,6 +193,7 @@ r.post('/commit', async (req, res) => {
         status: 'scheduled', title: j.description ? undefined : undefined,
       };
       delete data.sourceText;
+      if (!data.amount) data.amountEstimated = false;
       data.workType = j.workType ?? body.workType;
       data.contractorId = j.contractorId ?? body.contractorId ?? null;
       data.contractorName = j.contractorName ?? body.contractorName;

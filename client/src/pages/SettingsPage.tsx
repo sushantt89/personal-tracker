@@ -1,3 +1,4 @@
+import CameraButton from '../components/CameraButton';
 import { useEffect, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useSearchParams } from 'react-router-dom';
@@ -294,12 +295,26 @@ function InvoiceTab({ settings }: { settings: Settings }) {
   const [preview, setPreview] = useState('');
   useEffect(() => { const t = setTimeout(() => get<{ preview: string }>('/settings/invoice-number-preview', { format: f.numberFormat, seq: f.nextSequence }).then((r) => setPreview(r.preview)).catch(() => setPreview('')), 300); return () => clearTimeout(t); }, [f.numberFormat, f.nextSequence]);
   const t = (k: keyof typeof f, label: string, props: Record<string, unknown> = {}) => <TextField label={label} value={f[k] as any} onChange={(e) => setF({ ...f, [k]: e.target.value })} {...props} />;
-  const onLogo = (file?: File) => {
-    if (!file) return;
+  const onLogo = async (picked?: File) => {
+    if (!picked) return;
+    let file = picked;
+    // Photos straight from a camera are far too big for a logo: shrink them first
+    if (file.size > 280_000 || !/image\/(png|jpe?g)/.test(file.type)) {
+      try {
+        const img = await createImageBitmap(file);
+        const scale = Math.min(1, 480 / Math.max(img.width, img.height));
+        const c = document.createElement('canvas');
+        c.width = Math.round(img.width * scale); c.height = Math.round(img.height * scale);
+        const ctx = c.getContext('2d')!;
+        ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, c.width, c.height); ctx.drawImage(img, 0, 0, c.width, c.height);
+        const blob = await new Promise<Blob | null>((res) => c.toBlob(res, 'image/jpeg', 0.85));
+        if (blob) file = new File([blob], 'logo.jpg', { type: 'image/jpeg' });
+      } catch { /* not an image the browser can read: the checks below explain */ }
+    }
     if (!/image\/(png|jpe?g)/.test(file.type)) return toast('Logo must be PNG or JPEG', 'error');
     if (file.size > 280_000) return toast('Logo must be under 280 KB', 'error');
     const r = new FileReader();
-    r.onload = () => setF({ ...f, logoDataUrl: String(r.result) });
+    r.onload = () => setF((cur) => ({ ...cur, logoDataUrl: String(r.result) }));
     r.readAsDataURL(file);
   };
   return (
@@ -316,6 +331,7 @@ function InvoiceTab({ settings }: { settings: Settings }) {
             <Stack direction="row" spacing={2} alignItems="center">
               {f.logoDataUrl && <Box component="img" src={f.logoDataUrl} alt="Logo" sx={{ height: 48, maxWidth: 120, objectFit: 'contain' }} />}
               <Button component="label" variant="outlined">Upload logo<input hidden type="file" accept="image/png,image/jpeg" onChange={(e) => onLogo(e.target.files?.[0])} /></Button>
+              <CameraButton onPhoto={onLogo} />
               {f.logoDataUrl && <Button color="inherit" onClick={() => setF({ ...f, logoDataUrl: '' })}>Remove</Button>}
             </Stack>
           </Stack>

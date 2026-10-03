@@ -1,3 +1,4 @@
+import CameraButton from '../components/CameraButton';
 import { useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
@@ -84,7 +85,7 @@ export default function Documents({ kind }: { kind?: 'receipt' }) {
   return (
     <Box>
       <PageHeader title={title} subtitle={kind === 'receipt' ? 'Upload receipt photos or PDFs and link them to expenses.' : 'Invoices, receipts and financial documents in one place.'}
-        actions={<Button variant="contained" startIcon={<CloudUploadOutlinedIcon />} onClick={() => fileRef.current?.click()}>Upload {kind === 'receipt' ? 'receipt' : 'file'}</Button>} />
+        actions={<Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap><CameraButton onPhoto={setPending} /><Button variant="contained" startIcon={<CloudUploadOutlinedIcon />} onClick={() => fileRef.current?.click()}>Upload {kind === 'receipt' ? 'receipt' : 'file'}</Button></Stack>} />
       <input ref={fileRef} type="file" hidden accept="image/*,.heic,.heif,application/pdf" capture={undefined} onChange={(e) => { const f = e.target.files?.[0]; if (f) setPending(f); e.target.value = ''; }} />
       {list.data?.ocrAvailable && kind === 'receipt' && <Alert severity="info" icon={<AutoFixHighIcon />} sx={{ mb: 2 }}>Upload a photo or PDF and the merchant, date, total and GST are filled in for you. Receipts are read on your own server — nothing is sent to an outside service. You check everything before it's saved.</Alert>}
       <Card sx={{ mb: 2, p: 1.5 }}>

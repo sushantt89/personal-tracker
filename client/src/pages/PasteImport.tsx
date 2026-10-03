@@ -1,3 +1,4 @@
+import CameraButton from '../components/CameraButton';
 import { useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
@@ -224,6 +225,7 @@ export default function PasteImport() {
             <Button variant="contained" startIcon={<AutoFixHighIcon />} onClick={analyse} disabled={!text.trim() || parsing}>{parsing ? 'Analysing…' : 'Analyse'}</Button>
             <Button variant="outlined" startIcon={<AddPhotoAlternateOutlinedIcon />} onClick={() => fileRef.current?.click()} disabled={reading || parsing}>{reading ? 'Reading roster…' : 'Upload roster photo'}</Button>
             <input ref={fileRef} type="file" hidden accept="image/*,.heic,.heif,application/pdf" aria-label="Roster screenshot or photo" onChange={(e) => { const f = e.target.files?.[0]; if (f) uploadRoster(f); }} />
+            <CameraButton label="Photograph roster" onPhoto={uploadRoster} disabled={reading || parsing} />
             <Button startIcon={<ContentPasteIcon />} onClick={pasteFromClipboard}>Paste from clipboard</Button>
             <Button onClick={() => setText(EXAMPLE)} color="inherit">Try an example</Button>
             {text && <Button color="inherit" onClick={() => { setText(''); setResult(null); setJobs([]); setPayments([]); }}>Clear</Button>}

@@ -1,6 +1,6 @@
 import { Types } from 'mongoose';
-import { Settings, Job, Budget, AlertState } from '../models/index.js';
-import { addDays, diffDays, monthEnd, monthStart } from '../utils/dates.js';
+import { Settings, Job, Budget, AlertState, Income } from '../models/index.js';
+import { addDays, diffDays, monthEnd, monthStart, weekStart } from '../utils/dates.js';
 import { dashboard } from './finance.js';
 
 export interface Alert {
@@ -56,7 +56,15 @@ export async function computeAlerts(userId: string, today: string, currency: str
     }
     if (d.budget.spendingLimit > 0 && d.month.expenses > d.budget.spendingLimit) out.push({ id: 'spending-limit', type: 'budget', severity: 'warning', title: 'Monthly spending limit exceeded', message: `${money(d.month.expenses)} of ${money(d.budget.spendingLimit)}`, link: '/budgets' });
     if (d.required.minimumMonthlyIncome > 0 && d.month.incomeIncludingExpected < d.required.minimumMonthlyIncome) {
-      out.push({ id: 'income-below-required', type: 'income', severity: 'warning', title: 'Expected income is below required income', message: `${money(d.month.incomeIncludingExpected)} of ${money(d.required.minimumMonthlyIncome)} needed this month`, link: '/budgets' });
+      // The same requirement for this week (Monday–Sunday): a week's share is the monthly figure × 12 ÷ 52
+      const ws = weekStart(today), we = addDays(ws, 6);
+      const weekIncome = await Income.find({ userId: new Types.ObjectId(userId), status: { $ne: 'cancelled' }, date: { $gte: ws, $lte: we } }).select('amount').lean();
+      const weekGot = Math.round(weekIncome.reduce((a, i) => a + (i.amount || 0), 0) * 100) / 100;
+      const weekNeed = Math.round(((d.required.minimumMonthlyIncome * 12) / 52) * 100) / 100;
+      const weekShort = Math.max(0, Math.round((weekNeed - weekGot) * 100) / 100);
+      const monthShort = Math.round((d.required.minimumMonthlyIncome - d.month.incomeIncludingExpected) * 100) / 100;
+      const weekText = weekShort > 0 ? `This week: ${money(weekShort)} more needed (${money(weekGot)} of ${money(weekNeed)} so far).` : `This week is covered (${money(weekGot)} of ${money(weekNeed)}).`;
+      out.push({ id: 'income-below-required', type: 'income', severity: 'warning', title: 'Expected income is below required income', message: `This month: ${money(monthShort)} more needed (${money(d.month.incomeIncludingExpected)} of ${money(d.required.minimumMonthlyIncome)} so far). ${weekText}`, link: '/budgets' });
     }
     const budget = await Budget.findOne({ userId }).lean();
     const dayOfMonth = Number(today.slice(8)), daysInMonth = Number(monthEnd(today).slice(8));

@@ -1,6 +1,6 @@
 export type Id = string;
 
-export interface User { id: Id; name: string; email: string; currency: string; timezone: string; theme: 'light' | 'dark' | 'system' }
+export interface User { id: Id; name: string; email: string; currency: string; timezone: string; theme: 'light' | 'dark' | 'system'; /** false for accounts created with Google that haven't chosen a password */ hasPassword?: boolean }
 export interface Address { line1?: string; suburb?: string; state?: string; postcode?: string; country?: string; formatted?: string }
 export interface Category { id: Id; name: string; color: string; archived?: boolean }
 export type WorkType = 'own' | 'subcontract' | 'employee';

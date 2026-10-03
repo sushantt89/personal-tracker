@@ -25,6 +25,23 @@ export const googleConfigured = () => Boolean(env.GOOGLE_CLIENT_ID && env.GOOGLE
 export const oauthClient = () =>
   new OAuth2Client({ clientId: env.GOOGLE_CLIENT_ID, clientSecret: env.GOOGLE_CLIENT_SECRET, redirectUri: env.GOOGLE_REDIRECT_URI });
 
+export interface GoogleIdentity { sub: string; email: string; emailVerified: boolean; name?: string }
+/** Sign in with Google: only asks who you are (no access to calendar, files or mail). */
+export const GOOGLE_LOGIN_SCOPES = ['openid', 'email', 'profile'];
+
+async function defaultLoginExchange(code: string): Promise<GoogleIdentity> {
+  const client = oauthClient();
+  const { tokens } = await client.getToken(code);
+  if (!tokens.id_token) throw new Error('Google did not return an identity');
+  const p = (await client.verifyIdToken({ idToken: tokens.id_token, audience: env.GOOGLE_CLIENT_ID })).getPayload();
+  if (!p?.sub || !p.email) throw new Error('Google did not return an email address');
+  return { sub: p.sub, email: p.email.toLowerCase(), emailVerified: p.email_verified === true, name: p.name };
+}
+let loginExchange = defaultLoginExchange;
+/** Tests replace the exchange with Google by a fake. */
+export const setGoogleLoginExchange = (f: typeof defaultLoginExchange | null) => { loginExchange = f ?? defaultLoginExchange; };
+export const exchangeLoginCode = (code: string) => loginExchange(code);
+
 export interface GoogleApis {
   calendar: calendar_v3.Calendar;
   drive: drive_v3.Drive;

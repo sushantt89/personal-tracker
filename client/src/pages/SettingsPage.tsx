@@ -40,6 +40,8 @@ function useSaver() {
 function ResetEverything() {
   const qc = useQueryClient();
   const toast = useToast();
+  const { user } = useAuth();
+  const needsPw = user?.hasPassword !== false;
   const integrations = useIntegrations();
   const googleConnected = !!integrations.data?.googleCalendar.email;
   const [open, setOpen] = useState(false);
@@ -75,13 +77,13 @@ function ResetEverything() {
             <Typography variant="body2" color="text.secondary">Events already added to Google Calendar and files already saved to Google Drive stay in Google; delete them there if you want them gone.</Typography>
             {googleConnected && <FormControlLabel control={<Checkbox checked={disconnectGoogle} onChange={(e) => setDisconnectGoogle(e.target.checked)} />} label="Also disconnect my Google account" />}
             <TextField label="Type DELETE to confirm" value={confirmText} onChange={(e) => setConfirmText(e.target.value)} autoComplete="off" />
-            <TextField type="password" label="Your password" value={pw} onChange={(e) => setPw(e.target.value)} autoComplete="current-password" />
+            {needsPw && <TextField type="password" label="Your password" value={pw} onChange={(e) => setPw(e.target.value)} autoComplete="current-password" />}
             {error && <Alert severity="warning">{error}</Alert>}
           </Stack>
         </DialogContent>
         <DialogActions sx={{ px: 3, pb: 2 }}>
           <Button onClick={close} color="inherit" disabled={busy}>Cancel</Button>
-          <Button variant="contained" color="error" onClick={run} disabled={busy || confirmText.trim().toUpperCase() !== 'DELETE' || !pw}>{busy ? 'Deleting…' : 'Delete everything'}</Button>
+          <Button variant="contained" color="error" onClick={run} disabled={busy || confirmText.trim().toUpperCase() !== 'DELETE' || (needsPw && !pw)}>{busy ? 'Deleting…' : 'Delete everything'}</Button>
         </DialogActions>
       </Dialog>
     </SectionCard>
@@ -115,11 +117,11 @@ function AccountTab() {
         </SectionCard>
       </Grid>
       <Grid size={{ xs: 12, md: 5 }}>
-        <SectionCard title="Change password">
+        <SectionCard title={user?.hasPassword === false ? 'Set a password' : 'Change password'} subtitle={user?.hasPassword === false ? 'You signed up with Google. A password is optional — it lets you log in with your email too.' : undefined}>
           <Stack spacing={2}>
-            <TextField type="password" label="Current password" value={pw.currentPassword} onChange={(e) => setPw({ ...pw, currentPassword: e.target.value })} autoComplete="current-password" />
+            <TextField type="password" label="Current password" sx={{ display: user?.hasPassword === false ? 'none' : undefined }} value={pw.currentPassword} onChange={(e) => setPw({ ...pw, currentPassword: e.target.value })} autoComplete="current-password" />
             <TextField type="password" label="New password" value={pw.newPassword} onChange={(e) => setPw({ ...pw, newPassword: e.target.value })} helperText="At least 8 characters. Other devices will be signed out." autoComplete="new-password" />
-            <Button variant="outlined" disabled={!pw.currentPassword || pw.newPassword.length < 8} onClick={() => save(async () => { await post('/auth/change-password', pw); setPw({ currentPassword: '', newPassword: '' }); }, [], 'Password changed')}>Update password</Button>
+            <Button variant="outlined" disabled={(user?.hasPassword !== false && !pw.currentPassword) || pw.newPassword.length < 8} onClick={() => save(async () => { await post('/auth/change-password', pw); setPw({ currentPassword: '', newPassword: '' }); await refresh(); }, [], user?.hasPassword === false ? 'Password set' : 'Password changed')}>{user?.hasPassword === false ? 'Set password' : 'Update password'}</Button>
           </Stack>
         </SectionCard>
       </Grid>

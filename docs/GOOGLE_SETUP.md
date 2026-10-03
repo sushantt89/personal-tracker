@@ -85,3 +85,11 @@ If you allow **Send email on your behalf** when connecting, the app sends its em
 - If you connected before this was added: Settings → Integrations → **Reconnect** and tick the new box.
 - The permission only allows sending. The app cannot read, search or delete your mail.
 - A password-reset email is sent through the Google connection of the account being reset, so it works while signed out. If that account has no Google connection and there are no SMTP settings, the link is printed in the server log instead.
+
+## Sign in with Google
+Once the three `GOOGLE_*` values are set, the login and sign-up pages show **Continue with Google**. Nothing extra is needed in Google Cloud: it uses the same OAuth client and the same redirect address.
+
+- It only asks Google who you are (name and email). It does not connect Calendar, Drive or Gmail; that is still done under Settings → Integrations.
+- The first time, an account is created for that Google email. If an account with the same email already exists (for example one you made with a password), you are signed in to that account and keep all its data.
+- Accounts created this way have no password. You can add one under Settings → Account → **Set a password** if you also want to log in with email and password.
+- Google must report the email as verified, and the sign-in has to finish in the same browser that started it.

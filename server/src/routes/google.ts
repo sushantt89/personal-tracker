@@ -1,14 +1,16 @@
-import { Router } from 'express';
+import { Router, type Request, type Response } from 'express';
 import jwt from 'jsonwebtoken';
 import crypto from 'node:crypto';
 import { z } from 'zod';
 import { env } from '../config/env.js';
-import { GoogleAccount } from '../models/index.js';
-import { requireAuth } from '../middleware/auth.js';
+import bcrypt from 'bcryptjs';
+import { GoogleAccount, User } from '../models/index.js';
+import { requireAuth, signToken, cookieOptions, COOKIE_NAME } from '../middleware/auth.js';
+import { ensureUserDefaults } from '../services/defaults.js';
 import { parseBody } from '../middleware/validate.js';
 import { badRequest, HttpError } from '../utils/httpError.js';
 import { encrypt, decrypt } from '../utils/crypto.js';
-import { GOOGLE_SCOPES, googleConfigured, oauthClient } from '../services/google/client.js';
+import { GOOGLE_SCOPES, GOOGLE_LOGIN_SCOPES, googleConfigured, oauthClient, exchangeLoginCode } from '../services/google/client.js';
 import { syncAll } from '../services/google/calendar.js';
 import { setupDriveFolders } from '../services/google/drive.js';
 
@@ -23,9 +25,59 @@ r.get('/auth-url', requireAuth, (req, res) => {
   res.json({ url });
 });
 
+// ---------- Sign in with Google ----------
+const LOGIN_NONCE_COOKIE = 'pt_oauth';
+const toLogin = (reason: string) => `${env.CLIENT_URL.split(',')[0].replace(/\/$/, '')}/login?google=error&reason=${encodeURIComponent(reason)}`;
+
+/** Public: where to send the browser to sign in with Google. A one-time code in a cookie ties the answer to this browser. */
+r.get('/login-url', (_req, res) => {
+  if (!googleConfigured()) throw new HttpError(409, 'Sign in with Google is not set up on the server.');
+  const nonce = crypto.randomBytes(16).toString('hex');
+  const state = jwt.sign({ purpose: 'google-login', n: nonce }, env.JWT_SECRET, { expiresIn: '10m' });
+  res.cookie(LOGIN_NONCE_COOKIE, nonce, { ...cookieOptions(), maxAge: 10 * 60 * 1000 });
+  res.json({ url: oauthClient().generateAuthUrl({ access_type: 'online', prompt: 'select_account', scope: GOOGLE_LOGIN_SCOPES, state }) });
+});
+
+async function finishGoogleLogin(req: Request, res: Response, code: string | undefined, nonce: string) {
+  const cookieNonce = req.cookies?.[LOGIN_NONCE_COOKIE];
+  res.clearCookie(LOGIN_NONCE_COOKIE, { ...cookieOptions(), maxAge: undefined });
+  // The sign-in must finish in the same browser that started it
+  if (!cookieNonce || cookieNonce !== nonce) return res.redirect(toLogin('expired_or_invalid_state'));
+  if (!code) return res.redirect(toLogin('missing_code'));
+  try {
+    const id = await exchangeLoginCode(code);
+    if (!id.emailVerified) return res.redirect(toLogin('email_not_verified'));
+    // Known Google identity → that account. Otherwise an existing account with the same (Google-verified) email is linked. Otherwise a new account.
+    let user = await User.findOne({ googleId: id.sub });
+    if (!user) {
+      user = await User.findOne({ email: id.email });
+      if (user) await User.updateOne({ _id: user._id }, { googleId: id.sub });
+    }
+    if (!user) {
+      user = await User.create({
+        name: (id.name || id.email.split('@')[0]).slice(0, 100), email: id.email, googleId: id.sub, hasPassword: false,
+        passwordHash: await bcrypt.hash(crypto.randomBytes(32).toString('hex'), 12), // unusable until they choose a password
+      });
+    }
+    await ensureUserDefaults(String(user._id));
+    res.cookie(COOKIE_NAME, signToken(String(user._id), user.tokenVersion ?? 0), cookieOptions());
+    res.redirect(`${env.CLIENT_URL.split(',')[0].replace(/\/$/, '')}/`);
+  } catch (e) {
+    console.error('[google] sign-in failed', (e as Error).message);
+    res.redirect(toLogin('sign_in_failed'));
+  }
+}
+
 /** Step 2: Google redirects here. Public route — authenticated by the signed state. */
 r.get('/callback', async (req, res) => {
   const { code, state, error } = req.query as Record<string, string | undefined>;
+  // The same address is used for "Sign in with Google" and for connecting Calendar/Drive; the signed state says which
+  let purpose: string | undefined, nonce = '';
+  try { const p = jwt.verify(state ?? '', env.JWT_SECRET) as { purpose: string; n?: string }; purpose = p.purpose; nonce = p.n ?? ''; } catch { /* handled below */ }
+  if (purpose === 'google-login') {
+    if (error) return res.redirect(toLogin(error));
+    return finishGoogleLogin(req, res, code, nonce);
+  }
   if (error) return res.redirect(back(`google=error&reason=${encodeURIComponent(error)}`));
   let userId: string;
   try {

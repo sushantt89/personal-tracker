@@ -315,3 +315,85 @@ describe('Google integration (fake Google APIs)', () => {
     expect((await a().get('/api/integrations')).body.googleCalendar.email).toBeUndefined();
   });
 });
+
+describe('sign in with Google', () => {
+  const start = async (agent: ReturnType<typeof request.agent>) => {
+    const url = new URL((await agent.get('/api/integrations/google/login-url').expect(200)).body.url);
+    expect(url.searchParams.get('scope')).toBe('openid email profile'); // identity only — no calendar, files or mail
+    return url.searchParams.get('state')!;
+  };
+  const finish = async (agent: ReturnType<typeof request.agent>, query: Record<string, string>, state?: string) => {
+    const st = state ?? (await start(agent));
+    return agent.get('/api/integrations/google/callback').redirects(0).query({ ...query, state: st }).expect(302);
+  };
+  const identity = (over: Record<string, unknown> = {}) => ({ sub: 'g-123', email: 'newperson@gmail.com', emailVerified: true, name: 'New Person', ...over });
+
+  it('creates an account, signs the same person in again, and links an existing email', async () => {
+    const { setGoogleLoginExchange } = await import('../src/services/google/client.js');
+    const { User } = await import('../src/models/index.js');
+    expect((await request(app).get('/api/auth/providers')).body).toEqual({ google: true });
+
+    // First time: a new account with the starting categories, signed in straight away
+    setGoogleLoginExchange(async () => identity());
+    const a1 = request.agent(app);
+    let res = await finish(a1, { code: 'c1' });
+    expect(res.headers.location).toMatch(/\/$/);
+    const me = (await a1.get('/api/auth/me').expect(200)).body.user;
+    expect(me).toMatchObject({ email: 'newperson@gmail.com', name: 'New Person', hasPassword: false });
+    expect(me.googleId).toBeUndefined();
+    expect((await a1.get('/api/categories')).body.items.length).toBeGreaterThan(5);
+
+    // No password to check yet: they can choose one, and after that the current one is required
+    await a1.post('/api/auth/change-password').send({ newPassword: 'chosen-password-1' }).expect(200);
+    await a1.post('/api/auth/change-password').send({ newPassword: 'another-password-2' }).expect(400);
+    await request(app).post('/api/auth/login').send({ email: 'newperson@gmail.com', password: 'chosen-password-1' }).expect(200);
+
+    // Second time, another browser: same account, not a duplicate
+    const a2 = request.agent(app);
+    await finish(a2, { code: 'c2' });
+    expect((await a2.get('/api/auth/me')).body.user.id).toBe(me.id);
+    expect(await User.countDocuments({ email: 'newperson@gmail.com' })).toBe(1);
+
+    // Someone who registered with a password signs in with the Google account of the same email → same account, data intact
+    const pw = request.agent(app);
+    const reg = (await pw.post('/api/auth/register').send({ name: 'Old Timer', email: 'oldtimer@gmail.com', password: 'password123' })).body.user;
+    await pw.post('/api/jobs').send({ date: '2026-10-02', clientName: 'Sonia', amount: 25 }).expect(201);
+    setGoogleLoginExchange(async () => identity({ sub: 'g-456', email: 'oldtimer@gmail.com', name: 'Different Name' }));
+    const a3 = request.agent(app);
+    await finish(a3, { code: 'c3' });
+    expect((await a3.get('/api/auth/me')).body.user).toMatchObject({ id: reg.id, name: 'Old Timer', hasPassword: true });
+    expect((await a3.get('/api/jobs')).body.items).toHaveLength(1);
+    setGoogleLoginExchange(null);
+  });
+
+  it('refuses unverified emails, replayed links and links opened in another browser', async () => {
+    const { setGoogleLoginExchange } = await import('../src/services/google/client.js');
+    const { User } = await import('../src/models/index.js');
+    setGoogleLoginExchange(async () => identity({ sub: 'g-789', email: 'unverified@example.com', emailVerified: false }));
+    const a1 = request.agent(app);
+    let res = await finish(a1, { code: 'c' });
+    expect(res.headers.location).toContain('/login?google=error&reason=email_not_verified');
+    await a1.get('/api/auth/me').expect(401);
+    expect(await User.exists({ email: 'unverified@example.com' })).toBeNull();
+
+    // A sign-in link started in one browser can't be finished in another (stops someone signing you in to their account)
+    setGoogleLoginExchange(async () => identity({ sub: 'g-attacker', email: 'attacker@gmail.com' }));
+    const attacker = request.agent(app), victim = request.agent(app);
+    const state = await start(attacker);
+    res = await finish(victim, { code: 'c' }, state);
+    expect(res.headers.location).toContain('reason=expired_or_invalid_state');
+    await victim.get('/api/auth/me').expect(401);
+
+    // …and the same link can't be used twice
+    await finish(attacker, { code: 'c' }, state);
+    await attacker.post('/api/auth/logout').send({});
+    res = await finish(attacker, { code: 'c' }, state);
+    expect(res.headers.location).toContain('reason=expired_or_invalid_state');
+
+    // Cancelling on Google's screen comes back to the login page
+    const a4 = request.agent(app);
+    res = await finish(a4, { error: 'access_denied' });
+    expect(res.headers.location).toContain('/login?google=error&reason=access_denied');
+    setGoogleLoginExchange(null);
+  });
+});

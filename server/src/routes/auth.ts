@@ -5,7 +5,7 @@ import rateLimit from 'express-rate-limit';
 import { z } from 'zod';
 import mongoose from 'mongoose';
 import { User, GoogleAccount } from '../models/index.js';
-import { oauthClient } from '../services/google/client.js';
+import { oauthClient, googleConfigured } from '../services/google/client.js';
 import { decrypt } from '../utils/crypto.js';
 import { storage } from '../services/storage.js';
 import { parseBody } from '../middleware/validate.js';
@@ -20,6 +20,9 @@ const limiter = rateLimit({ windowMs: 15 * 60 * 1000, limit: env.NODE_ENV === 't
 
 const password = z.string().min(8, 'Password must be at least 8 characters').max(128);
 const email = z.string().trim().toLowerCase().email('Enter a valid email');
+
+/** Which sign-in methods the login page should offer. */
+r.get('/providers', (_req, res) => res.json({ google: googleConfigured() }));
 
 r.post('/register', limiter, async (req, res) => {
   const body = parseBody(z.object({ name: z.string().trim().min(1, 'Name is required').max(100), email, password, timezone: z.string().max(60).optional() }), req.body);
@@ -68,10 +71,13 @@ r.patch('/me', requireAuth, async (req, res) => {
 });
 
 r.post('/change-password', requireAuth, limiter, async (req, res) => {
-  const body = parseBody(z.object({ currentPassword: z.string().min(1), newPassword: password }), req.body);
+  const body = parseBody(z.object({ currentPassword: z.string().optional().default(''), newPassword: password }), req.body);
   const user = await User.findById(req.userId).select('+passwordHash');
-  if (!user || !(await bcrypt.compare(body.currentPassword, user.passwordHash))) throw badRequest('Current password is incorrect');
+  if (!user) throw unauthorized();
+  // Accounts created with Google have no password yet, so there is nothing to check the first time
+  if (user.hasPassword !== false && !(await bcrypt.compare(body.currentPassword, user.passwordHash))) throw badRequest('Current password is incorrect');
   user.passwordHash = await bcrypt.hash(body.newPassword, 12);
+  user.hasPassword = true;
   user.tokenVersion = (user.tokenVersion ?? 0) + 1; // sign out other sessions
   await user.save();
   res.cookie(COOKIE_NAME, signToken(String(user._id), user.tokenVersion), cookieOptions());
@@ -84,10 +90,12 @@ r.post('/change-password', requireAuth, limiter, async (req, res) => {
  * Needs the current password and the word DELETE, so it can't happen by accident or from a stolen session alone.
  */
 r.post('/reset-data', requireAuth, limiter, async (req, res) => {
-  const body = parseBody(z.object({ currentPassword: z.string().min(1, 'Enter your password'), confirm: z.string(), disconnectGoogle: z.boolean().default(false) }), req.body);
+  const body = parseBody(z.object({ currentPassword: z.string().optional().default(''), confirm: z.string(), disconnectGoogle: z.boolean().default(false) }), req.body);
   if (body.confirm.trim().toUpperCase() !== 'DELETE') throw badRequest('Type DELETE to confirm');
   const user = await User.findById(req.userId).select('+passwordHash');
-  if (!user || !(await bcrypt.compare(body.currentPassword, user.passwordHash))) throw badRequest('Password is incorrect');
+  if (!user) throw unauthorized();
+  // Google-only accounts have no password to ask for; the typed word is their confirmation
+  if (user.hasPassword !== false && !(await bcrypt.compare(body.currentPassword, user.passwordHash))) throw badRequest('Password is incorrect');
   const userId = String(user._id);
 
   if (body.disconnectGoogle) {
@@ -138,6 +146,7 @@ r.post('/reset-password', limiter, async (req, res) => {
   const user = await User.findOne({ resetTokenHash: hash, resetTokenExpires: { $gt: new Date() } }).select('+resetTokenHash +resetTokenExpires');
   if (!user) throw badRequest('This reset link is invalid or has expired');
   user.passwordHash = await bcrypt.hash(body.password, 12);
+  user.hasPassword = true;
   user.resetTokenHash = undefined;
   user.resetTokenExpires = undefined;
   user.tokenVersion = (user.tokenVersion ?? 0) + 1;

@@ -11,6 +11,7 @@ import { money, localToday, startOfMonth, endOfMonth, fmtShort } from '../utils/
 import { useCategories } from '../hooks/useLookups';
 import { useToast } from '../hooks/useToast';
 import { useInvalidateFinance } from '../hooks/useInvalidate';
+import WeekBreakdownDialog from '../components/WeekBreakdownDialog';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 const MoneyField = ({ label, value, onChange, helper }: { label: string; value: number | string; onChange: (v: string) => void; helper?: string }) => (
@@ -34,6 +35,7 @@ export default function Budgets() {
   const dash = useQuery({ queryKey: ['dashboard', 'budget-page'], queryFn: () => get<any>('/dashboard', { from: startOfMonth(today), to: endOfMonth(today) }) });
   const [form, setForm] = useState<Budget | null>(null);
   const [saving, setSaving] = useState(false);
+  const [breakdown, setBreakdown] = useState<'income' | 'expenses' | null>(null);
   // The monthly figures as stored, so a weekly amount that wasn't touched goes back exactly as it was
   const [stored, setStored] = useState<Budget | null>(null);
   useEffect(() => { if (budget.data && !form) { setForm(asWeekly(budget.data)); setStored(budget.data); } }, [budget.data, form]);
@@ -67,8 +69,8 @@ export default function Budgets() {
       <PageHeader title="Budgets" subtitle="Set weekly targets once; progress and warnings update automatically." actions={<Button variant="contained" onClick={save} disabled={saving}>{saving ? 'Saving…' : 'Save budget'}</Button>} />
       <Grid container spacing={2}>
         <Grid size={{ xs: 12, md: 4 }}><StatCard label="Minimum income required (week)" value={money(required)} hint={`Bills ${money(billsWeekly)} + variable expenses + savings · ${money(toMonthly(required))} a month`} tone="warning" /></Grid>
-        <Grid size={{ xs: 6, md: 4 }}><StatCard label="Income this week" value={money(w?.incomeIncludingExpected)} hint={w ? <><span>{money(w.incomeReceived)} received</span><br /><WeekChange change={w.changeFromPrevious} previous={w.previous.income} /></> : undefined} /></Grid>
-        <Grid size={{ xs: 6, md: 4 }}><StatCard label="Spent this week" value={money(w?.expenses)} tone="negative" hint={w ? `${fmtShort(w.from)} – ${fmtShort(w.to)}` : undefined} /></Grid>
+        <Grid size={{ xs: 6, md: 4 }}><StatCard label="Income this week" onClick={() => setBreakdown('income')} value={money(w?.incomeIncludingExpected)} hint={w ? <><span>{money(w.incomeReceived)} received · tap for breakdown</span><br /><WeekChange change={w.changeFromPrevious} previous={w.previous.income} /></> : undefined} /></Grid>
+        <Grid size={{ xs: 6, md: 4 }}><StatCard label="Spent this week" onClick={() => setBreakdown('expenses')} value={money(w?.expenses)} tone="negative" hint={w ? `${fmtShort(w.from)} – ${fmtShort(w.to)} · tap for breakdown` : undefined} /></Grid>
 
         <Grid size={{ xs: 12, lg: 6 }}>
           <SectionCard title="Weekly targets" subtitle="Type what you want per week. Monthly figures elsewhere in the app are worked out from these.">
@@ -122,6 +124,7 @@ export default function Budgets() {
           </SectionCard>
         </Grid>
       </Grid>
+      {w && <WeekBreakdownDialog kind={breakdown} from={w.from} to={w.to} onClose={() => setBreakdown(null)} />}
     </Box>
   );
 }

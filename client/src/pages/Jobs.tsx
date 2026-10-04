@@ -57,7 +57,9 @@ export default function Jobs() {
     fields: jobFields, defaults: jobDefaults, dateFilter: true, transform: withFormattedAddress,
     fromRecord: (j) => ({ ...j, address: j.address ?? {}, tasks: j.tasks ?? [] }),
     filters: [
-      { name: 'status', label: 'Status', options: ['scheduled', 'in_progress', 'completed', 'cancelled'].map((s) => ({ value: s, label: s.replace('_', ' ') })) },
+      // Completed jobs are hidden until asked for; the totals above still count them
+      { name: 'status', label: 'Status', defaultValue: 'open', clientSide: (j, v) => (v === 'open' ? j.status !== 'completed' : j.status === v),
+        options: [{ value: 'open', label: 'Not completed' }, ...['scheduled', 'in_progress', 'completed', 'cancelled'].map((s) => ({ value: s, label: s.replace('_', ' ') }))] },
       { name: 'incomeSourceId', label: 'Source', options: sources.map((s) => ({ value: s.id, label: s.name })) },
       { name: 'workType', label: 'Working as', options: [{ value: 'own', label: 'Own business' }, { value: 'subcontract', label: 'Under a contractor' }, { value: 'employee', label: 'Employee' }] },
       { name: 'pay', label: 'Pay', options: [{ value: 'unset', label: 'Waiting for actual pay' }, { value: 'set', label: 'Actual pay recorded' }] },

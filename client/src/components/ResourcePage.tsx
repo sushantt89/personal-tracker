@@ -24,7 +24,13 @@ export interface RowAction<T> { label: string; icon?: ReactNode; onClick: (row: 
 export interface BulkAction<T> { label: string; icon?: ReactNode; onClick: (rows: T[]) => void | Promise<void>; variant?: 'contained' | 'outlined' | 'text' }
 /** Swipe a row left to do one thing to it */
 export interface SwipeDef<T> { label: string; onAction: (row: T) => void | Promise<void>; show?: (row: T) => boolean }
-export interface FilterDef { name: string; label: string; options: { value: string; label: string }[] }
+export interface FilterDef<T = any> {
+  name: string; label: string; options: { value: string; label: string }[];
+  /** What is selected when the page opens (a link such as ?status=completed still wins) */
+  defaultValue?: string;
+  /** Apply this filter in the browser instead of on the server, so the summary above the list still covers every row */
+  clientSide?: (row: T, value: string) => boolean;
+}
 
 export interface ResourceConfig<T extends { id: string }> {
   queryKey: string;
@@ -38,7 +44,7 @@ export interface ResourceConfig<T extends { id: string }> {
   fromRecord?: (row: T) => Values;
   dateFilter?: boolean;
   defaultRange?: DateRange['preset'];
-  filters?: FilterDef[];
+  filters?: FilterDef<T>[];
   rowActions?: RowAction<T>[];
   bulkActions?: BulkAction<T>[];
   swipe?: SwipeDef<T>;
@@ -80,7 +86,11 @@ export function ResourcePage<T extends { id: string }>({ config }: { config: Res
   const [q, setQ] = useState('');
   const [debounced, setDebounced] = useState('');
   const [range, setRange] = useState<DateRange>(rangeFor(config.defaultRange ?? 'month'));
-  const [filters, setFilters] = useState<Record<string, string>>(() => Object.fromEntries((config.filters ?? []).map((f) => [f.name, params.get(f.name) ?? ''])));
+  const [filters, setFilters] = useState<Record<string, string>>(() => {
+    // A link that names any filter (e.g. ?pay=unset from a notification) shows exactly that, without the page's defaults on top
+    const linked = (config.filters ?? []).some((f) => params.has(f.name));
+    return Object.fromEntries((config.filters ?? []).map((f) => [f.name, params.get(f.name) ?? (linked ? '' : f.defaultValue ?? '')]));
+  });
   const [editing, setEditing] = useState<{ row?: T; initial: Values } | null>(null);
   const [menu, setMenu] = useState<{ el: HTMLElement; row: T } | null>(null);
   const [page, setPage] = useState(0);
@@ -93,7 +103,8 @@ export function ResourcePage<T extends { id: string }>({ config }: { config: Res
   useEffect(() => { const t = setTimeout(() => setDebounced(q), 250); return () => clearTimeout(t); }, [q]);
   useEffect(() => setPage(0), [debounced, range, filters]);
 
-  const query = { q: debounced, ...(config.dateFilter && range.preset !== ('all' as any) ? { from: range.from, to: range.to } : {}), ...filters, ...(config.extraQuery ?? {}) };
+  const localFilters = (config.filters ?? []).filter((f) => f.clientSide);
+  const query = { q: debounced, ...(config.dateFilter && range.preset !== ('all' as any) ? { from: range.from, to: range.to } : {}), ...Object.fromEntries(Object.entries(filters).filter(([name]) => !localFilters.some((f) => f.name === name))), ...(config.extraQuery ?? {}) };
   const list = useQuery({ queryKey: [config.queryKey, query], queryFn: () => get<{ items: T[]; total: number }>(config.endpoint, query) });
 
   // Open the edit dialog for ?focus=<id> links (from search / notifications)
@@ -122,13 +133,16 @@ export function ResourcePage<T extends { id: string }>({ config }: { config: Res
     }
   };
 
+  // Everything the server returned (the summary uses this) …
+  const allItems = list.data?.items ?? [];
+  // … and what is listed, after the filters that are applied here in the browser
   const items = useMemo(() => {
-    const xs = list.data?.items ?? [];
+    const xs = allItems.filter((r) => localFilters.every((f) => !filters[f.name] || f.clientSide!(r, filters[f.name])));
     if (!sort) return xs;
     const col = config.columns.find((c) => c.key === sort.key);
     const val = (r: T) => (col?.sortValue ? col.sortValue(r) : (r as any)[sort.key] ?? '');
     return [...xs].sort((a, b) => { const va = val(a), vb = val(b); const c = typeof va === 'number' && typeof vb === 'number' ? va - vb : String(va).localeCompare(String(vb)); return sort.dir === 'asc' ? c : -c; });
-  }, [list.data, sort, config.columns]);
+  }, [list.data, sort, config.columns, filters]); // eslint-disable-line react-hooks/exhaustive-deps
   const paged = items.slice(page * rowsPerPage, page * rowsPerPage + rowsPerPage);
   // Selection only ever covers rows that are still in the list
   const chosen = items.filter((r) => selected.has(r.id));
@@ -160,7 +174,7 @@ export function ResourcePage<T extends { id: string }>({ config }: { config: Res
           ))}
         </Stack>
       </Card>
-      {config.summary && list.data && <Box sx={{ mb: 2 }}>{config.summary(items)}</Box>}
+      {config.summary && list.data && <Box sx={{ mb: 2 }}>{config.summary(allItems)}</Box>}
 
       {selectable && (
         <Collapse in={chosen.length > 0} unmountOnExit>
@@ -178,7 +192,7 @@ export function ResourcePage<T extends { id: string }>({ config }: { config: Res
 
       <Card>
         {list.isLoading ? <Box sx={{ p: 2 }}><LoadingBlock /></Box> : list.error ? <Box sx={{ p: 2 }}><ErrorBlock error={list.error} onRetry={list.refetch} /></Box> : !items.length ? (
-          <EmptyState title={`No ${config.title.toLowerCase()} found`} message={debounced || Object.values(filters).some(Boolean) ? 'Try a different search or filter.' : `Add your first ${config.singular.toLowerCase()} to get started.`} action={<Button variant="outlined" startIcon={<AddIcon />} onClick={openNew}>Add {config.singular.toLowerCase()}</Button>} />
+          <EmptyState title={`No ${config.title.toLowerCase()} found`} message={allItems.length > 0 ? `${allItems.length} hidden by the ${localFilters.map((f) => f.label.toLowerCase()).join(' / ')} filter — set it to All to see them.` : debounced || Object.values(filters).some(Boolean) ? 'Try a different search or filter.' : `Add your first ${config.singular.toLowerCase()} to get started.`} action={<Button variant="outlined" startIcon={<AddIcon />} onClick={openNew}>Add {config.singular.toLowerCase()}</Button>} />
         ) : mobile ? (
           <Box>
             {selectable && (

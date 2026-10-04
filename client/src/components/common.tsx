@@ -81,6 +81,17 @@ const STATUS_COLORS: Record<string, ChipProps['color']> = {
 export const StatusChip = ({ status, size = 'small' }: { status?: string; size?: 'small' | 'medium' }) =>
   status ? <Chip size={size} label={titleCase(status)} color={STATUS_COLORS[status] ?? 'default'} variant={status === 'cancelled' || status === 'draft' ? 'outlined' : 'filled'} sx={{ textDecoration: status === 'cancelled' ? 'line-through' : undefined }} /> : null;
 
+/** "$120 more than last week" / "$80 less than last week" */
+export function WeekChange({ change, previous }: { change: number; previous: number }) {
+  const same = Math.abs(change) < 0.005;
+  return (
+    <Typography variant="body2" component="span" sx={{ color: same ? 'text.secondary' : change > 0 ? 'success.main' : 'error.main', fontWeight: 600 }}>
+      {same ? 'Same as last week' : `${change > 0 ? '▲' : '▼'} ${money(Math.abs(change))} ${change > 0 ? 'more' : 'less'} than last week`}
+      <Typography variant="body2" component="span" color="text.secondary" sx={{ fontWeight: 400 }}> ({money(previous)})</Typography>
+    </Typography>
+  );
+}
+
 export function ProgressRow({ label, value, target, invert, format = money }: { label: string; value: number; target: number; invert?: boolean; format?: (n: number) => string }) {
   const p = pct(value, target);
   const over = target > 0 && value > target;

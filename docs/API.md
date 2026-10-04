@@ -73,7 +73,7 @@ Extra behaviour:
 ## Analytics
 | Method | Path | Notes |
 |---|---|---|
-| GET | `/dashboard` | `from, to, incomeSourceId?, categoryId?` → money, month, required, savings, bills, invoices, work, today, budget, charts |
+| GET | `/dashboard` | `from, to, incomeSourceId?, categoryId?` → money, month, week (this Mon–Sun: income, expenses, requiredIncome, previous week, changeFromPrevious), required, savings, bills, invoices, work, today, budget, charts |
 | GET | `/calendar` | `from, to` → merged tasks (recurrences expanded), jobs, bills, invoice due dates |
 | GET | `/search` | `q` — text, amount (`30`, `$30.00`) or date (`2026-10`, `2026-10-02`) |
 | GET | `/reports/:type` | type = `income|expenses|cashflow|work|all`; `from, to, groupBy, format=json|csv|xlsx|pdf, detail=true` (`all` = full workbook/PDF) |

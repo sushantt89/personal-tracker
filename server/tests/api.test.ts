@@ -389,4 +389,18 @@ describe('reset everything', () => {
     expect(r.updated).toBe(0);
     await b.post('/api/jobs/bulk').query(q).send({ jobIds: [], action: 'paid' }).expect(400);
   });
+
+  it('gives the dashboard a weekly income requirement and this week\'s progress', async () => {
+    const b = request.agent(app);
+    await b.post('/api/auth/register').send({ name: 'Weekly', email: 'weekly@example.com', password: 'password123' }).expect(201);
+    const q = { today: '2026-10-07' }; // Wednesday; the week is Mon 5 – Sun 11 Oct
+    await b.put('/api/budget').query(q).send({ expectedVariableExpenses: 2600 }).expect(200);
+    await b.post('/api/income').query(q).send({ date: '2026-10-06', amount: 200, status: 'paid' }).expect(201);
+    await b.post('/api/income').query(q).send({ date: '2026-10-10', amount: 150, status: 'expected' }).expect(201);
+    await b.post('/api/income').query(q).send({ date: '2026-10-02', amount: 999, status: 'paid' }).expect(201); // last week
+    await b.post('/api/expenses').query(q).send({ date: '2026-10-06', amount: 45, description: 'Fuel' }).expect(201);
+    const d = (await b.get('/api/dashboard?from=2026-10-01&to=2026-10-31').query(q).expect(200)).body;
+    expect(d.week).toMatchObject({ from: '2026-10-05', to: '2026-10-11', requiredIncome: 600, incomeReceived: 200, incomeIncludingExpected: 350, shortfall: 250, expenses: 45, changeFromPrevious: -649 });
+    expect(d.week.previous).toEqual({ from: '2026-09-28', to: '2026-10-04', income: 999 });
+  });
 });

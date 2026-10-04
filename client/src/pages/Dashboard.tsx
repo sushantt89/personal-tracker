@@ -12,7 +12,7 @@ import FlagOutlinedIcon from '@mui/icons-material/FlagOutlined';
 import ReceiptLongOutlinedIcon from '@mui/icons-material/ReceiptLongOutlined';
 import SavingsOutlinedIcon from '@mui/icons-material/SavingsOutlined';
 import { get, post, del } from '../api/client';
-import { PageHeader, StatCard, SectionCard, DateRangeBar, rangeFor, LoadingBlock, ErrorBlock, ProgressRow, StatusChip, type DateRange } from '../components/common';
+import { PageHeader, StatCard, SectionCard, DateRangeBar, rangeFor, LoadingBlock, ErrorBlock, ProgressRow, WeekChange, StatusChip, type DateRange } from '../components/common';
 import { LineSeriesChart, BarSeriesChart, DonutChart, CashFlowChart } from '../components/charts';
 import { money, fmtMonth, fmtShort, fmtTime, fmtDate, mapsUrl, localToday } from '../utils/format';
 import { useLookupMaps } from '../hooks/useLookups';
@@ -83,6 +83,7 @@ export default function Dashboard() {
     const req = Math.round((required as number) * 100) / 100;
     return { label: label as string, required: req, shortfall: Math.max(0, Math.round((req - coming) * 100) / 100) };
   })();
+  const perWeek = (monthly: number) => Math.round(((monthly ?? 0) * 12 / 52) * 100) / 100;
   const schedule = today ? [
     ...today.jobs.map((j: any) => ({ key: 'j' + j.id, time: j.startTime, title: j.clientName ?? 'Job', sub: j.address?.formatted, chip: j.amount ? money(j.amount) : undefined, kind: 'Job', status: j.status, map: j.address?.formatted })),
     ...today.tasks.map((t: any) => ({ key: 't' + t.id, time: t.startTime, title: t.title, sub: t.location, kind: t.category, status: t.status })),
@@ -168,15 +169,17 @@ export default function Dashboard() {
               </SectionCard>
             </Grid>
             <Grid size={{ xs: 12, md: 12, xl: 4 }}>
-              <SectionCard title="How much do I need to earn?" subtitle="Minimum monthly income required">
+              <SectionCard title="How much do I need to earn?" subtitle={`Minimum income needed each week · ${fmtShort(d.week.from)} – ${fmtShort(d.week.to)}`}>
                 <Stack spacing={1}>
-                  {[['Recurring bills (monthly equivalent)', d.required.monthlyBills], ['Expected variable expenses', d.required.expectedVariableExpenses], ['Target savings', d.required.savingsTarget]].map(([l, v]) => (
+                  {[['Recurring bills (weekly equivalent)', perWeek(d.required.monthlyBills)], ['Expected variable expenses', perWeek(d.required.expectedVariableExpenses)], ['Target savings', perWeek(d.required.savingsTarget)]].map(([l, v]) => (
                     <Stack key={l as string} direction="row" justifyContent="space-between"><Typography variant="body2" color="text.secondary">{l}</Typography><Typography variant="body2" sx={{ fontVariantNumeric: 'tabular-nums' }}>{money(v as number)}</Typography></Stack>
                   ))}
                   <Divider />
-                  <Stack direction="row" justifyContent="space-between"><Typography variant="subtitle2">Minimum required</Typography><Typography variant="subtitle2">{money(d.required.minimumMonthlyIncome)}</Typography></Stack>
-                  <Box sx={{ pt: 1 }}><ProgressRow label="Received + expected this month" value={d.month.incomeIncludingExpected} target={d.required.minimumMonthlyIncome} /></Box>
-                  {d.budget.incomeTarget > 0 && <ProgressRow label="Monthly income target" value={d.month.incomeIncludingExpected} target={d.budget.incomeTarget} />}
+                  <Stack direction="row" justifyContent="space-between"><Typography variant="subtitle2">Minimum required per week</Typography><Typography variant="subtitle2">{money(d.week.requiredIncome)}</Typography></Stack>
+                  <Typography variant="caption" color="text.secondary" sx={{ textAlign: 'right' }}>{money(d.required.minimumMonthlyIncome)} a month</Typography>
+                  <Box sx={{ pt: 1 }}><ProgressRow label="Received + expected this week" value={d.week.incomeIncludingExpected} target={d.week.requiredIncome} /></Box>
+                  <WeekChange change={d.week.changeFromPrevious} previous={d.week.previous.income} />
+                  {d.budget.incomeTarget > 0 && <ProgressRow label="Weekly income target" value={d.week.incomeIncludingExpected} target={perWeek(d.budget.incomeTarget)} />}
                 </Stack>
               </SectionCard>
             </Grid>

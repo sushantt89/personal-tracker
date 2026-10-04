@@ -217,6 +217,21 @@ export async function dashboard(userId: string, f: FinanceFilters) {
       shortfall: round2(Math.max(0, req.minimumMonthlyIncome - mAll)),
       savingsThisMonth: round2(mPaid - mExpenses),
     },
+    // This Monday-to-Sunday week, whatever period is selected
+    week: (() => {
+      const wIncome = incomes.filter((i) => inRange(i.date, ws, addDays(ws, 6)));
+      const required = round2((req.minimumMonthlyIncome * 12) / 52);
+      const all = sum(wIncome.map((i) => i.amount));
+      // Last week, for "more / less than last week"
+      const pFrom = addDays(ws, -7), pTo = addDays(ws, -1);
+      const prev = sum(incomes.filter((i) => inRange(i.date, pFrom, pTo)).map((i) => i.amount));
+      return {
+        from: ws, to: addDays(ws, 6), incomeReceived: sum(wIncome.filter((i) => i.status === 'paid').map((i) => i.amount)), incomeIncludingExpected: all,
+        expenses: sum(expenses.filter((e) => inRange(e.date, ws, addDays(ws, 6))).map((e) => e.amount)),
+        requiredIncome: required, shortfall: round2(Math.max(0, required - all)),
+        previous: { from: pFrom, to: pTo, income: prev }, changeFromPrevious: round2(all - prev),
+      };
+    })(),
     required: req,
     savings: {
       current: budget?.currentSavings ?? 0,

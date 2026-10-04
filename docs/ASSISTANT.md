@@ -13,7 +13,7 @@ If you never enter a balance, the Assistant falls back to what is left of this m
 - **Income expected**: income records with status expected/pending dated in the next 30 days (for example jobs with an amount that aren't paid yet). Shifts whose pay you don't know yet count once you give them an expected amount (Jobs → Expected pay).
 - **Bills due**: unpaid recurring bills falling due in the next 30 days.
 - **Everyday spending**: "Expected variable expenses" from Budgets; if that is empty, the average of your non-bill spending over the last two full months.
-- **Savings target**: the monthly savings target from Budgets.
+- **Savings target**: the savings target from Budgets (typed per week there, stored per month).
 - **Saving goals**: what you still have to put aside for your goals in the weeks starting within the next 30 days.
 
 ## Should I buy it?

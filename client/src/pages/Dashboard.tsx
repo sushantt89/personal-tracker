@@ -29,6 +29,14 @@ function greeting() {
   return h < 12 ? 'Good morning' : h < 18 ? 'Good afternoon' : 'Good evening';
 }
 
+/** "$558.15 more to go …" in amber, or a green "done" line once the amount is reached (with how far over). */
+function ToGo({ left, what, done }: { left: number; what: string; done: string }) {
+  const n = Math.round(left * 100) / 100;
+  return n > 0
+    ? <Typography variant="body2" sx={{ color: 'warning.main', fontWeight: 700 }}>{money(n)} more to go <Typography component="span" variant="body2" color="text.secondary" sx={{ fontWeight: 400 }}>{what}</Typography></Typography>
+    : <Typography variant="body2" sx={{ color: 'success.main', fontWeight: 700 }}>{done}{n < 0 ? ` · ${money(-n)} over` : ''}</Typography>;
+}
+
 export default function Dashboard() {
   const { user } = useAuth();
   const nav = useNavigate();
@@ -178,8 +186,10 @@ export default function Dashboard() {
                   <Stack direction="row" justifyContent="space-between"><Typography variant="subtitle2">Minimum required per week</Typography><Typography variant="subtitle2">{money(d.week.requiredIncome)}</Typography></Stack>
                   <Typography variant="caption" color="text.secondary" sx={{ textAlign: 'right' }}>{money(d.required.minimumMonthlyIncome)} a month</Typography>
                   <Box sx={{ pt: 1 }}><ProgressRow label="Received + expected this week" value={d.week.incomeIncludingExpected} target={d.week.requiredIncome} /></Box>
+                  <ToGo left={d.week.requiredIncome - d.week.incomeIncludingExpected} what="to cover this week’s minimum" done="This week’s minimum is covered" />
                   <WeekChange change={d.week.changeFromPrevious} previous={d.week.previous.income} />
                   {d.budget.incomeTarget > 0 && <ProgressRow label="Weekly income target" value={d.week.incomeIncludingExpected} target={perWeek(d.budget.incomeTarget)} />}
+                  {d.budget.incomeTarget > 0 && <ToGo left={perWeek(d.budget.incomeTarget) - d.week.incomeIncludingExpected} what="to reach your weekly target" done="Weekly target reached" />}
                 </Stack>
               </SectionCard>
             </Grid>

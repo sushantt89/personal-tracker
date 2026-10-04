@@ -36,7 +36,7 @@ export default function Dashboard() {
   const confirm = useConfirm();
   const invalidate = useInvalidateFinance();
   const { categories, sources } = useLookupMaps();
-  const [range, setRange] = useState<DateRange>(rangeFor('month'));
+  const [range, setRange] = useState<DateRange>(rangeFor('week'));
   const [sourceId, setSourceId] = useState('');
   const [categoryId, setCategoryId] = useState('');
   const q = useQuery({ queryKey: ['dashboard', range.from, range.to, sourceId, categoryId], queryFn: () => get<D>('/dashboard', { from: range.from, to: range.to, incomeSourceId: sourceId, categoryId }) });

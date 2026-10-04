@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Box, Button, Link, Typography, Stack, Chip } from '@mui/material';
+import { Box, Button, Link, Typography, Stack, Chip, Snackbar } from '@mui/material';
 import CheckCircleOutlineIcon from '@mui/icons-material/CheckCircleOutline';
 import CancelOutlinedIcon from '@mui/icons-material/CancelOutlined';
 import PlaceOutlinedIcon from '@mui/icons-material/PlaceOutlined';
@@ -13,7 +13,7 @@ import { StatusChip, StatCard } from '../components/common';
 import type { Job } from '../api/types';
 import { jobFields, jobDefaults, withFormattedAddress } from '../utils/forms';
 import { money, fmtDate, fmtTime, mapsUrl } from '../utils/format';
-import { patch } from '../api/client';
+import { patch, post } from '../api/client';
 import { useInvalidateFinance } from '../hooks/useInvalidate';
 import { useToast } from '../hooks/useToast';
 import { useLookupMaps } from '../hooks/useLookups';
@@ -32,6 +32,24 @@ export default function Jobs() {
     await patch(`/jobs/${j.id}`, { status });
     invalidate();
     toast(`Job marked ${status}`);
+  };
+  // Swipe to complete, with a way back if it was a slip of the finger
+  const [undo, setUndo] = useState<{ job: Job; was: Job['status'] } | null>(null);
+  const complete = async (j: Job) => {
+    try { await patch(`/jobs/${j.id}`, { status: 'completed' }); await invalidate(); setUndo({ job: j, was: j.status }); }
+    catch (e) { toast((e as Error).message, 'error'); }
+  };
+  const undoComplete = async () => {
+    if (!undo) return;
+    const u = undo; setUndo(null);
+    try { await patch(`/jobs/${u.job.id}`, { status: u.was }); invalidate(); } catch (e) { toast((e as Error).message, 'error'); }
+  };
+  const bulk = async (rows: Job[], action: 'completed' | 'paid') => {
+    const r = await post<{ updated: number; skipped: { cancelled: number; noPay: number } }>('/jobs/bulk', { jobIds: rows.map((j) => j.id), action });
+    await invalidate();
+    const notes = [r.skipped.noPay ? `${r.skipped.noPay} skipped: pay not set (use Record pay)` : '', r.skipped.cancelled ? `${r.skipped.cancelled} skipped: cancelled` : ''].filter(Boolean).join(' · ');
+    const same = rows.length - r.updated - r.skipped.noPay - r.skipped.cancelled;
+    toast(`${r.updated} job${r.updated === 1 ? '' : 's'} marked ${action}${same > 0 ? ` · ${same} already ${action}` : ''}${notes ? ` · ${notes}` : ''}`, notes && !r.updated ? 'error' : undefined);
   };
   const config: ResourceConfig<Job> = {
     queryKey: 'jobs', endpoint: '/jobs', title: 'Jobs', singular: 'Job',
@@ -63,6 +81,11 @@ export default function Jobs() {
       { label: 'Cancel job', icon: <CancelOutlinedIcon fontSize="small" />, onClick: (j) => setStatus(j, 'cancelled'), show: (j) => j.status !== 'cancelled' },
       { label: 'Open in Google Maps', icon: <PlaceOutlinedIcon fontSize="small" />, onClick: (j) => { window.open(mapsUrl(j.address?.formatted), '_blank'); }, show: (j) => !!j.address?.formatted },
     ],
+    swipe: { label: 'Completed', onAction: complete, show: (j) => j.status !== 'completed' && j.status !== 'cancelled' },
+    bulkActions: [
+      { label: 'Mark completed', icon: <CheckCircleOutlineIcon fontSize="small" />, onClick: (rows) => bulk(rows, 'completed'), variant: 'contained' },
+      { label: 'Mark paid', icon: <PaidOutlinedIcon fontSize="small" />, onClick: (rows) => bulk(rows, 'paid') },
+    ],
     deleteMessage: () => 'The linked income record is removed too (unless it is already paid).',
     summary: (items) => {
       const done = items.filter((j) => j.status === 'completed');
@@ -78,5 +101,7 @@ export default function Jobs() {
       );
     },
   };
-  return <><ResourcePage config={config} /><RecordPayDialog open={!!payOpen} initialMode={payOpen || 'paid'} onClose={() => setPayOpen(false)} /></>;
+  return <><ResourcePage config={config} />
+    <Snackbar open={!!undo} autoHideDuration={6000} onClose={(_, reason) => { if (reason !== 'clickaway') setUndo(null); }} message={undo ? `${undo.job.clientName ?? undo.job.title ?? 'Job'} marked completed` : ''} action={<Button color="inherit" size="small" onClick={undoComplete}>Undo</Button>} anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }} sx={{ mb: { xs: 9, md: 0 } }} />
+    <RecordPayDialog open={!!payOpen} initialMode={payOpen || 'paid'} onClose={() => setPayOpen(false)} /></>;
 }

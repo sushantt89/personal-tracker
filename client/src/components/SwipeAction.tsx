@@ -4,12 +4,8 @@ import CheckIcon from '@mui/icons-material/Check';
 
 const THRESHOLD = 72; // how far left a row has to be dragged before letting go counts
 
-/**
- * A row you can swipe left to do one thing (e.g. mark a bill paid) — with a finger, a mouse or a trackpad drag.
- * Dragging reveals the action behind the row; letting go past the threshold runs it, otherwise the row springs back.
- * Vertical scrolling is left alone, and a swipe never also counts as a tap on something inside the row.
- */
-export default function SwipeAction({ children, label, onAction, disabled }: { children: ReactNode; label: string; onAction: () => void | Promise<void>; disabled?: boolean }) {
+/** The swipe-left gesture itself: spread `handlers` on the element that moves, and translate it by `dx`. */
+export function useSwipe<E extends HTMLElement = HTMLDivElement>(onAction: () => void | Promise<void>, disabled?: boolean) {
   const start = useRef<{ x: number; y: number; id: number; locked: 'x' | 'y' | null } | null>(null);
   const swiped = useRef(false);
   const [dx, setDx] = useState(0);
@@ -19,12 +15,12 @@ export default function SwipeAction({ children, label, onAction, disabled }: { c
 
   const reset = () => { start.current = null; setDragging(false); setDx(0); };
 
-  const onPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+  const onPointerDown = (e: React.PointerEvent<E>) => {
     if (disabled || busy || (e.pointerType === 'mouse' && e.button !== 0)) return;
     start.current = { x: e.clientX, y: e.clientY, id: e.pointerId, locked: null };
     swiped.current = false;
   };
-  const onPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+  const onPointerMove = (e: React.PointerEvent<E>) => {
     const s = start.current;
     if (!s || s.id !== e.pointerId) return;
     const mx = e.clientX - s.x, my = e.clientY - s.y;
@@ -41,7 +37,7 @@ export default function SwipeAction({ children, label, onAction, disabled }: { c
     swiped.current = true;
     setDx(Math.max(-180, Math.min(0, mx)));
   };
-  const onPointerUp = async (e: React.PointerEvent<HTMLDivElement>) => {
+  const onPointerUp = async (e: React.PointerEvent<E>) => {
     const s = start.current;
     if (!s || s.id !== e.pointerId) return;
     const go = s.locked === 'x' && armed;
@@ -52,6 +48,22 @@ export default function SwipeAction({ children, label, onAction, disabled }: { c
     setDx(-700); // slide the row away
     try { await onAction(); } finally { setBusy(false); setDx(0); }
   };
+  const handlers = {
+    onPointerDown, onPointerMove, onPointerUp, onPointerCancel: reset,
+    // A drag must not also count as a click on the row or on a button inside it
+    onClickCapture: (e: React.MouseEvent<E>) => { if (swiped.current) { e.preventDefault(); e.stopPropagation(); swiped.current = false; } },
+    onDragStart: (e: React.DragEvent<E>) => e.preventDefault(),
+  };
+  return { handlers, dx, dragging, armed, busy };
+}
+
+/**
+ * A row you can swipe left to do one thing (e.g. mark a bill paid) — with a finger, a mouse or a trackpad drag.
+ * Dragging reveals the action behind the row; letting go past the threshold runs it, otherwise the row springs back.
+ * Vertical scrolling is left alone, and a swipe never also counts as a tap on something inside the row.
+ */
+export default function SwipeAction({ children, label, onAction, disabled }: { children: ReactNode; label: string; onAction: () => void | Promise<void>; disabled?: boolean }) {
+  const { handlers, dx, dragging, armed, busy } = useSwipe<HTMLDivElement>(onAction, disabled);
 
   return (
     <Box sx={{ position: 'relative', overflow: 'hidden', borderRadius: 1.5 }}>
@@ -60,10 +72,7 @@ export default function SwipeAction({ children, label, onAction, disabled }: { c
         <Typography variant="body2" fontWeight={700}>{label}</Typography>
       </Box>
       <Box
-        onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onPointerCancel={reset}
-        // A drag must not also trigger a button inside the row
-        onClickCapture={(e) => { if (swiped.current) { e.preventDefault(); e.stopPropagation(); swiped.current = false; } }}
-        onDragStart={(e) => e.preventDefault()}
+        {...handlers}
         sx={{ position: 'relative', bgcolor: 'background.paper', transform: `translateX(${dx}px)`, transition: dragging ? 'none' : 'transform .2s ease-out', touchAction: 'pan-y', userSelect: 'none', WebkitUserSelect: 'none', cursor: dragging ? 'grabbing' : undefined }}>
         {children}
       </Box>

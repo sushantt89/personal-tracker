@@ -3,7 +3,7 @@ import { useQuery, useMutation } from '@tanstack/react-query';
 import { useSearchParams } from 'react-router-dom';
 import {
   Box, Button, Card, Table, TableBody, TableCell, TableHead, TableRow, TableContainer, IconButton, Menu, MenuItem, TextField, Stack, InputAdornment,
-  Typography, useMediaQuery, useTheme, ListItemIcon, Divider, TablePagination, TableSortLabel,
+  Typography, useMediaQuery, useTheme, ListItemIcon, Divider, TablePagination, TableSortLabel, Checkbox, Collapse, alpha,
 } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
 import MoreVertIcon from '@mui/icons-material/MoreVert';
@@ -15,10 +15,15 @@ import { EntityFormDialog, type FieldDef, type Values } from './EntityForm';
 import { PageHeader, EmptyState, LoadingBlock, ErrorBlock, useConfirm, DateRangeBar, rangeFor, type DateRange } from './common';
 import { useToast } from '../hooks/useToast';
 import { useInvalidateFinance } from '../hooks/useInvalidate';
+import SwipeAction, { useSwipe } from './SwipeAction';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 export interface Column<T> { key: string; label: string; render?: (row: T) => ReactNode; align?: 'left' | 'right' | 'center'; hideOnMobile?: boolean; sortValue?: (row: T) => string | number; width?: number | string }
 export interface RowAction<T> { label: string; icon?: ReactNode; onClick: (row: T) => void | Promise<void>; show?: (row: T) => boolean }
+/** Something done to every selected row at once */
+export interface BulkAction<T> { label: string; icon?: ReactNode; onClick: (rows: T[]) => void | Promise<void>; variant?: 'contained' | 'outlined' | 'text' }
+/** Swipe a row left to do one thing to it */
+export interface SwipeDef<T> { label: string; onAction: (row: T) => void | Promise<void>; show?: (row: T) => boolean }
 export interface FilterDef { name: string; label: string; options: { value: string; label: string }[] }
 
 export interface ResourceConfig<T extends { id: string }> {
@@ -35,6 +40,8 @@ export interface ResourceConfig<T extends { id: string }> {
   defaultRange?: DateRange['preset'];
   filters?: FilterDef[];
   rowActions?: RowAction<T>[];
+  bulkActions?: BulkAction<T>[];
+  swipe?: SwipeDef<T>;
   headerActions?: ReactNode;
   mobileTitle: (row: T) => ReactNode;
   mobileSubtitle?: (row: T) => ReactNode;
@@ -45,6 +52,22 @@ export interface ResourceConfig<T extends { id: string }> {
   beforeList?: ReactNode;
   /** Applied to form values before saving */
   transform?: (v: Values) => Values;
+}
+
+/** A table row that can be dragged left to run the row's swipe action. */
+function SwipeTableRow({ label, onAction, disabled, selected, onClick, children }: { label: string; onAction: () => void | Promise<void>; disabled?: boolean; selected?: boolean; onClick: () => void; children: ReactNode }) {
+  const { handlers, dx, dragging, armed, busy } = useSwipe<HTMLTableRowElement>(onAction, disabled);
+  const on = dx < 0 || busy;
+  return (
+    <TableRow hover selected={selected} onClick={onClick} {...handlers} title={disabled ? undefined : `Drag left: ${label}`}
+      sx={(t) => ({
+        cursor: dragging ? 'grabbing' : 'pointer', touchAction: 'pan-y', userSelect: dragging ? 'none' : undefined,
+        transform: dx ? `translateX(${dx}px)` : undefined, transition: dragging ? 'none' : 'transform .2s ease-out, background-color .15s',
+        ...(on ? { bgcolor: `${alpha(t.palette.success.main, armed || busy ? 0.3 : 0.1)} !important`, boxShadow: `inset -6px 0 0 ${t.palette.success.main}` } : {}),
+      })}>
+      {children}
+    </TableRow>
+  );
 }
 
 export function ResourcePage<T extends { id: string }>({ config }: { config: ResourceConfig<T> }) {
@@ -63,6 +86,9 @@ export function ResourcePage<T extends { id: string }>({ config }: { config: Res
   const [page, setPage] = useState(0);
   const [rowsPerPage, setRowsPerPage] = useState(25);
   const [sort, setSort] = useState<{ key: string; dir: 'asc' | 'desc' } | null>(null);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const selectable = !!config.bulkActions?.length;
 
   useEffect(() => { const t = setTimeout(() => setDebounced(q), 250); return () => clearTimeout(t); }, [q]);
   useEffect(() => setPage(0), [debounced, range, filters]);
@@ -104,6 +130,16 @@ export function ResourcePage<T extends { id: string }>({ config }: { config: Res
     return [...xs].sort((a, b) => { const va = val(a), vb = val(b); const c = typeof va === 'number' && typeof vb === 'number' ? va - vb : String(va).localeCompare(String(vb)); return sort.dir === 'asc' ? c : -c; });
   }, [list.data, sort, config.columns]);
   const paged = items.slice(page * rowsPerPage, page * rowsPerPage + rowsPerPage);
+  // Selection only ever covers rows that are still in the list
+  const chosen = items.filter((r) => selected.has(r.id));
+  const toggle = (id: string) => setSelected((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n; });
+  const pageAll = paged.length > 0 && paged.every((r) => selected.has(r.id));
+  const togglePage = () => setSelected((s) => { const n = new Set(s); for (const r of paged) { if (pageAll) n.delete(r.id); else n.add(r.id); } return n; });
+  const runBulk = async (a: BulkAction<T>) => {
+    setBulkBusy(true);
+    try { await a.onClick(chosen); setSelected(new Set()); } catch (e) { toast((e as Error).message, 'error'); } finally { setBulkBusy(false); }
+  };
+  const canSwipe = (row: T) => !!config.swipe && (!config.swipe.show || config.swipe.show(row));
   const openNew = () => setEditing({ initial: config.defaults() });
   const openEdit = (row: T) => setEditing({ row, initial: config.fromRecord ? config.fromRecord(row) : (row as any) });
 
@@ -126,15 +162,37 @@ export function ResourcePage<T extends { id: string }>({ config }: { config: Res
       </Card>
       {config.summary && list.data && <Box sx={{ mb: 2 }}>{config.summary(items)}</Box>}
 
+      {selectable && (
+        <Collapse in={chosen.length > 0} unmountOnExit>
+          <Card sx={{ mb: 2, px: 2, py: 1, position: 'sticky', top: { xs: 64, md: 72 }, zIndex: 5, border: 1, borderColor: 'primary.main' }} role="region" aria-label="Selected rows">
+            <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" useFlexGap>
+              <Typography variant="body2" fontWeight={700} sx={{ mr: 0.5 }}>{chosen.length} selected</Typography>
+              {config.bulkActions!.map((a) => <Button key={a.label} size="small" variant={a.variant ?? 'outlined'} startIcon={a.icon} disabled={bulkBusy} onClick={() => runBulk(a)}>{a.label}</Button>)}
+              <Box sx={{ flex: 1 }} />
+              {items.length > chosen.length && <Button size="small" color="inherit" onClick={() => setSelected(new Set(items.map((r) => r.id)))}>Select all {items.length}</Button>}
+              <Button size="small" color="inherit" onClick={() => setSelected(new Set())}>Clear</Button>
+            </Stack>
+          </Card>
+        </Collapse>
+      )}
+
       <Card>
         {list.isLoading ? <Box sx={{ p: 2 }}><LoadingBlock /></Box> : list.error ? <Box sx={{ p: 2 }}><ErrorBlock error={list.error} onRetry={list.refetch} /></Box> : !items.length ? (
           <EmptyState title={`No ${config.title.toLowerCase()} found`} message={debounced || Object.values(filters).some(Boolean) ? 'Try a different search or filter.' : `Add your first ${config.singular.toLowerCase()} to get started.`} action={<Button variant="outlined" startIcon={<AddIcon />} onClick={openNew}>Add {config.singular.toLowerCase()}</Button>} />
         ) : mobile ? (
           <Box>
-            {paged.map((row, i) => (
-              <Box key={row.id}>
-                {i > 0 && <Divider />}
-                <Stack direction="row" alignItems="center" spacing={1} sx={{ px: 2, py: 1.25, minHeight: 56, cursor: 'pointer', '&:active': { bgcolor: 'action.hover' } }} onClick={() => openEdit(row)}>
+            {selectable && (
+              <>
+                <Stack direction="row" alignItems="center" sx={{ pl: 0.5, pr: 2, minHeight: 44 }}>
+                  <Checkbox checked={pageAll} indeterminate={!pageAll && paged.some((r) => selected.has(r.id))} onChange={togglePage} slotProps={{ input: { 'aria-label': 'Select all on this page' } }} />
+                  <Typography variant="caption" color="text.secondary">Select all{config.swipe ? ` · swipe a row left to mark it ${config.swipe.label.toLowerCase()}` : ''}</Typography>
+                </Stack>
+                <Divider />
+              </>
+            )}
+            {paged.map((row, i) => { const rowEl = (
+                <Stack direction="row" alignItems="center" spacing={1} sx={{ pl: selectable ? 0.5 : 2, pr: 2, py: 1.25, minHeight: 56, cursor: 'pointer', bgcolor: selected.has(row.id) ? 'action.selected' : undefined, '&:active': { bgcolor: 'action.hover' } }} onClick={() => openEdit(row)}>
+                  {selectable && <Checkbox checked={selected.has(row.id)} onClick={(e) => e.stopPropagation()} onChange={() => toggle(row.id)} slotProps={{ input: { 'aria-label': 'Select row' } }} sx={{ mr: -0.5 }} />}
                   <Box sx={{ flex: 1, minWidth: 0 }}>
                     <Typography variant="body2" fontWeight={600} noWrap component="div">{config.mobileTitle(row)}</Typography>
                     {config.mobileSubtitle && <Typography variant="caption" color="text.secondary" component="div" noWrap>{config.mobileSubtitle(row)}</Typography>}
@@ -142,14 +200,20 @@ export function ResourcePage<T extends { id: string }>({ config }: { config: Res
                   {config.mobileRight && <Box sx={{ textAlign: 'right' }}>{config.mobileRight(row)}</Box>}
                   <IconButton aria-label="More actions" onClick={(e) => { e.stopPropagation(); setMenu({ el: e.currentTarget, row }); }} sx={{ mr: -1 }}><MoreVertIcon fontSize="small" /></IconButton>
                 </Stack>
+              );
+              return (
+              <Box key={row.id}>
+                {i > 0 && <Divider />}
+                {canSwipe(row) ? <SwipeAction label={config.swipe!.label} onAction={() => config.swipe!.onAction(row)}>{rowEl}</SwipeAction> : rowEl}
               </Box>
-            ))}
+              ); })}
           </Box>
         ) : (
           <TableContainer>
             <Table size="small">
               <TableHead>
                 <TableRow>
+                  {selectable && <TableCell padding="checkbox"><Checkbox checked={pageAll} indeterminate={!pageAll && paged.some((r) => selected.has(r.id))} onChange={togglePage} slotProps={{ input: { 'aria-label': 'Select all on this page' } }} /></TableCell>}
                   {config.columns.map((c) => (
                     <TableCell key={c.key} align={c.align} sx={{ width: c.width, whiteSpace: 'nowrap' }}>
                       <TableSortLabel active={sort?.key === c.key} direction={sort?.key === c.key ? sort.dir : 'asc'} onClick={() => setSort((s) => ({ key: c.key, dir: s?.key === c.key && s.dir === 'asc' ? 'desc' : 'asc' }))}>{c.label}</TableSortLabel>
@@ -160,12 +224,13 @@ export function ResourcePage<T extends { id: string }>({ config }: { config: Res
               </TableHead>
               <TableBody>
                 {paged.map((row) => (
-                  <TableRow key={row.id} hover sx={{ cursor: 'pointer' }} onClick={() => openEdit(row)}>
+                  <SwipeTableRow key={row.id} label={config.swipe?.label ?? ''} disabled={!canSwipe(row)} onAction={() => config.swipe!.onAction(row)} selected={selected.has(row.id)} onClick={() => openEdit(row)}>
+                    {selectable && <TableCell padding="checkbox" onClick={(e) => e.stopPropagation()}><Checkbox checked={selected.has(row.id)} onChange={() => toggle(row.id)} slotProps={{ input: { 'aria-label': 'Select row' } }} /></TableCell>}
                     {config.columns.map((c) => <TableCell key={c.key} align={c.align} sx={{ fontVariantNumeric: 'tabular-nums' }}>{c.render ? c.render(row) : String((row as any)[c.key] ?? '')}</TableCell>)}
                     <TableCell onClick={(e) => e.stopPropagation()}>
                       <IconButton size="small" aria-label="More actions" onClick={(e) => setMenu({ el: e.currentTarget, row })}><MoreVertIcon fontSize="small" /></IconButton>
                     </TableCell>
-                  </TableRow>
+                  </SwipeTableRow>
                 ))}
               </TableBody>
             </Table>

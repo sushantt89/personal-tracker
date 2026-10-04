@@ -361,4 +361,32 @@ describe('reset everything', () => {
     const copy = (await b.post(`/api/invoices/${inv.id}/duplicate`).expect(201)).body;
     expect(copy.dueDate).toBeUndefined();
   });
+
+  it('marks several jobs completed or paid in one go', async () => {
+    const b = request.agent(app);
+    await b.post('/api/auth/register').send({ name: 'Bulk', email: 'bulk@example.com', password: 'password123' }).expect(201);
+    const q = { today: '2026-10-10' };
+    const mk = async (extra: object) => (await b.post('/api/jobs').query(q).send({ date: '2026-10-08', startTime: '09:00', endTime: '11:00', clientName: 'Site', ...extra }).expect(201)).body;
+    const j1 = await mk({ amount: 80 }), j2 = await mk({ amount: 60, amountEstimated: true }), j3 = await mk({}), j4 = await mk({ amount: 50, status: 'cancelled' }), future = await mk({ amount: 40, date: '2026-10-20' });
+    const ids = [j1, j2, j3, j4, future].map((j) => j.id);
+
+    let r = (await b.post('/api/jobs/bulk').query(q).send({ jobIds: ids, action: 'completed' }).expect(200)).body;
+    expect(r).toMatchObject({ updated: 4, skipped: { cancelled: 1, noPay: 0 } });
+    let jobs = (await b.get('/api/jobs?from=2026-10-01&to=2026-10-31').query(q)).body.items;
+    expect(jobs.filter((j: any) => j.status === 'completed')).toHaveLength(4);
+    // Completing does not mark anything as received
+    expect((await b.get('/api/income?from=2026-10-01&to=2026-10-31').query(q)).body.items.filter((i: any) => i.status === 'paid')).toHaveLength(0);
+
+    r = (await b.post('/api/jobs/bulk').query(q).send({ jobIds: ids, action: 'paid' }).expect(200)).body;
+    expect(r).toMatchObject({ updated: 3, skipped: { cancelled: 1, noPay: 1 } });
+    const income = (await b.get('/api/income?from=2026-10-01&to=2026-10-31').query(q)).body.items;
+    expect(income.filter((i: any) => i.status === 'paid').map((i: any) => i.amount).sort()).toEqual([40, 60, 80]);
+    expect(income.find((i: any) => i.amount === 80).paidDate).toBe('2026-10-10');
+    jobs = (await b.get('/api/jobs?from=2026-10-01&to=2026-10-31').query(q)).body.items;
+    expect(jobs.find((j: any) => j.id === j2.id).amountEstimated).toBe(false); // paid at the expected amount → it is the real figure now
+    // Doing it again changes nothing
+    r = (await b.post('/api/jobs/bulk').query(q).send({ jobIds: ids, action: 'paid' }).expect(200)).body;
+    expect(r.updated).toBe(0);
+    await b.post('/api/jobs/bulk').query(q).send({ jobIds: [], action: 'paid' }).expect(400);
+  });
 });

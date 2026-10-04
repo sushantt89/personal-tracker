@@ -167,6 +167,53 @@ jobsRouter.post('/complete-past', async (req, res) => {
   res.json({ updated: jobs.length });
 });
 /**
+ * Change several jobs at once: mark them all completed, or all paid (each at the amount already on it).
+ * Cancelled jobs are left alone; jobs with no amount can't be marked paid — those need "Record pay".
+ */
+jobsRouter.post('/bulk', async (req, res) => {
+  const body = parseBody(
+    z.object({ jobIds: z.array(z.string().regex(/^[a-f0-9]{24}$/i)).min(1, 'Select at least one job').max(200), action: z.enum(['completed', 'paid']), paidDate: zDate.optional() }),
+    req.body,
+  );
+  const userId = req.userId!;
+  const { today } = await userCtx(req);
+  const jobs = await Job.find({ _id: { $in: body.jobIds }, userId }).sort({ date: 1, startTime: 1 });
+  const skipped = { cancelled: 0, noPay: 0 };
+  let updated = 0;
+  for (const job of jobs) {
+    if (job.status === 'cancelled') { skipped.cancelled++; continue; }
+    const before = job.toJSON();
+    if (body.action === 'completed') {
+      if (job.status === 'completed') continue;
+      job.status = 'completed';
+    } else {
+      if (!job.amount || job.amount <= 0) { skipped.noPay++; continue; }
+      job.amountEstimated = false; // paid at this amount, so it is the real figure
+      if (job.date <= today) job.status = 'completed';
+      const fields = { amount: job.amount, date: job.date, ...payerOf(job), description: jobIncomeDescription(job), incomeSourceId: job.incomeSourceId, hoursWorked: jobHours(job) || undefined, status: 'paid', paidDate: body.paidDate ?? today };
+      const income = await Income.findOne({ userId, jobId: job._id });
+      if (income?.status === 'paid' && !job.isModified()) continue; // already paid: nothing to do
+      if (income) {
+        if (income.status !== 'paid') {
+          const prev = income.toJSON();
+          income.set(fields);
+          await income.save();
+          await audit(userId, 'Income', income._id, 'update', prev, income.toJSON(), `Marked paid with job ${job._id}`);
+        }
+      } else {
+        const created = await Income.create({ userId, jobId: job._id, ...fields });
+        await audit(userId, 'Income', created._id, 'create', undefined, created.toJSON(), `Marked paid with job ${job._id}`);
+      }
+    }
+    const statusChanged = before.status !== job.status;
+    await job.save();
+    await audit(userId, 'Job', job._id, 'update', before, job.toJSON(), body.action === 'paid' ? 'Marked paid (bulk)' : 'Marked completed (bulk)');
+    if (statusChanged) { queueTravelDay(userId, job.date); queueCalendarSync(userId, 'job', job._id); }
+    updated++;
+  }
+  res.json({ updated, skipped, notFound: body.jobIds.length - jobs.length });
+});
+/**
  * Record pay after the fact: one amount (e.g. a payslip) shared across the chosen shifts in proportion to their hours.
  * Each shift gets its share as its amount, and its income record is marked as received.
  */

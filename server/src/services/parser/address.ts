@@ -14,9 +14,9 @@ export const STREET_SUFFIXES = [
 ];
 const SUFFIX_RE = STREET_SUFFIXES.join('|');
 
-/** A street line: optional unit, number, 1-5 words, a street suffix. */
+/** A street line: optional unit, number (a comma after it is tolerated: "29, Porter Street"), 1-5 words, a street suffix. */
 const STREET_RE = new RegExp(
-  `^\\s*((?:(?:unit|u|apt|apartment|flat|shop)\\s*\\d+[a-z]?\\s*[/,]?\\s*|\\d+[a-z]?\\s*/\\s*)?\\d+[a-z]?(?:\\s*-\\s*\\d+[a-z]?)?\\s+(?:[a-z'.-]+\\s+){0,4}?(?:${SUFFIX_RE})\\b\\.?)(.*)$`,
+  `^\\s*((?:(?:unit|u|apt|apartment|flat|shop)\\s*\\d+[a-z]?\\s*[/,]?\\s*|\\d+[a-z]?\\s*/\\s*)?\\d+[a-z]?(?:\\s*-\\s*\\d+[a-z]?)?(?:\\s*,\\s*|\\s+)(?:[a-z'.-]+\\s+){0,4}?(?:${SUFFIX_RE})\\b\\.?)(.*)$`,
   'i',
 );
 
@@ -85,7 +85,8 @@ export function parseAddress(lines: string[]): ParsedAddress {
   if (!joined) return out;
   const m = STREET_RE.exec(joined);
   if (m) {
-    out.line1 = m[1].replace(/\s+/g, ' ').replace(/\.$/, '').trim();
+    // "29, Porter Street" → "29 Porter Street" (maps and routing don't find it with the comma)
+    out.line1 = m[1].replace(/(\d[a-z]?)\s*,\s*(?=[a-z])/i, '$1 ').replace(/\s+/g, ' ').replace(/\.$/, '').trim();
     parseLocality(m[2].replace(/^[\s,]+/, ''), out);
   } else {
     parseLocality(joined, out);

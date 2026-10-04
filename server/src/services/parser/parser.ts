@@ -23,7 +23,13 @@ const ACTION_WORDS = [
   'sweep', 'sweeping', 'scrub', 'scrubbing', 'tidy', 'tidying', 'make', 'making', 'strip', 'replace', 'sanitise', 'sanitize',
   'disinfect', 'organise', 'organize', 'declutter', 'water', 'take', 'put', 'load', 'unload', 'spot', 'deep', 'oven', 'fridge',
 ];
-const SPECIAL_RE = /\b(please|don'?t|do not|note|key|lockbox|code|careful|pet|dog|cat|park|parking|gate|alarm|avoid|allerg|shoes|call|text|ring|knock|access)\b/i;
+/** A line that is only decoration between jobs: ******, -----, ⬇️⬇️⬇️ */
+const SEPARATOR_RE = /^(?:[*\-_=~.•\s]{3,}|[\s\u2B07\u2B06\u27A1\u2B05\uFE0F\u{1F447}\u{1F53D}\u{1F53B}]+)$/u;
+/** A checklist item: starts with a tick, a bullet or a dash */
+const CHECK_RE = /^(?:[\u2705\u2611\u2714\u{1F5F8}\u25AA\u25CF\u2022]\uFE0F?|[-*]\s)\s*(.+)$/u;
+/** Key / lock symbols mark how to get in */
+const ACCESS_EMOJI_RE = /[\u{1F511}\u{1F510}\u{1F512}\u{1F513}\u{1F5DD}]/u;
+const SPECIAL_RE = /\b(please|don'?t|do not|note|key|lockbox|lock|passcode|pin|code|under the mat|careful|pet|dog|cat|park|parking|gate|alarm|avoid|allerg|shoes|call|text|ring|knock|access)\b/i;
 const NUM_WORDS: Record<string, number> = { one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10 };
 
 let counter = 0;
@@ -189,7 +195,7 @@ function analyseBlock(job: ParsedJob, lines: string[]) {
   let addressDone = false;
   for (const raw of lines) {
     const line = raw.trim();
-    if (!line) continue;
+    if (!line || SEPARATOR_RE.test(line)) continue;
     if (!addressDone && isStreetLine(line)) {
       addressLines.push(line);
       continue;
@@ -207,7 +213,15 @@ function analyseBlock(job: ParsedJob, lines: string[]) {
   const descriptionParts: string[] = [];
   const tasks: string[] = [];
   const special: string[] = [];
-  const sentences = textLines.flatMap((l) => l.split(/(?<=[.!?])\s+/)).map((s) => s.trim()).filter(Boolean);
+  // Ticked / bulleted lines are a checklist: each one is a task exactly as written
+  const prose: string[] = [];
+  for (const l of textLines) {
+    const c = CHECK_RE.exec(l);
+    if (c && !ACCESS_EMOJI_RE.test(l)) tasks.push(c[1].replace(/[.\s]+$/, '').replace(/^./, (ch) => ch.toUpperCase()));
+    else if (ACCESS_EMOJI_RE.test(l)) special.push(l); // 🔑 / 🔐 lines say how to get in, whatever words they use
+    else prose.push(l);
+  }
+  const sentences = prose.flatMap((l) => l.split(/(?<=[.!?])\s+/)).map((s) => s.trim()).filter(Boolean);
   for (const s of sentences) {
     const phone = PHONE_RE.exec(s);
     if (phone && s.replace(phone[0], '').replace(/[^a-z]/gi, '').length < 8) {

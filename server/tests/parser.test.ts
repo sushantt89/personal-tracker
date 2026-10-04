@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { describe, it, expect } from 'vitest';
 import { parseMessage, parseAddress, findDate, parseHeader } from '../src/services/parser/index.js';
 
@@ -111,5 +112,25 @@ describe('helpers', () => {
   });
   it('infers state from postcode', () => {
     expect(parseAddress(['10 Smith St Richmond 3121']).state).toBe('VIC');
+    // A comma after the house number is tolerated and dropped
+    expect(parseAddress([' 29, Porter Street, Parkside SA 5063 '])).toMatchObject({ line1: '29 Porter Street', suburb: 'Parkside', state: 'SA', postcode: '5063', formatted: '29 Porter Street, Parkside SA 5063' });
+    expect(parseAddress(['Unit 2, 14 Smith Road, Unley']).line1).toBe('Unit 2, 14 Smith Road');
+  });
+});
+
+describe('schedule with a comma after the house number, ticked checklists and key notes', () => {
+  const r = parseMessage(readFileSync(new URL('./fixtures/schedule-comma-address.txt', import.meta.url), 'utf8'), { today: '2026-09-30' });
+  it('finds every address, including "29, Porter Street"', () => {
+    expect(r.jobs.map((j) => j.address?.formatted)).toEqual(['29 Porter Street, Parkside SA 5063', '6 Boffa Street, Goodwood', '13 Windermere Avenue, Clapham', '1 Woodfield Avenue, Warradale']);
+    expect(r.jobs.every((j) => j.date === '2026-10-01' && j.amount === 30)).toBe(true);
+    expect(r.jobs.flatMap((j) => j.warnings ?? [])).toEqual([]);
+  });
+  it('keeps key and passcode notes as access instructions and drops the ***** lines', () => {
+    expect(r.jobs[0].specialInstructions).toContain('Passcode 020678');
+    expect(r.jobs[1].specialInstructions).toContain('under the mat');
+    expect(r.jobs.map((j) => `${j.description ?? ''} ${j.specialInstructions ?? ''} ${(j.tasks ?? []).join(' ')}`).join(' ')).not.toContain('***');
+  });
+  it('turns each ticked line into one task', () => {
+    expect(r.jobs[2].tasks).toEqual(['Kitchen full clean', 'Bathroom x2 full clean', 'Thorough dusting and spray wipe surfaces, tables, shelves', 'Dust spray wipe skirtings and window seals', 'Laundry', 'Floor - vacuum and mop']);
   });
 });

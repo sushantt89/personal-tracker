@@ -16,6 +16,7 @@ import analyticsRoutes from './routes/analytics.js';
 import documentRoutes from './routes/documents.js';
 import settingsRoutes from './routes/settings.js';
 import assistantRoutes from './routes/assistant.js';
+import newsRoutes from './routes/news.js';
 import googleRoutes from './routes/google.js';
 import travelRoutes from './routes/travel.js';
 import notificationRoutes from './routes/notifications.js';
@@ -56,6 +57,7 @@ export function createApp() {
   api.use('/travel', travelRoutes);
   api.use('/notifications', notificationRoutes);
   api.use('/assistant', assistantRoutes);
+  api.use('/news', newsRoutes);
   api.use('/', analyticsRoutes);
   api.use('/', settingsRoutes);
   app.use('/api', api);

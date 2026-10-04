@@ -15,6 +15,7 @@ import SettingsOutlinedIcon from '@mui/icons-material/SettingsOutlined';
 import PeopleOutlineIcon from '@mui/icons-material/PeopleOutline';
 import ContentPasteGoIcon from '@mui/icons-material/ContentPasteGo';
 import AutoAwesomeOutlinedIcon from '@mui/icons-material/AutoAwesomeOutlined';
+import NewspaperOutlinedIcon from '@mui/icons-material/NewspaperOutlined';
 import type { ReactNode } from 'react';
 
 export interface NavItem { to: string; label: string; icon: ReactNode }
@@ -25,6 +26,7 @@ export const NAV: { section?: string; items: NavItem[] }[] = [
     { to: '/calendar', label: 'Calendar', icon: <CalendarMonthOutlinedIcon /> },
     { to: '/import', label: 'Paste & Import', icon: <ContentPasteGoIcon /> },
     { to: '/assistant', label: 'Assistant', icon: <AutoAwesomeOutlinedIcon /> },
+    { to: '/news', label: 'News', icon: <NewspaperOutlinedIcon /> },
   ] },
   { section: 'Work & money', items: [
     { to: '/jobs', label: 'Jobs', icon: <WorkOutlineIcon /> },

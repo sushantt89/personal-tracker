@@ -25,6 +25,7 @@ const SettingsPage = lazy(() => import('./pages/SettingsPage'));
 const SearchPage = lazy(() => import('./pages/SearchPage'));
 const NotificationsPage = lazy(() => import('./pages/NotificationsPage'));
 const Assistant = lazy(() => import('./pages/Assistant'));
+const News = lazy(() => import('./pages/News'));
 
 const Spinner = () => <Box sx={{ display: 'grid', placeItems: 'center', minHeight: '50vh' }}><CircularProgress /></Box>;
 
@@ -86,6 +87,7 @@ export default function App() {
             <Route path="search" element={<SearchPage />} />
             <Route path="notifications" element={<NotificationsPage />} />
             <Route path="assistant" element={<Assistant />} />
+            <Route path="news" element={<News />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Route>
         </Routes>

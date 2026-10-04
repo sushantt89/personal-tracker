@@ -50,6 +50,22 @@ describe('roster parser', () => {
     expect(JSON.stringify(r)).not.toContain('viewed');
   });
 
+  it('treats a break as part of its shift, not a shift of its own, and leaves it out of the paid hours', () => {
+    const shift = (extra: string) => parseRoster(`Sunday 04/Oct/2026\nDARLINGTON SA\nStart 12:00 AM Sunday 04/Oct/2026\nFinish 7:00 AM Sunday 04/Oct/2026\n${extra}\nPB:Production Beginner\nIntially viewed at Monday 28/Sep/2026 03:45 PM`, { today: '2026-10-04', employer: 'Factory' })!;
+    const r = shift('Break time 4:00 AM - 4:30 AM\n6:30hrs + 0:30hrs Break');
+    expect(r.jobs).toHaveLength(1);
+    expect(r.jobs[0]).toMatchObject({ date: '2026-10-04', startTime: '00:00', endTime: '07:00', hours: 6.5, warnings: [] });
+    expect(r.jobs[0].description).toBe('Production Beginner · Unpaid break 4:00 AM – 4:30 AM (30 min)');
+    // However the break is written, it comes off the seven hours between start and finish
+    for (const v of ['Break time 4:00 AM - 4:30 AM', 'Meal break: 30 min', '7:00hrs\nBreak 4:00 AM - 4:30 AM', 'Unpaid break 0:30hrs']) {
+      const q = shift(v);
+      expect(q.jobs).toHaveLength(1);
+      expect(q.jobs[0].hours).toBe(6.5);
+    }
+    // No break → the full span
+    expect(shift('7:00hrs').jobs[0].hours).toBe(7);
+  });
+
   it('is not tied to one employer or layout', () => {
     const list = parseRoster('Roster week of 5 Oct\nMon 5 Oct 9:00am - 5:00pm Checkout\nFri 9 Oct 6:00 - 14:30\nSat 10 Oct 10pm-2am', { today, employer: 'Grocer' })!;
     expect(list.jobs.map((j) => [j.date, j.startTime, j.endTime, j.hours, j.description])).toEqual([

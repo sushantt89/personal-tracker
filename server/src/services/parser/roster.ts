@@ -40,6 +40,8 @@ const TIME_SRC = String.raw`\d{1,2}(?:[:.]\d{2})?\s*(?:a\.?m\.?|p\.?m\.?)|\d{1,2
 const RANGE_RE = new RegExp(`(${TIME_SRC})\\s*(?:-|to|until|till)\\s*(${TIME_SRC})`, 'i');
 const HOURS_HM_RE = /\b(\d{1,2}):(\d{2})\s*(?:hrs?|hours?|h)\b/i;
 const HOURS_DEC_RE = /\b(\d{1,2}(?:\.\d{1,2})?)\s*(?:hrs?|hours?)\b/i;
+/** A line about a break inside a shift: "Break time 4:00 AM - 4:30 AM", "6:30hrs + 0:30hrs Break", "Meal break: 30 min" */
+const BREAK_RE = /\b(?:breaks?|meal|lunch|rest\s+period|unpaid)\b/i;
 const IGNORE_RE = /\b(?:view(?:ed)?|published|acknowledg\w*|printed|generated|last\s+updated|updated\s+(?:at|on)|page\s+\d+|swap|offer(?:ed)?\s+shift)\b/i;
 const STATE_RE = /^(.{2,60}?)[,\s]+(NSW|VIC|QLD|SA|WA|TAS|NT|ACT)(?:[,\s]+(\d{4}))?$/i;
 const LABEL_RE = /^(?:location|site|store|venue|where|workplace|department|dept|area|role|position|job|duty|duties|task|section|station)\s*[:\-]\s*(.+)$/i;
@@ -63,7 +65,7 @@ function parseTime(text: string): string | undefined {
 const titleCase = (s: string) => s.toLowerCase().replace(/\b[a-z]/g, (c) => c.toUpperCase());
 const toMin = (t: string) => Number(t.slice(0, 2)) * 60 + Number(t.slice(3));
 
-interface Draft { date?: string; start?: string; end?: string; endDate?: string; hours?: number; location?: string; extras: string[]; source: string[]; labelled: boolean }
+interface Draft { date?: string; start?: string; end?: string; endDate?: string; hours?: number; location?: string; extras: string[]; source: string[]; labelled: boolean; /** unpaid break, in minutes */ breakMin?: number; breakText?: string; /** the roster itself said the hours are after the break ("6:30hrs + 0:30hrs Break") */ hoursExcludeBreak?: boolean }
 
 function locationToAddress(text: string): ParsedAddress {
   const clean = text.replace(/\s+/g, ' ').trim();
@@ -111,6 +113,29 @@ export function parseRoster(input: string, opts: RosterOptions): ParseResult | n
       cur.end = parseTime(finishM[1]);
       cur.labelled = true;
       if (date) cur.endDate = date;
+      cur.source.push(line);
+      continue;
+    }
+    // A break belongs to the shift it sits in — it is never a shift of its own, and it is not paid
+    if (BREAK_RE.test(line) && cur && !date) {
+      const allHm = [...line.matchAll(new RegExp(HOURS_HM_RE.source, 'gi'))];
+      const mins = /\b(\d{1,3})\s*(?:min|mins|minutes)\b/i.exec(line);
+      if (range) {
+        let diff = toMin(parseTime(range[2])!) - toMin(parseTime(range[1])!);
+        if (diff < 0) diff += 24 * 60;
+        cur.breakMin = diff;
+        cur.breakText = `${range[1].trim()} – ${range[2].trim()}`;
+      } else if (allHm.length >= 2) {
+        // "6:30hrs + 0:30hrs Break": worked hours first, then the break
+        cur.hours = Number(allHm[0][1]) + Number(allHm[0][2]) / 60;
+        cur.hoursExcludeBreak = true;
+        cur.breakMin ??= Number(allHm[allHm.length - 1][1]) * 60 + Number(allHm[allHm.length - 1][2]);
+      } else if (allHm.length === 1) cur.breakMin ??= Number(allHm[0][1]) * 60 + Number(allHm[0][2]);
+      else if (mins) cur.breakMin ??= Number(mins[1]);
+      else {
+        const hd = HOURS_DEC_RE.exec(line);
+        if (hd) cur.breakMin ??= Math.round(Number(hd[1]) * 60);
+      }
       cur.source.push(line);
       continue;
     }
@@ -184,6 +209,8 @@ export function parseRoster(input: string, opts: RosterOptions): ParseResult | n
       let diff = toMin(d.end) - toMin(d.start);
       if (diff <= 0) diff += 24 * 60; // finishes after midnight
       if (hours === undefined) hours = diff / 60;
+      // The break is unpaid: take it off unless the roster's own figure already left it out
+      if (d.breakMin && !d.hoursExcludeBreak && d.breakMin < diff && Math.abs(hours * 60 - diff) < 1) hours = (diff - d.breakMin) / 60;
     }
     if (!d.end) { warnings.push('No finish time found'); confidence -= 0.2; }
     if (d.endDate && d.date && d.endDate < d.date) { warnings.push('The finish date is before the start date — please check'); confidence -= 0.2; }
@@ -191,6 +218,7 @@ export function parseRoster(input: string, opts: RosterOptions): ParseResult | n
     if (!employer) warnings.push('Choose the employer for these shifts');
     // "PB:Production Beginner" → "Production Beginner"
     const role = d.extras.map((e) => e.replace(/^[A-Z0-9]{1,4}\s*:\s*/, '').trim()).filter(Boolean).join(' · ');
+    const breakNote = d.breakMin ? `Unpaid break ${d.breakText ? `${d.breakText} ` : ''}(${d.breakMin} min)` : '';
     const job: ParsedJob = {
       tempId: `r${i + 1}`,
       clientName: employer,
@@ -199,7 +227,7 @@ export function parseRoster(input: string, opts: RosterOptions): ParseResult | n
       endTime: d.end,
       hours: hours !== undefined ? Math.round(hours * 100) / 100 : undefined,
       address: d.location ? locationToAddress(d.location) : {},
-      description: role || undefined,
+      description: [role, breakNote].filter(Boolean).join(' · ') || undefined,
       tasks: [],
       sourceText: d.source.join('\n'),
       confidence: Math.max(0, Math.round(confidence * 100) / 100),

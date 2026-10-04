@@ -50,3 +50,6 @@ Until then, shifts show a **Pay not set** label, the Jobs page has a **Pay → N
 - `POST /api/jobs/record-pay` — `{ jobIds, total, paidDate?, paymentMethod?, split?: 'equal' | 'hours' }` (replaces any estimate)
 - `POST /api/jobs/expected-pay` — `{ jobIds, mode: 'perHour' | 'perJob' | 'total', value }` (sets `amountEstimated`)
 - Work types: `own`, `subcontract`, `employee`.
+
+## Breaks
+A break line inside a shift ("Break time 4:00 AM - 4:30 AM", "6:30hrs + 0:30hrs Break", "Meal break: 30 min") is kept with that shift — it never becomes a shift of its own. Breaks are treated as **unpaid**: a 12:00 am – 7:00 am shift with a 30-minute break is saved with **6.5 paid hours**, and the break is noted in the shift's description. Paid hours are what expected pay (hours × rate) and "share pay by hours" use. If a break is paid at your workplace, change *Paid hours* on the review screen before saving.

@@ -368,6 +368,109 @@ incomeRouter.post('/:id/stop-recurring', async (req, res) => {
   const removed = body.removeFuture ? (await Income.deleteMany({ userId: req.userId, recurringParentId: root._id, status: 'expected', date: { $gt: today } })).deletedCount : 0;
   res.json({ ok: true, removed });
 });
+const zIds = z.array(z.string().regex(/^[a-f0-9]{24}$/i)).min(1, 'Select at least one record').max(200);
+
+/** Delete several income records at once. Linked jobs are kept, exactly as when one record is deleted. */
+incomeRouter.post('/bulk-delete', async (req, res) => {
+  const body = parseBody(z.object({ ids: zIds }), req.body);
+  const docs = await Income.find({ _id: { $in: body.ids }, userId: req.userId });
+  for (const d of docs) {
+    await d.deleteOne();
+    await audit(req.userId!, 'Income', d._id, 'delete', d.toJSON(), 'Deleted with others (bulk)');
+  }
+  res.json({ deleted: docs.length, notFound: body.ids.length - docs.length });
+});
+
+/**
+ * Mark several income records as received, optionally correcting the amounts to what was actually paid:
+ *  - asis:  keep each amount
+ *  - each:  an actual amount per record
+ *  - total: one amount for all of them, shared by hours (or equally when hours aren't known for every record)
+ * `dryRun` returns what would happen without saving, so the screen can show it first.
+ */
+incomeRouter.post('/bulk-pay', async (req, res) => {
+  const body = parseBody(
+    z.object({
+      ids: zIds,
+      mode: z.enum(['asis', 'each', 'total']).default('asis'),
+      amounts: z.array(z.object({ id: z.string(), amount: zMoney })).max(200).optional(),
+      total: zMoney.optional(),
+      split: z.enum(['hours', 'equal']).default('hours'),
+      paidDate: zDate.optional(),
+      dryRun: z.boolean().default(false),
+    }),
+    req.body,
+  );
+  const userId = req.userId!;
+  const { today } = await userCtx(req);
+  const all = await Income.find({ _id: { $in: body.ids }, userId }).sort({ date: 1, createdAt: 1 });
+  const docs = all.filter((d) => d.status !== 'cancelled');
+  const cancelled = all.length - docs.length;
+  if (!docs.length) throw badRequest('None of the selected records can be marked as paid (they are cancelled or no longer exist).');
+  const jobs = new Map((await Job.find({ _id: { $in: docs.map((d) => d.jobId).filter(Boolean) }, userId })).map((j) => [String(j._id), j]));
+  const jobOf = (d: any) => (d.jobId ? jobs.get(String(d.jobId)) : undefined);
+  const hoursOf = (d: any) => d.hoursWorked || (jobOf(d) ? jobHours(jobOf(d)) : 0) || 0;
+
+  // Work out the new amount for each record, in cents so the shares of a total add up exactly
+  let newCents = docs.map((d) => Math.round(d.amount * 100));
+  let split: 'hours' | 'equal' | null = null, perHour: number | null = null;
+  if (body.mode === 'each') {
+    const given = new Map((body.amounts ?? []).map((a) => [a.id, a.amount]));
+    newCents = docs.map((d, i) => (given.has(String(d._id)) ? Math.round(given.get(String(d._id))! * 100) : newCents[i]));
+  } else if (body.mode === 'total') {
+    if (!body.total || body.total <= 0) throw badRequest('Enter the total amount you were paid');
+    const hours = docs.map(hoursOf);
+    const byHours = body.split === 'hours' && hours.every((h) => h > 0);
+    const weights = byHours ? hours : docs.map(() => 1);
+    const weightSum = weights.reduce((a, b) => a + b, 0);
+    const cents = Math.round(body.total * 100);
+    newCents = weights.map((w) => Math.floor((cents * w) / weightSum));
+    newCents[newCents.length - 1] += cents - newCents.reduce((a, b) => a + b, 0);
+    split = byHours ? 'hours' : 'equal';
+    perHour = byHours ? Math.round(cents / weightSum) / 100 : null;
+  }
+  if (body.mode !== 'asis') {
+    const invoiced = docs.filter((d, i) => d.invoiceId && newCents[i] !== Math.round(d.amount * 100));
+    if (invoiced.length) throw conflict(`${invoiced.length} of these ${invoiced.length === 1 ? 'is' : 'are'} on an invoice — the amount is set by the invoice. Leave ${invoiced.length === 1 ? 'it' : 'them'} out, or keep the amounts as they are.`);
+    if (newCents.some((c) => c <= 0)) throw badRequest('Every record needs an amount above zero');
+  }
+
+  const rows = docs.map((d, i) => ({
+    id: String(d._id), date: d.date, label: d.clientName || d.description || 'Income', current: d.amount, amount: newCents[i] / 100,
+    hours: round2(hoursOf(d)), status: d.status, estimated: Boolean(jobOf(d)?.amountEstimated), invoiced: Boolean(d.invoiceId),
+  }));
+  const summary = { rows, count: rows.length, total: round2(newCents.reduce((a, b) => a + b, 0) / 100), currentTotal: round2(docs.reduce((a, d) => a + d.amount, 0)), split, perHour, skipped: { cancelled }, notFound: body.ids.length - all.length };
+  if (body.dryRun) return res.json({ ...summary, saved: false });
+
+  const paidDate = body.paidDate ?? today;
+  for (const [i, d] of docs.entries()) {
+    const amount = newCents[i] / 100;
+    const before = d.toJSON();
+    const wasPaid = d.status === 'paid';
+    d.amount = amount;
+    d.status = 'paid';
+    if (!wasPaid || !d.paidDate) d.paidDate = paidDate;
+    if (d.isModified()) {
+      await d.save();
+      await audit(userId, 'Income', d._id, 'update', before, d.toJSON(), 'Marked paid (bulk)');
+    }
+    // The job this came from now has its real figure
+    const job = jobOf(d);
+    if (job && job.status !== 'cancelled') {
+      const jb = job.toJSON();
+      const statusBefore = job.status;
+      if (!job.invoiceId) job.amount = amount;
+      job.amountEstimated = false;
+      if (job.date <= today) job.status = 'completed';
+      if (job.isModified()) {
+        await job.save();
+        await audit(userId, 'Job', job._id, 'update', jb, job.toJSON(), 'Pay recorded from income (bulk)');
+        if (statusBefore !== job.status) { queueTravelDay(userId, job.date); queueCalendarSync(userId, 'job', job._id); }
+      }
+    }
+  }
+  res.json({ ...summary, saved: true });
+});
 incomeRouter.use('/', incomeCrud);
 
 // ---------- Expenses ----------

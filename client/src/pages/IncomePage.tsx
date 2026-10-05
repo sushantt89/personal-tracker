@@ -1,4 +1,7 @@
+import { useRef, useState } from 'react';
 import { Typography, Grid, Chip } from '@mui/material';
+import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
+import MarkIncomePaidDialog from '../components/MarkIncomePaidDialog';
 import CheckCircleOutlineIcon from '@mui/icons-material/CheckCircleOutline';
 import RepeatIcon from '@mui/icons-material/Repeat';
 import EventBusyOutlinedIcon from '@mui/icons-material/EventBusyOutlined';
@@ -18,6 +21,23 @@ export default function IncomePage() {
   const invalidate = useInvalidateFinance();
   const toast = useToast();
   const confirm = useConfirm();
+  // "Mark paid" for several records opens a dialog; the selection is cleared only if it was saved
+  const [paying, setPaying] = useState<Income[] | null>(null);
+  const payDone = useRef<((saved: boolean) => void) | null>(null);
+  const markPaid = (rows: Income[]) => new Promise<boolean>((resolve) => { payDone.current = resolve; setPaying(rows); });
+  const closePay = (saved: boolean) => { setPaying(null); if (saved) invalidate(); payDone.current?.(saved); payDone.current = null; };
+  const removeMany = async (rows: Income[]) => {
+    const linked = rows.filter((r) => r.jobId).length, paid = rows.filter((r) => r.status === 'paid').length;
+    const ok = await confirm({
+      title: `Delete ${rows.length} income record${rows.length === 1 ? '' : 's'}?`,
+      message: `${money(rows.reduce((a, r) => a + r.amount, 0))} in total${paid ? `, including ${paid} already marked as paid` : ''}. ${linked ? `${linked} ${linked === 1 ? 'is' : 'are'} linked to a job — the job${linked === 1 ? ' is' : 's are'} kept. ` : ''}This cannot be undone; the deletions are recorded in the audit log.`,
+      confirmText: `Delete ${rows.length}`, danger: true,
+    });
+    if (!ok) return false;
+    const r = await post<{ deleted: number }>('/income/bulk-delete', { ids: rows.map((x) => x.id) });
+    await invalidate();
+    toast(`${r.deleted} record${r.deleted === 1 ? '' : 's'} deleted`);
+  };
   const config: ResourceConfig<Income> = {
     queryKey: 'income', endpoint: '/income', title: 'Income', singular: 'Income record',
     fields: incomeFields, defaults: incomeDefaults, dateFilter: true,
@@ -45,6 +65,10 @@ export default function IncomePage() {
         } },
       { label: 'Mark paid today', icon: <CheckCircleOutlineIcon fontSize="small" />, show: (i) => i.status !== 'paid' && i.status !== 'cancelled', onClick: async (i) => { await patch(`/income/${i.id}`, { status: 'paid', paidDate: localToday() }); invalidate(); toast('Marked as paid'); } },
     ],
+    bulkActions: [
+      { label: 'Mark paid', icon: <CheckCircleOutlineIcon fontSize="small" />, onClick: markPaid, variant: 'contained' },
+      { label: 'Delete', icon: <DeleteOutlineIcon fontSize="small" />, onClick: removeMany, color: 'error' },
+    ],
     deleteMessage: (i) => (i.jobId ? 'This income is linked to a job. Deleting it does not delete the job.' : 'This cannot be undone. The deletion is recorded in the audit log.'),
     summary: (items) => {
       const live = items.filter((i) => i.status !== 'cancelled');
@@ -59,5 +83,5 @@ export default function IncomePage() {
       );
     },
   };
-  return <ResourcePage config={config} />;
+  return <><ResourcePage config={config} /><MarkIncomePaidDialog rows={paying} onClose={closePay} /></>;
 }

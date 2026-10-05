@@ -403,4 +403,58 @@ describe('reset everything', () => {
     expect(d.week).toMatchObject({ from: '2026-10-05', to: '2026-10-11', requiredIncome: 600, incomeReceived: 200, incomeIncludingExpected: 350, shortfall: 250, expenses: 45, changeFromPrevious: -649 });
     expect(d.week.previous).toEqual({ from: '2026-09-28', to: '2026-10-04', income: 999 });
   });
+
+  it('marks several income records paid with the real amounts, or deletes them, in one go', async () => {
+    const b = request.agent(app);
+    await b.post('/api/auth/register').send({ name: 'Payday', email: 'payday@example.com', password: 'password123' }).expect(201);
+    const q = { today: '2026-10-10' };
+    // Three shifts with expected pay: 3 h, 3 h and 6.5 paid hours
+    const mk = async (date: string, startTime: string, endTime: string, hoursWorked: number) =>
+      (await b.post('/api/jobs').query(q).send({ date, startTime, endTime, hoursWorked, clientName: 'Factory', workType: 'employee', amount: hoursWorked * 30, amountEstimated: true }).expect(201)).body;
+    const jobs = [await mk('2026-10-05', '22:00', '01:00', 3), await mk('2026-10-06', '22:00', '01:00', 3), await mk('2026-10-08', '00:00', '07:00', 6.5)];
+    const list = async () => (await b.get('/api/income?from=2026-10-01&to=2026-10-31').query(q)).body.items as any[];
+    let inc = (await list()).sort((x, y) => x.date.localeCompare(y.date));
+    expect(inc.map((i) => i.amount)).toEqual([90, 90, 195]);
+    const ids = inc.map((i) => i.id);
+
+    // Looking first changes nothing, and says these are estimates
+    const look = (await b.post('/api/income/bulk-pay').query(q).send({ ids, mode: 'total', total: 400, dryRun: true }).expect(200)).body;
+    expect(look).toMatchObject({ saved: false, split: 'hours', perHour: 32, total: 400, currentTotal: 375, count: 3 });
+    expect(look.rows.map((r: any) => r.amount)).toEqual([96, 96, 208]);
+    expect(look.rows.every((r: any) => r.estimated)).toBe(true);
+    expect((await list()).every((i) => i.status === 'expected')).toBe(true);
+
+    // One total, shared by hours: $400 over 12.5 h = $32/h
+    const r = (await b.post('/api/income/bulk-pay').query(q).send({ ids, mode: 'total', total: 400 }).expect(200)).body;
+    expect(r).toMatchObject({ saved: true, total: 400 });
+    inc = (await list()).sort((x, y) => x.date.localeCompare(y.date));
+    expect(inc.map((i) => [i.amount, i.status, i.paidDate])).toEqual([[96, 'paid', '2026-10-10'], [96, 'paid', '2026-10-10'], [208, 'paid', '2026-10-10']]);
+    const js = (await b.get('/api/jobs?from=2026-10-01&to=2026-10-31').query(q)).body.items.sort((x: any, y: any) => x.date.localeCompare(y.date));
+    expect(js.map((j: any) => [j.amount, j.amountEstimated, j.status])).toEqual([[96, false, 'completed'], [96, false, 'completed'], [208, false, 'completed']]);
+
+    // An amount for each record
+    await b.post('/api/income/bulk-pay').query(q).send({ ids: ids.slice(0, 2), mode: 'each', amounts: [{ id: ids[0], amount: 100 }, { id: ids[1], amount: 91.5 }] }).expect(200);
+    inc = (await list()).sort((x, y) => x.date.localeCompare(y.date));
+    expect(inc.map((i) => i.amount)).toEqual([100, 91.5, 208]);
+    // Records with no hours are shared equally; cancelled ones are left out
+    const a1 = (await b.post('/api/income').query(q).send({ date: '2026-10-09', amount: 10, status: 'expected', description: 'Tip' }).expect(201)).body;
+    const a2 = (await b.post('/api/income').query(q).send({ date: '2026-10-09', amount: 10, status: 'expected', description: 'Gift' }).expect(201)).body;
+    const a3 = (await b.post('/api/income').query(q).send({ date: '2026-10-09', amount: 10, status: 'cancelled', description: 'Gone' }).expect(201)).body;
+    const eq = (await b.post('/api/income/bulk-pay').query(q).send({ ids: [a1.id, a2.id, a3.id], mode: 'total', total: 25.01 }).expect(200)).body;
+    expect(eq).toMatchObject({ split: 'equal', perHour: null, skipped: { cancelled: 1 } });
+    expect(eq.rows.map((x: any) => x.amount)).toEqual([12.5, 12.51]);
+    // Keeping the amounts
+    const a4 = (await b.post('/api/income').query(q).send({ date: '2026-10-09', amount: 70, status: 'pending', description: 'Refund' }).expect(201)).body;
+    await b.post('/api/income/bulk-pay').query(q).send({ ids: [a4.id], paidDate: '2026-10-09' }).expect(200);
+    expect((await b.get(`/api/income/${a4.id}`).query(q)).body).toMatchObject({ amount: 70, status: 'paid', paidDate: '2026-10-09' });
+    await b.post('/api/income/bulk-pay').query(q).send({ ids: [a3.id] }).expect(400);
+    await b.post('/api/income/bulk-pay').query(q).send({ ids: [a1.id], mode: 'total' }).expect(400);
+
+    // Deleting several: the jobs stay
+    const del = (await b.post('/api/income/bulk-delete').query(q).send({ ids: [ids[0], a1.id, a3.id] }).expect(200)).body;
+    expect(del.deleted).toBe(3);
+    expect(await list()).toHaveLength(4);
+    expect((await b.get('/api/jobs?from=2026-10-01&to=2026-10-31').query(q)).body.items).toHaveLength(3);
+    void jobs;
+  });
 });

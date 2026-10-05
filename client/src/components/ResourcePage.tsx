@@ -21,7 +21,7 @@ import SwipeAction, { useSwipe } from './SwipeAction';
 export interface Column<T> { key: string; label: string; render?: (row: T) => ReactNode; align?: 'left' | 'right' | 'center'; hideOnMobile?: boolean; sortValue?: (row: T) => string | number; width?: number | string }
 export interface RowAction<T> { label: string; icon?: ReactNode; onClick: (row: T) => void | Promise<void>; show?: (row: T) => boolean }
 /** Something done to every selected row at once */
-export interface BulkAction<T> { label: string; icon?: ReactNode; onClick: (rows: T[]) => void | Promise<void>; variant?: 'contained' | 'outlined' | 'text' }
+export interface BulkAction<T> { label: string; icon?: ReactNode; /** Return false to keep the rows selected (e.g. the person cancelled) */ onClick: (rows: T[]) => void | boolean | Promise<void | boolean>; variant?: 'contained' | 'outlined' | 'text'; color?: 'primary' | 'error' | 'inherit' }
 /** Swipe a row left to do one thing to it */
 export interface SwipeDef<T> { label: string; onAction: (row: T) => void | Promise<void>; show?: (row: T) => boolean }
 export interface FilterDef<T = any> {
@@ -151,7 +151,7 @@ export function ResourcePage<T extends { id: string }>({ config }: { config: Res
   const togglePage = () => setSelected((s) => { const n = new Set(s); for (const r of paged) { if (pageAll) n.delete(r.id); else n.add(r.id); } return n; });
   const runBulk = async (a: BulkAction<T>) => {
     setBulkBusy(true);
-    try { await a.onClick(chosen); setSelected(new Set()); } catch (e) { toast((e as Error).message, 'error'); } finally { setBulkBusy(false); }
+    try { if ((await a.onClick(chosen)) !== false) setSelected(new Set()); } catch (e) { toast((e as Error).message, 'error'); } finally { setBulkBusy(false); }
   };
   const canSwipe = (row: T) => !!config.swipe && (!config.swipe.show || config.swipe.show(row));
   const openNew = () => setEditing({ initial: config.defaults() });
@@ -181,7 +181,7 @@ export function ResourcePage<T extends { id: string }>({ config }: { config: Res
           <Card sx={{ mb: 2, px: 2, py: 1, position: 'sticky', top: { xs: 64, md: 72 }, zIndex: 5, border: 1, borderColor: 'primary.main' }} role="region" aria-label="Selected rows">
             <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" useFlexGap>
               <Typography variant="body2" fontWeight={700} sx={{ mr: 0.5 }}>{chosen.length} selected</Typography>
-              {config.bulkActions!.map((a) => <Button key={a.label} size="small" variant={a.variant ?? 'outlined'} startIcon={a.icon} disabled={bulkBusy} onClick={() => runBulk(a)}>{a.label}</Button>)}
+              {config.bulkActions!.map((a) => <Button key={a.label} size="small" variant={a.variant ?? 'outlined'} color={a.color ?? 'primary'} startIcon={a.icon} disabled={bulkBusy} onClick={() => runBulk(a)}>{a.label}</Button>)}
               <Box sx={{ flex: 1 }} />
               {items.length > chosen.length && <Button size="small" color="inherit" onClick={() => setSelected(new Set(items.map((r) => r.id)))}>Select all {items.length}</Button>}
               <Button size="small" color="inherit" onClick={() => setSelected(new Set())}>Clear</Button>

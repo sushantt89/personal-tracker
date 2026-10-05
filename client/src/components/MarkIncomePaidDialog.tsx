@@ -69,6 +69,13 @@ export default function MarkIncomePaidDialog({ rows: selected, onClose }: { rows
   };
 
   const shown = mode === 'total' && preview ? preview.rows : info?.rows ?? [];
+  // "That makes $32.00 per hour": what the chosen amounts come to for the hours worked
+  const amountOf = (r: Row) => (mode === 'each' ? Number(each[r.id]) || 0 : r.amount);
+  const timed = shown.filter((r) => r.hours > 0);
+  const timedHours = timed.reduce((a, r) => a + r.hours, 0);
+  const timedPay = timed.reduce((a, r) => a + amountOf(r), 0);
+  const hrs = (n: number) => String(Math.round(n * 100) / 100);
+  const ready = mode !== 'total' || !!preview;
   return (
     <Dialog open={open} onClose={() => !saving && onClose(false)} fullWidth maxWidth="sm" fullScreen={fullScreen} scroll="paper">
       <DialogTitle>
@@ -110,7 +117,7 @@ export default function MarkIncomePaidDialog({ rows: selected, onClose }: { rows
                     <Box sx={{ flex: 1, minWidth: 0 }}>
                       <Typography variant="body2" fontWeight={600} noWrap>{r.label}</Typography>
                       <Typography variant="caption" color="text.secondary" component="div" noWrap>
-                        {fmtDate(r.date, 'ddd D MMM')}{r.hours > 0 ? ` · ${r.hours} h` : ''}{r.estimated ? ' · expected' : ''}{r.status === 'paid' ? ' · already paid' : ''}{r.invoiced ? ' · on an invoice' : ''}
+                        {fmtDate(r.date, 'ddd D MMM')}{r.hours > 0 ? ` · ${r.hours} h` : ''}{r.hours > 0 && amountOf(r) > 0 && ready ? ` · ${money(amountOf(r) / r.hours)}/h` : ''}{r.estimated ? ' · expected' : ''}{r.status === 'paid' ? ' · already paid' : ''}{r.invoiced ? ' · on an invoice' : ''}
                       </Typography>
                     </Box>
                     {mode === 'each' ? (
@@ -130,6 +137,13 @@ export default function MarkIncomePaidDialog({ rows: selected, onClose }: { rows
                 <Typography variant="subtitle2" sx={{ fontVariantNumeric: 'tabular-nums' }}>{money(finalTotal)}{Math.abs(finalTotal - info.currentTotal) > 0.004 && finalTotal > 0 ? ` (${finalTotal > info.currentTotal ? '+' : '−'}${money(Math.abs(finalTotal - info.currentTotal))})` : ''}</Typography>
               </Stack>
             </Box>
+
+            {ready && timedHours > 0 && timedPay > 0 && (
+              <Alert severity="success" icon={false} sx={{ py: 0.5 }} aria-live="polite">
+                That makes <b>{money(timedPay / timedHours)} per hour</b> — {money(timedPay)} for {hrs(timedHours)} hour{timedHours === 1 ? '' : 's'}
+                {timed.length < shown.length ? ` (the ${timed.length} of ${shown.length} records that have hours)` : ''}.
+              </Alert>
+            )}
 
             <TextField label="Date received" type="date" value={paidDate} onChange={(e) => e.target.value && setPaidDate(e.target.value)} slotProps={{ inputLabel: { shrink: true } }} sx={{ maxWidth: 240 }} />
             {mode !== 'asis' && <Typography variant="caption" color="text.secondary">The jobs these came from are updated to the same amounts, so they stop showing as “Expected”.</Typography>}

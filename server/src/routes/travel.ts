@@ -6,6 +6,7 @@ import { zDate } from '../utils/zod.js';
 import { userCtx } from '../utils/userCtx.js';
 import { computeDay, travelSettings, travelSummary, fuelFor, travelProvider } from '../services/travel/index.js';
 import { badRequest } from '../utils/httpError.js';
+import { kmLog, kmLogCsv, financialYearOf } from '../services/kmLog.js';
 
 const r = Router();
 
@@ -45,6 +46,19 @@ r.post('/backfill', async (req, res) => {
   let calculated = 0;
   for (const d of todo) { await computeDay(req.userId!, d); calculated++; }
   res.json({ calculated, remaining: Math.max(0, dates.length - done.size - calculated) });
+});
+
+/** Kilometre log for a financial year (`fy` = the year it starts in; default: the current one). `format=csv` downloads every trip. */
+r.get('/logbook', async (req, res) => {
+  const { today } = await userCtx(req);
+  const q = parseBody(z.object({ fy: z.coerce.number().int().min(2000).max(2100).optional(), format: z.enum(['json', 'csv']).default('json') }), req.query);
+  const log = await kmLog(req.userId!, q.fy ?? financialYearOf(today), today);
+  if (q.format === 'csv') {
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="kilometre-log-${log.fy.start}-${log.fy.start + 1}.csv"`);
+    return res.send(kmLogCsv(log));
+  }
+  res.json(log);
 });
 
 export default r;

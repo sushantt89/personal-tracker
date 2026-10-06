@@ -62,6 +62,7 @@ export interface Budget {
 export interface Settings {
   paymentMethods: string[];
   travel: TravelSettings;
+  work?: WorkSettings;
   notifications: { billReminders: boolean; billReminderDays: number; invoiceReminders: boolean; jobReminders: boolean; budgetAlerts: boolean; taskReminders: boolean; emailEnabled: boolean; emailHour: number; pushEnabled: boolean; inAppPopups?: boolean };
   invoice: { businessName: string; abn: string; address: string; email: string; phone: string; paymentDetails: string; numberFormat: string; nextSequence: number; paymentTermsDays: number; defaultNotes: string; gstRegistered: boolean; gstRate: number; logoDataUrl: string };
   integrations: { googleDrive: { enabled: boolean; rootFolderName: string; rootFolderId?: string; autoUploadInvoices: boolean; autoUploadDocuments: boolean }; googleCalendar: { enabled: boolean; calendarId: string; syncTypes: string[]; twoWay?: boolean; showGoogleEvents?: boolean } };
@@ -115,4 +116,5 @@ export interface TravelDay {
   totalKm: number; totalMinutes: number; missing: { jobId: string; label: string; address: string; reason: string }[]; error?: string | null;
   computedAt?: string; signature?: string; fuel: { litres: number; cost: number };
 }
-export interface TravelSettings { enabled: boolean; homeAddress: string; homeLat?: number; homeLng?: number; startFrom: 'home' | 'first_job'; returnHome: boolean; fuelPricePerLitre: number; litresPer100km: number; countryCode: string }
+export interface TravelSettings { enabled: boolean; homeAddress: string; homeLat?: number; homeLng?: number; startFrom: 'home' | 'first_job'; returnHome: boolean; fuelPricePerLitre: number; litresPer100km: number; countryCode: string; ratePerKm?: number; logCount?: 'between' | 'all' }
+export interface WorkSettings { hoursLimit: number; fortnightMode: 'rolling' | 'fixed'; fortnightAnchor: string; countTypes: string[] }

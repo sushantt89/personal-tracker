@@ -20,6 +20,7 @@ export async function travelSettings(userId: string) {
     enabled: Boolean(t.enabled), homeAddress: t.homeAddress ?? '', homeLat: t.homeLat as number | undefined, homeLng: t.homeLng as number | undefined,
     startFrom: (t.startFrom ?? 'home') as 'home' | 'first_job', returnHome: t.returnHome !== false,
     fuelPricePerLitre: t.fuelPricePerLitre ?? 2, litresPer100km: t.litresPer100km ?? 8, countryCode: t.countryCode || 'au',
+    ratePerKm: (t.ratePerKm ?? 0.88) as number, logCount: (t.logCount === 'all' ? 'all' : 'between') as 'between' | 'all',
   };
 }
 

@@ -3,6 +3,7 @@ import { Settings, Job, Budget, AlertState, Income, SavingsGoal } from '../model
 import { goalPlan } from './assistant.js';
 import { addDays, diffDays, monthEnd, monthStart, weekStart } from '../utils/dates.js';
 import { dashboard } from './finance.js';
+import { workHours } from './workHours.js';
 
 export interface Alert {
   id: string;
@@ -38,6 +39,16 @@ export async function computeAlerts(userId: string, today: string, currency: str
     }
     if (d.invoices.overdueCount > d.invoices.dueSoon.filter((i) => i.effectiveStatus === 'overdue').length) {
       out.push({ id: 'inv-overdue-total', type: 'invoice', severity: 'error', title: `${d.invoices.overdueCount} overdue invoices`, message: `${money(d.invoices.overdueAmount)} outstanding`, link: '/invoices?status=overdue' });
+    }
+  }
+  // Hours-per-fortnight limit
+  if (n.jobReminders !== false) {
+    const wh = await workHours(userId, today, { weeksBack: 1, weeksAhead: 2 });
+    const h = (x: number) => `${Math.round(x * 100) / 100} h`;
+    for (const w of wh.warnings) {
+      const range = `${day(w.from)} – ${day(w.to)}`;
+      if (w.status === 'over') out.push({ id: `hours-over-${w.from}`, type: 'job', severity: 'error', title: `Over your ${h(wh.limit)} fortnight limit by ${h(w.over)}`, message: `${h(w.total)} in the fortnight ${range} (${h(w.worked)} worked, ${h(w.scheduled)} still scheduled).`, date: w.from, link: '/hours' });
+      else out.push({ id: `hours-near-${w.from}`, type: 'job', severity: 'warning', title: `Close to your ${h(wh.limit)} fortnight limit`, message: `${h(w.total)} in the fortnight ${range} — ${h(w.remaining ?? 0)} left.`, date: w.from, link: '/hours' });
     }
   }
   if (n.jobReminders !== false) {

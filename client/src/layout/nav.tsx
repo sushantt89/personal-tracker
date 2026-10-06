@@ -16,12 +16,16 @@ import PeopleOutlineIcon from '@mui/icons-material/PeopleOutline';
 import ContentPasteGoIcon from '@mui/icons-material/ContentPasteGo';
 import AutoAwesomeOutlinedIcon from '@mui/icons-material/AutoAwesomeOutlined';
 import NewspaperOutlinedIcon from '@mui/icons-material/NewspaperOutlined';
+import WbSunnyOutlinedIcon from '@mui/icons-material/WbSunnyOutlined';
+import AccessTimeOutlinedIcon from '@mui/icons-material/AccessTimeOutlined';
+import DirectionsCarOutlinedIcon from '@mui/icons-material/DirectionsCarOutlined';
 import type { ReactNode } from 'react';
 
 export interface NavItem { to: string; label: string; icon: ReactNode }
 export const NAV: { section?: string; items: NavItem[] }[] = [
   { items: [
-    { to: '/', label: 'Dashboard', icon: <DashboardOutlinedIcon /> },
+    { to: '/', label: 'Today', icon: <WbSunnyOutlinedIcon /> },
+    { to: '/dashboard', label: 'Dashboard', icon: <DashboardOutlinedIcon /> },
     { to: '/my-day', label: 'My Day', icon: <TodayOutlinedIcon /> },
     { to: '/calendar', label: 'Calendar', icon: <CalendarMonthOutlinedIcon /> },
     { to: '/import', label: 'Paste & Import', icon: <ContentPasteGoIcon /> },
@@ -30,6 +34,8 @@ export const NAV: { section?: string; items: NavItem[] }[] = [
   ] },
   { section: 'Work & money', items: [
     { to: '/jobs', label: 'Jobs', icon: <WorkOutlineIcon /> },
+    { to: '/hours', label: 'Work hours', icon: <AccessTimeOutlinedIcon /> },
+    { to: '/kilometres', label: 'Kilometre log', icon: <DirectionsCarOutlinedIcon /> },
     { to: '/clients', label: 'Clients & contractors', icon: <PeopleOutlineIcon /> },
     { to: '/income', label: 'Income', icon: <PaymentsOutlinedIcon /> },
     { to: '/expenses', label: 'Expenses', icon: <ShoppingCartOutlinedIcon /> },

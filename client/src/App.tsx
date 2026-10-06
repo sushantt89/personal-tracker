@@ -26,6 +26,9 @@ const SearchPage = lazy(() => import('./pages/SearchPage'));
 const NotificationsPage = lazy(() => import('./pages/NotificationsPage'));
 const Assistant = lazy(() => import('./pages/Assistant'));
 const News = lazy(() => import('./pages/News'));
+const Today = lazy(() => import('./pages/Today'));
+const WorkHours = lazy(() => import('./pages/WorkHours'));
+const Kilometres = lazy(() => import('./pages/Kilometres'));
 
 const Spinner = () => <Box sx={{ display: 'grid', placeItems: 'center', minHeight: '50vh' }}><CircularProgress /></Box>;
 
@@ -66,7 +69,10 @@ export default function App() {
           <Route path="/forgot-password" element={<ForgotPasswordPage />} />
           <Route path="/reset-password" element={<ResetPasswordPage />} />
           <Route element={<Protected><AppLayout /></Protected>}>
-            <Route index element={<Dashboard />} />
+            <Route index element={<Today />} />
+            <Route path="dashboard" element={<Dashboard />} />
+            <Route path="hours" element={<WorkHours />} />
+            <Route path="kilometres" element={<Kilometres />} />
             <Route path="my-day" element={<MyDay />} />
             <Route path="calendar" element={<CalendarPage />} />
             <Route path="import" element={<PasteImport />} />

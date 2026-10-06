@@ -28,6 +28,12 @@ const settingsPatch = z.object({
   travel: z.object({
     enabled: z.boolean(), homeAddress: z.string().trim().max(300), startFrom: z.enum(['home', 'first_job']), returnHome: z.boolean(),
     fuelPricePerLitre: z.coerce.number().min(0).max(20), litresPer100km: z.coerce.number().min(0).max(50), countryCode: z.string().length(2).toLowerCase(),
+    ratePerKm: z.coerce.number().min(0).max(10), logCount: z.enum(['between', 'all']),
+  }).partial().optional(),
+  work: z.object({
+    hoursLimit: z.coerce.number().min(0).max(336), fortnightMode: z.enum(['rolling', 'fixed']),
+    fortnightAnchor: z.union([z.string().regex(/^\d{4}-\d{2}-\d{2}$/), z.literal('')]),
+    countTypes: z.array(z.enum(['employee', 'subcontract', 'own'])).min(1, 'Count at least one kind of work'),
   }).partial().optional(),
   integrations: z.object({
     googleDrive: z.object({ enabled: z.boolean(), rootFolderName: z.string().trim().min(1).max(120), autoUploadInvoices: z.boolean(), autoUploadDocuments: z.boolean() }).partial(),

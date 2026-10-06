@@ -101,7 +101,7 @@ export default function AppLayout() {
   );
 
   const tabs = [
-    { to: '/', label: 'Home', icon: <DashboardOutlinedIcon /> },
+    { to: '/', label: 'Today', icon: <DashboardOutlinedIcon /> },
     { to: '/my-day', label: 'My Day', icon: <TodayOutlinedIcon /> },
     null,
     { to: '/jobs', label: 'Jobs', icon: <WorkOutlineIcon /> },

@@ -44,6 +44,16 @@ const settingsSchema = new Schema(
       fuelPricePerLitre: { type: Number, default: 2.0, min: 0, max: 20 },
       litresPer100km: { type: Number, default: 8.0, min: 0, max: 50 },
       countryCode: { type: String, default: 'au', maxlength: 2 },
+      /** Kilometre log: dollars per km for the estimate, and whether trips to and from home are counted */
+      ratePerKm: { type: Number, default: 0.88, min: 0, max: 10 },
+      logCount: { type: String, enum: ['between', 'all'], default: 'between' },
+    },
+    /** Hours-per-fortnight tracker. hoursLimit 0 = no limit set. */
+    work: {
+      hoursLimit: { type: Number, default: 0, min: 0, max: 336 },
+      fortnightMode: { type: String, enum: ['rolling', 'fixed'], default: 'rolling' },
+      fortnightAnchor: { type: String, default: '' },
+      countTypes: { type: [String], default: ['employee', 'subcontract', 'own'] },
     },
     integrations: {
       googleDrive: {

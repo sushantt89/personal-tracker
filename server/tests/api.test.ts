@@ -457,4 +457,37 @@ describe('reset everything', () => {
     expect((await b.get('/api/jobs?from=2026-10-01&to=2026-10-31').query(q)).body.items).toHaveLength(3);
     void jobs;
   });
+
+  it('marks the jobs on an invoice, and their income, paid when the invoice is paid', async () => {
+    const b = request.agent(app);
+    await b.post('/api/auth/register').send({ name: 'Invoicer', email: 'invoicer@example.com', password: 'password123' }).expect(201);
+    const q = { today: '2026-10-10' };
+    const mk = async (extra: object) => (await b.post('/api/jobs').query(q).send({ date: '2026-10-06', startTime: '09:00', endTime: '10:00', clientName: 'Site', ...extra }).expect(201)).body;
+    const j1 = await mk({ amount: 40 }), j2 = await mk({ amount: 30, amountEstimated: true }), j3 = await mk({}), later = await mk({ amount: 50, date: '2026-10-15' });
+    // j2 is billed at $35 (not its $30 estimate) and j3, which had no pay at all, at $25
+    const items = [{ description: 'A', quantity: 1, rate: 40, jobId: j1.id }, { description: 'B', quantity: 1, rate: 35, jobId: j2.id }, { description: 'C', quantity: 1, rate: 25, jobId: j3.id }, { description: 'D', quantity: 1, rate: 50, jobId: later.id }, { description: 'Supplies', quantity: 1, rate: 10 }];
+    const inv = (await b.post('/api/invoices').query(q).send({ issueDate: '2026-10-08', clientName: 'Agency', items, status: 'sent' }).expect(201)).body;
+    const incomeOf = async () => (await b.get('/api/income?from=2026-10-01&to=2026-10-31').query(q)).body.items as any[];
+    expect((await incomeOf()).filter((i) => i.status === 'paid')).toHaveLength(0);
+
+    const r = (await b.post(`/api/invoices/${inv.id}/status`).query(q).send({ status: 'paid' }).expect(200)).body;
+    expect(r).toMatchObject({ incomeUpdated: 4, jobsUpdated: 3 }); // the future job itself needs no change
+    const inc = await incomeOf();
+    expect(inc.filter((i) => i.status === 'paid').map((i) => i.amount).sort((x, y) => x - y)).toEqual([25, 35, 40, 50]);
+    expect(inc.every((i) => i.paidDate === '2026-10-10' && i.invoiceNumber === inv.number)).toBe(true);
+    const jobs = (await b.get('/api/jobs?from=2026-10-01&to=2026-10-31').query(q)).body.items as any[];
+    const byId = (id: string) => jobs.find((j) => j.id === id);
+    expect([byId(j1.id), byId(j2.id), byId(j3.id)].map((j) => [j.amount, j.amountEstimated, j.status])).toEqual([[40, false, 'completed'], [35, false, 'completed'], [25, false, 'completed']]);
+    expect(byId(later.id)).toMatchObject({ amount: 50, status: 'scheduled' }); // not worked yet, but paid
+
+    // Paying again changes nothing; un-paying puts the income back to waiting
+    expect((await b.post(`/api/invoices/${inv.id}/status`).query(q).send({ status: 'paid' }).expect(200)).body).toMatchObject({ incomeUpdated: 0, jobsUpdated: 0 });
+    await b.post(`/api/invoices/${inv.id}/status`).query(q).send({ status: 'sent' }).expect(200);
+    expect((await incomeOf()).every((i) => i.status === 'pending')).toBe(true);
+
+    // An invoice saved as paid from the start does the same
+    const j5 = await mk({ amount: 20 });
+    await b.post('/api/invoices').query(q).send({ issueDate: '2026-10-09', clientName: 'Agency', items: [{ description: 'E', quantity: 1, rate: 20, jobId: j5.id }], status: 'paid' }).expect(201);
+    expect((await incomeOf()).find((i) => i.jobId === j5.id)).toMatchObject({ status: 'paid', amount: 20 });
+  });
 });

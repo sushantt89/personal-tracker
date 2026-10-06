@@ -104,7 +104,7 @@ export default function Invoices() {
         {menu && [
           <MenuItem key="pdf" component="a" href={fileUrl(`/invoices/${menu.inv.id}/pdf`, { download: 1 })} onClick={() => setMenu(null)}><ListItemIcon><PictureAsPdfOutlinedIcon fontSize="small" /></ListItemIcon>Download PDF</MenuItem>,
           menu.inv.status === 'draft' && <MenuItem key="sent" onClick={() => { const i = menu.inv; setMenu(null); run(() => setInvoiceStatus(i, 'sent'), 'Marked as sent'); }}><ListItemIcon><SendOutlinedIcon fontSize="small" /></ListItemIcon>Mark as sent</MenuItem>,
-          menu.inv.status !== 'paid' && <MenuItem key="paid" onClick={() => { const i = menu.inv; setMenu(null); run(() => markInvoicePaid(i, confirm), 'Marked as paid'); }}><ListItemIcon><CheckCircleOutlineIcon fontSize="small" /></ListItemIcon>Mark as paid</MenuItem>,
+          menu.inv.status !== 'paid' && <MenuItem key="paid" onClick={() => { const i = menu.inv; setMenu(null); run(() => markInvoicePaid(i, confirm), 'Marked as paid — its jobs and their income are marked paid too'); }}><ListItemIcon><CheckCircleOutlineIcon fontSize="small" /></ListItemIcon>Mark as paid</MenuItem>,
           menu.inv.status === 'paid' && <MenuItem key="unpaid" onClick={() => { const i = menu.inv; setMenu(null); run(() => setInvoiceStatus(i, 'sent', true), 'Marked as unpaid'); }}><ListItemIcon><SendOutlinedIcon fontSize="small" /></ListItemIcon>Mark as unpaid</MenuItem>,
           <MenuItem key="dup" onClick={() => { const i = menu.inv; setMenu(null); run(async () => { const c = await post<Invoice>(`/invoices/${i.id}/duplicate`); nav(`/invoices/${c.id}`); }, 'Invoice duplicated'); }}><ListItemIcon><ContentCopyIcon fontSize="small" /></ListItemIcon>Duplicate</MenuItem>,
           <Divider key="d" />,

@@ -13,6 +13,12 @@ import { addDays } from '../utils/dates.js';
 import { uploadInvoice, queueInvoiceUpload } from '../services/google/drive.js';
 import { queueCalendarSync, queueCalendarDelete } from '../services/google/calendar.js';
 import { googleApis } from '../services/google/client.js';
+import { queueTravelDay } from '../services/travel/index.js';
+import { payerOf } from '../services/clients.js';
+import { jobHours } from '../services/finance.js';
+import { round2 } from '../utils/money.js';
+
+const jobIncomeDescription = (job: any) => job.title || `Job – ${job.clientName ?? ''}${job.workType === 'subcontract' && job.contractorName ? ` (via ${job.contractorName})` : ''}`.trim();
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 const r = Router();
@@ -109,6 +115,7 @@ r.post('/', async (req, res) => {
   } else data.number = await nextInvoiceNumber(req.userId!, data.issueDate);
   const inv = await Invoice.create({ ...data, userId: req.userId });
   await linkRecords(req.userId!, inv, jobIds);
+  if (inv.status === 'paid') await settleInvoice(req.userId!, inv, today);
   await audit(req.userId!, 'Invoice', inv._id, 'create', undefined, inv.toJSON());
   queueCalendarSync(req.userId!, 'invoice', inv._id);
   queueInvoiceUpload(req.userId!, inv._id);
@@ -128,13 +135,65 @@ r.put('/:id', async (req, res) => {
   if (!data.dueDate) inv.set('dueDate', undefined); // due date removed
   await inv.save();
   await linkRecords(req.userId!, inv, jobIds);
+  if (inv.status === 'paid') await settleInvoice(req.userId!, inv, today); // saved as paid, or lines changed on a paid invoice
   await audit(req.userId!, 'Invoice', inv._id, 'update', before, inv.toJSON());
   queueCalendarSync(req.userId!, 'invoice', inv._id);
   queueInvoiceUpload(req.userId!, inv._id);
   res.json(withStatus(inv, today));
 });
 
-/** Change status. When marking paid, optionally mark the linked income records paid too (explicit opt-in). */
+/**
+ * An invoice has been paid, so the jobs on it have been paid: their income is marked received (created if a job had none),
+ * at the amount on the invoice line, and each job gets that amount as its real figure.
+ */
+async function settleInvoice(userId: string, inv: any, today: string, paymentMethod?: string) {
+  const paidDate = inv.paidDate ?? today;
+  const lines = new Map<string, number>();
+  for (const it of inv.items ?? []) if (it.jobId) lines.set(String(it.jobId), round2((lines.get(String(it.jobId)) ?? 0) + (it.amount ?? 0)));
+  let incomeUpdated = 0, jobsUpdated = 0;
+  const jobs = lines.size ? await Job.find({ _id: { $in: [...lines.keys()] }, userId }) : [];
+  for (const job of jobs) {
+    const amount = lines.get(String(job._id)) ?? job.amount ?? 0;
+    const jb = job.toJSON();
+    const statusBefore = job.status;
+    if (amount > 0) job.amount = amount;
+    job.amountEstimated = false;
+    if (job.status !== 'cancelled' && job.date <= today) job.status = 'completed';
+    if (job.isModified()) {
+      await job.save();
+      jobsUpdated++;
+      await audit(userId, 'Job', job._id, 'update', jb, job.toJSON(), `Invoice ${inv.number} paid`);
+      if (statusBefore !== job.status) { queueTravelDay(userId, job.date); queueCalendarSync(userId, 'job', job._id); }
+    }
+    if (!(amount > 0)) continue;
+    const fields = { amount, date: job.date, ...payerOf(job), description: jobIncomeDescription(job), incomeSourceId: job.incomeSourceId, hoursWorked: jobHours(job) || undefined, status: 'paid', paidDate, invoiceId: inv._id, invoiceNumber: inv.number, ...(paymentMethod ? { paymentMethod } : {}) };
+    const income = await Income.findOne({ userId, jobId: job._id });
+    if (!income) {
+      const created = await Income.create({ userId, jobId: job._id, ...fields });
+      incomeUpdated++;
+      await audit(userId, 'Income', created._id, 'create', undefined, created.toJSON(), `Invoice ${inv.number} paid`);
+    } else if (income.status !== 'paid' || income.amount !== amount) {
+      const prev = income.toJSON();
+      income.set({ ...fields, paidDate: income.status === 'paid' && income.paidDate ? income.paidDate : paidDate });
+      await income.save();
+      incomeUpdated++;
+      await audit(userId, 'Income', income._id, 'update', prev, income.toJSON(), `Invoice ${inv.number} paid`);
+    }
+  }
+  // Income attached to the invoice without a job (e.g. added by hand)
+  const others = await Income.find({ userId, invoiceId: inv._id, status: { $nin: ['paid', 'cancelled'] }, jobId: { $nin: [...lines.keys()] } });
+  for (const i of others) {
+    const prev = i.toJSON();
+    i.status = 'paid'; i.paidDate = paidDate;
+    if (paymentMethod) i.paymentMethod = paymentMethod;
+    await i.save();
+    incomeUpdated++;
+    await audit(userId, 'Income', i._id, 'update', prev, i.toJSON(), `Invoice ${inv.number} paid`);
+  }
+  return { incomeUpdated, jobsUpdated };
+}
+
+/** Change status. Marking an invoice paid marks its jobs and their income paid too (pass updateIncome: false to leave them alone). */
 r.post('/:id/status', async (req, res) => {
   const { today } = await userCtx(req);
   const body = parseBody(z.object({ status: z.enum(['draft', 'sent', 'paid', 'cancelled']), paidDate: zDate.optional(), updateIncome: z.boolean().optional(), paymentMethod: z.string().max(60).optional() }), req.body);
@@ -145,16 +204,15 @@ r.post('/:id/status', async (req, res) => {
   inv.paidDate = body.status === 'paid' ? body.paidDate ?? today : undefined;
   await inv.save();
   await audit(req.userId!, 'Invoice', inv._id, 'update', before, inv.toJSON(), `Status → ${body.status}`);
-  let incomeUpdated = 0;
-  if (body.updateIncome) {
+  let incomeUpdated = 0, jobsUpdated = 0;
+  if (body.status === 'paid' && body.updateIncome !== false) {
+    ({ incomeUpdated, jobsUpdated } = await settleInvoice(req.userId!, inv, today, body.paymentMethod));
+  } else if (body.status !== 'paid' && (body.updateIncome ?? before.status === 'paid')) {
+    // No longer paid (or sent again): the income goes back to waiting
     const incomes = await Income.find({ userId: req.userId, invoiceId: inv._id, status: { $ne: 'cancelled' } });
     for (const i of incomes) {
       const prev = i.toJSON();
-      if (body.status === 'paid') {
-        i.status = 'paid';
-        i.paidDate = inv.paidDate;
-        if (body.paymentMethod) i.paymentMethod = body.paymentMethod;
-      } else if (i.status === 'paid') {
+      if (i.status === 'paid') {
         i.status = 'pending';
         i.paidDate = undefined;
       } else if (body.status === 'sent') {
@@ -167,7 +225,7 @@ r.post('/:id/status', async (req, res) => {
   }
   queueCalendarSync(req.userId!, 'invoice', inv._id);
   queueInvoiceUpload(req.userId!, inv._id);
-  res.json({ invoice: withStatus(inv, today), incomeUpdated });
+  res.json({ invoice: withStatus(inv, today), incomeUpdated, jobsUpdated });
 });
 
 r.post('/:id/duplicate', async (req, res) => {

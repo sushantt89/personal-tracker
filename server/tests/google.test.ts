@@ -43,7 +43,10 @@ describe('crypto & event mapping', () => {
     const a = encrypt('1//refresh-token'), b = encrypt('1//refresh-token');
     expect(a).not.toBe(b);
     expect(decrypt(a)).toBe('1//refresh-token');
-    expect(() => decrypt(a.slice(0, -2) + 'xx')).toThrow();
+    // Change the first character of the encrypted part (the last two could, rarely, already be what we swap in)
+    const parts = a.split('.');
+    parts[3] = (parts[3][0] === 'A' ? 'B' : 'A') + parts[3].slice(1);
+    expect(() => decrypt(parts.join('.'))).toThrow();
   });
 
   it('maps jobs, tasks and bills to Google events', async () => {

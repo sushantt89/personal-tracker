@@ -192,7 +192,7 @@ export default function InvoiceEditor() {
             <Button startIcon={<VisibilityOutlinedIcon />} onClick={() => setPreview(true)}>Preview</Button>
             <Button startIcon={<PictureAsPdfOutlinedIcon />} href={fileUrl(`/invoices/${inv.id}/pdf`, { download: 1 })}>PDF</Button>
             {inv.status === 'draft' && <Button startIcon={<SendOutlinedIcon />} onClick={() => act(() => setInvoiceStatus(inv, 'sent'), 'Marked as sent')}>Mark sent</Button>}
-            {inv.status !== 'paid' && <Button color="success" startIcon={<CheckCircleOutlineIcon />} onClick={() => act(() => markInvoicePaid(inv, confirm), 'Marked as paid')}>Mark paid</Button>}
+            {inv.status !== 'paid' && <Button color="success" startIcon={<CheckCircleOutlineIcon />} onClick={() => act(() => markInvoicePaid(inv, confirm), 'Marked as paid — its jobs and their income are marked paid too')}>Mark paid</Button>}
             {inv.status === 'paid' && <Button onClick={() => act(() => setInvoiceStatus(inv, 'sent', true), 'Marked as unpaid')}>Mark unpaid</Button>}
             <Button startIcon={<ContentCopyIcon />} onClick={() => act(async () => { const c = await post<Invoice>(`/invoices/${inv.id}/duplicate`); setForm(null); nav(`/invoices/${c.id}`); }, 'Duplicated')}>Duplicate</Button>
             {inv.sync?.googleDriveLink && <Button startIcon={<AddToDriveIcon />} href={inv.sync.googleDriveLink} target="_blank">Open in Google Drive</Button>}

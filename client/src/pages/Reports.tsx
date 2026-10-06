@@ -73,7 +73,7 @@ export default function Reports() {
           <Tab value="income" label="Income" /><Tab value="expenses" label="Expenses" /><Tab value="cashflow" label="Profit / cash flow" /><Tab value="work" label="Work" />
         </Tabs>
         <Stack direction={{ xs: 'column', md: 'row' }} spacing={1.5} sx={{ p: 1.5 }} alignItems={{ md: 'center' }}>
-          <DateRangeBar value={range} onChange={setRange} presets={['month', 'last30', 'year', 'custom']} />
+          <DateRangeBar value={range} onChange={setRange} presets={['month', 'lastMonth', 'last30', 'year', 'custom']} />
           <TextField select label="Group by" value={g} onChange={(e) => setGroupBy(e.target.value)} sx={{ maxWidth: { md: 240 } }}>
             {GROUPS[type].map((x) => <MenuItem key={x} value={x}>{GROUP_LABEL[x] ?? titleCase(x)}</MenuItem>)}
           </TextField>

@@ -84,6 +84,8 @@ export default function Dashboard() {
     const days = dayjs(range.to).diff(dayjs(range.from), 'day') + 1;
     const [label, required] = range.preset === 'today' ? ['day', (monthly * 12) / 365]
       : range.preset === 'week' ? ['week', (monthly * 12) / 52]
+      : range.preset === 'lastWeek' ? ['last week', (monthly * 12) / 52]
+      : range.preset === 'lastMonth' ? ['last month', monthly]
       : range.preset === 'year' ? ['year', monthly * 12]
       : range.preset === 'month' ? ['month', monthly]
       : [`${days} day${days === 1 ? '' : 's'}`, ((monthly * 12) / 365) * days];

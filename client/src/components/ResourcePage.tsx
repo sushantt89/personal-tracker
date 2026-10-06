@@ -165,7 +165,7 @@ export function ResourcePage<T extends { id: string }>({ config }: { config: Res
         <Stack direction="row" spacing={1.5} alignItems="center" flexWrap="wrap" useFlexGap>
           <TextField placeholder={`Search ${config.title.toLowerCase()}…`} value={q} onChange={(e) => setQ(e.target.value)} sx={{ flex: { xs: '1 1 100%', sm: '1 1 220px' }, maxWidth: { sm: 320 } }}
             slotProps={{ input: { startAdornment: <InputAdornment position="start"><SearchIcon fontSize="small" /></InputAdornment> } }} />
-          {config.dateFilter && <DateRangeBar value={range} onChange={setRange} presets={['week', 'month', 'last30', 'year', 'custom']} />}
+          {config.dateFilter && <DateRangeBar value={range} onChange={setRange} presets={['week', 'lastWeek', 'month', 'lastMonth', 'last30', 'year', 'custom']} />}
           {(config.filters ?? []).map((f) => (
             <TextField key={f.name} select label={f.label} value={filters[f.name] ?? ''} onChange={(e) => setFilters((p) => ({ ...p, [f.name]: e.target.value }))} sx={{ flex: { xs: '1 1 130px', sm: '0 1 170px' }, minWidth: 0 }}>
               <MenuItem value="">All</MenuItem>

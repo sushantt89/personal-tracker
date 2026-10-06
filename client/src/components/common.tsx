@@ -4,7 +4,7 @@ import {
   ToggleButtonGroup, ToggleButton, TextField, Tooltip, type ChipProps,
 } from '@mui/material';
 import InboxOutlinedIcon from '@mui/icons-material/InboxOutlined';
-import { titleCase, money, pct, localToday, startOfMonth, endOfMonth, startOfWeek, addDays } from '../utils/format';
+import { titleCase, money, pct, localToday, startOfMonth, endOfMonth, startOfWeek, addDays, fmtShort } from '../utils/format';
 
 export function PageHeader({ title, subtitle, actions }: { title: string; subtitle?: ReactNode; actions?: ReactNode }) {
   return (
@@ -135,24 +135,27 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
 export const useConfirm = () => useContext(ConfirmCtx);
 
 // ---------- Date range filter ----------
-export type RangePreset = 'today' | 'week' | 'month' | 'last30' | 'year' | 'custom';
+export type RangePreset = 'today' | 'week' | 'lastWeek' | 'month' | 'lastMonth' | 'last30' | 'year' | 'custom';
 export interface DateRange { preset: RangePreset; from: string; to: string }
 export function rangeFor(preset: RangePreset, today = localToday()): DateRange {
   switch (preset) {
     case 'today': return { preset, from: today, to: today };
     case 'week': return { preset, from: startOfWeek(today), to: addDays(startOfWeek(today), 6) };
+    case 'lastWeek': return { preset, from: addDays(startOfWeek(today), -7), to: addDays(startOfWeek(today), -1) };
+    case 'lastMonth': { const d = addDays(startOfMonth(today), -1); return { preset, from: startOfMonth(d), to: d }; }
     case 'last30': return { preset, from: addDays(today, -29), to: today };
     case 'year': return { preset, from: today.slice(0, 4) + '-01-01', to: today.slice(0, 4) + '-12-31' };
     default: return { preset: 'month', from: startOfMonth(today), to: endOfMonth(today) };
   }
 }
-export function DateRangeBar({ value, onChange, presets = ['today', 'week', 'month', 'year', 'custom'] }: { value: DateRange; onChange: (r: DateRange) => void; presets?: RangePreset[] }) {
-  const labels: Record<RangePreset, string> = { today: 'Day', week: 'Week', month: 'Month', last30: '30 days', year: 'Year', custom: 'Custom' };
+export function DateRangeBar({ value, onChange, presets = ['today', 'week', 'lastWeek', 'month', 'lastMonth', 'year', 'custom'] }: { value: DateRange; onChange: (r: DateRange) => void; presets?: RangePreset[] }) {
+  const labels: Record<RangePreset, string> = { today: 'Day', week: 'Week', lastWeek: 'Last week', month: 'Month', lastMonth: 'Last month', last30: '30 days', year: 'Year', custom: 'Custom' };
   return (
     <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" useFlexGap>
-      <ToggleButtonGroup size="small" exclusive value={value.preset} onChange={(_, p: RangePreset | null) => p && onChange(p === 'custom' ? { ...value, preset: 'custom' } : rangeFor(p))}>
+      <ToggleButtonGroup size="small" exclusive value={value.preset} aria-label="Period" sx={{ flexWrap: 'wrap', maxWidth: '100%', '& .MuiToggleButton-root': { whiteSpace: 'nowrap' } }} onChange={(_, p: RangePreset | null) => p && onChange(p === 'custom' ? { ...value, preset: 'custom' } : rangeFor(p))}>
         {presets.map((p) => <ToggleButton key={p} value={p} sx={{ px: 1.5 }}>{labels[p]}</ToggleButton>)}
       </ToggleButtonGroup>
+      {(value.preset === 'lastWeek' || value.preset === 'lastMonth') && <Typography variant="caption" color="text.secondary">{fmtShort(value.from)} – {fmtShort(value.to)}</Typography>}
       {value.preset === 'custom' && (
         <>
           <TextField type="date" label="From" value={value.from} onChange={(e) => e.target.value && onChange({ ...value, from: e.target.value })} sx={{ width: 160 }} slotProps={{ inputLabel: { shrink: true } }} />

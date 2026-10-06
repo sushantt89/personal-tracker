@@ -34,5 +34,15 @@ export const startOfWeek = (s: string) => {
 export const pct = (a: number, b: number) => (b > 0 ? Math.min(100, Math.round((a / b) * 100)) : 0);
 export const titleCase = (s: string) => s.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
 export const mapsUrl = (q?: string) => (q ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(q)}` : undefined);
-export const directionsUrl = (stops: string[]) =>
-  stops.length < 2 ? mapsUrl(stops[0]) : `https://www.google.com/maps/dir/${stops.map((s) => encodeURIComponent(s)).join('/')}`;
+/**
+ * Google Maps directions that START FROM WHERE YOU ARE and visit every stop in order.
+ * (Listing the stops as /dir/a/b/c makes Maps treat the first one as the starting point, so navigation skips it.)
+ * The last stop is the destination and the ones before it are waypoints; leaving the origin out means "my location".
+ */
+export const directionsUrl = (stops: string[]) => {
+  const list = stops.map((s) => s.trim()).filter(Boolean);
+  if (!list.length) return undefined;
+  const params = new URLSearchParams({ api: '1', destination: list[list.length - 1], travelmode: 'driving' });
+  if (list.length > 1) params.set('waypoints', list.slice(0, -1).join('|'));
+  return `https://www.google.com/maps/dir/?${params.toString()}`;
+};

@@ -48,7 +48,8 @@ export default function Today() {
   const d = dash.data;
   const jobs: Job[] = [...d.today.jobs].filter((j: Job) => j.status !== 'cancelled').sort((a: Job, b: Job) => (a.startTime ?? '99').localeCompare(b.startTime ?? '99'));
   const left = jobs.filter((j) => j.status !== 'completed');
-  const stops = jobs.filter((j) => j.address?.formatted).map((j) => j.address!.formatted!);
+  // The route covers the jobs still to do, so it never sends you back to one that is finished
+  const stops = (left.length ? left : jobs).filter((j) => j.address?.formatted).map((j) => j.address!.formatted!);
   const tasks: any[] = d.today.tasks.filter((t: any) => t.status !== 'cancelled');
   const billsToday: BillDue[] = d.today.billsDue.filter((b: BillDue) => !b.paid);
   const billsSoon: BillDue[] = d.bills.upcoming.filter((b: BillDue) => b.dueDate > today && b.dueDate <= addDays(today, 7));

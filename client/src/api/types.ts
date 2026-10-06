@@ -10,7 +10,7 @@ export interface Client { id: Id; name: string; type?: 'client' | 'contractor'; 
 export type JobStatus = 'scheduled' | 'in_progress' | 'completed' | 'cancelled';
 export interface Job {
   id: Id; title?: string; clientId?: Id | null; clientName?: string; incomeSourceId?: Id | null; workType?: WorkType; contractorId?: Id | null; contractorName?: string; date: string; startTime?: string; endTime?: string;
-  amount?: number; /** the amount is only an estimate until real pay is recorded */ amountEstimated?: boolean; hoursWorked?: number; address?: Address; meetingPoint?: string; description?: string; tasks: string[]; rooms?: number; bathrooms?: number;
+  amount?: number; /** the amount is only an estimate until real pay is recorded */ amountEstimated?: boolean; /** left out of the work-hours tracker */ excludeFromHours?: boolean; hoursWorked?: number; address?: Address; meetingPoint?: string; description?: string; tasks: string[]; rooms?: number; bathrooms?: number;
   specialInstructions?: string; status: JobStatus; notes?: string; invoiceId?: Id | null; sourceMessage?: string; distanceKm?: number; travelMinutes?: number;
 }
 
@@ -117,4 +117,4 @@ export interface TravelDay {
   computedAt?: string; signature?: string; fuel: { litres: number; cost: number };
 }
 export interface TravelSettings { enabled: boolean; homeAddress: string; homeLat?: number; homeLng?: number; startFrom: 'home' | 'first_job'; returnHome: boolean; fuelPricePerLitre: number; litresPer100km: number; countryCode: string; ratePerKm?: number; logCount?: 'between' | 'all' }
-export interface WorkSettings { hoursLimit: number; fortnightMode: 'rolling' | 'fixed'; fortnightAnchor: string; countTypes: string[] }
+export interface WorkSettings { hoursLimit: number; fortnightMode: 'rolling' | 'fixed'; fortnightAnchor: string; countTypes: string[]; excludeEmployers: string[] }

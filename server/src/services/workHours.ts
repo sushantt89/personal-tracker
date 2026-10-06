@@ -12,7 +12,7 @@ import { jobHours } from './finance.js';
 import { round2 } from '../utils/money.js';
 
 export const WORK_TYPES = ['employee', 'subcontract', 'own'] as const;
-export interface WorkHoursSettings { hoursLimit: number; fortnightMode: 'rolling' | 'fixed'; fortnightAnchor: string; countTypes: string[] }
+export interface WorkHoursSettings { hoursLimit: number; fortnightMode: 'rolling' | 'fixed'; fortnightAnchor: string; countTypes: string[]; excludeEmployers: string[] }
 
 export async function workHoursSettings(userId: string): Promise<WorkHoursSettings> {
   const s = await Settings.findOne({ userId }).select('work').lean();
@@ -22,6 +22,7 @@ export async function workHoursSettings(userId: string): Promise<WorkHoursSettin
     fortnightMode: w.fortnightMode === 'fixed' ? 'fixed' : 'rolling',
     fortnightAnchor: typeof w.fortnightAnchor === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(w.fortnightAnchor) ? weekStart(w.fortnightAnchor) : '2026-01-05',
     countTypes: Array.isArray(w.countTypes) && w.countTypes.length ? w.countTypes : [...WORK_TYPES],
+    excludeEmployers: Array.isArray(w.excludeEmployers) ? w.excludeEmployers.filter((x: unknown) => typeof x === 'string') : [],
   };
 }
 
@@ -36,8 +37,13 @@ export async function workHours(userId: string, today: string, opts: { weeksBack
   const back = opts.weeksBack ?? 8, ahead = opts.weeksAhead ?? 4;
   const first = addDays(ws, -7 * back), last = addDays(ws, 7 * ahead + 6);
   const typeFilter = s.countTypes.includes('own') ? { $or: [{ workType: { $in: s.countTypes } }, { workType: null }] } : { workType: { $in: s.countTypes } };
-  const jobs = await Job.find({ userId: new Types.ObjectId(userId), date: { $gte: first, $lte: last }, status: { $ne: 'cancelled' }, ...typeFilter })
-    .select('date startTime endTime hoursWorked status workType clientName contractorName title').sort({ date: 1, startTime: 1 }).lean();
+  const found = await Job.find({ userId: new Types.ObjectId(userId), date: { $gte: first, $lte: last }, status: { $ne: 'cancelled' }, ...typeFilter })
+    .select('date startTime endTime hoursWorked status workType clientName contractorName title excludeFromHours').sort({ date: 1, startTime: 1 }).lean();
+  // Work the user has chosen to leave out: whole employers (e.g. cash work), or single jobs marked "don't count"
+  const skipNames = new Set(s.excludeEmployers.map((x) => x.toLowerCase()));
+  const leftOut = (j: any) => Boolean(j.excludeFromHours) || skipNames.has(employerOf(j).toLowerCase());
+  const jobs = found.filter((j) => !leftOut(j));
+  const skipped = found.filter(leftOut);
 
   const done = (j: any) => j.status === 'completed' || j.date < today;
   const weeks: HoursWeek[] = [];
@@ -76,8 +82,17 @@ export async function workHours(userId: string, today: string, opts: { weeksBack
   for (const j of inCurrent) { const k = employerOf(j); const e = by.get(k) ?? { name: k, hours: 0, shifts: 0 }; e.hours = round2(e.hours + jobHours(j)); e.shifts++; by.set(k, e); }
   const shifts = inCurrent.map((j) => ({ id: String(j._id), date: j.date, startTime: j.startTime, endTime: j.endTime, hours: round2(jobHours(j)), employer: employerOf(j), label: j.clientName || j.title || 'Job', done: done(j) }));
 
+  // Every employer seen in this period, so the settings can offer them to leave out
+  const names = new Map<string, { name: string; hours: number; counted: boolean }>();
+  for (const j of found) { const k = employerOf(j); const e = names.get(k) ?? { name: k, hours: 0, counted: !skipNames.has(k.toLowerCase()) }; e.hours = round2(e.hours + jobHours(j)); names.set(k, e); }
+  for (const n of s.excludeEmployers) if (![...names.keys()].some((k) => k.toLowerCase() === n.toLowerCase())) names.set(n, { name: n, hours: 0, counted: false });
+  const skippedNow = current ? skipped.filter((j) => j.date >= current.from && j.date <= current.to) : [];
+
   return {
     today, settings: s, limit, weeks, windows, current, roomThisWeek,
+    employers: [...names.values()].sort((a, b) => a.name.localeCompare(b.name)),
+    /** Hours in the current fortnight that were left out on purpose */
+    notCounted: { hours: round2(skippedNow.reduce((a, j) => a + jobHours(j), 0)), shifts: skippedNow.length },
     thisWeek: weeks.find((w) => w.state === 'current')!,
     byEmployer: [...by.values()].sort((a, b) => b.hours - a.hours), shifts,
     // Anything that needs attention now or soon: fortnights including today or still to come that are at or near the limit

@@ -15,6 +15,8 @@ export interface WorkHoursData {
   byEmployer: { name: string; hours: number; shifts: number }[];
   shifts: { id: string; date: string; startTime?: string; endTime?: string; hours: number; employer: string; label: string; done: boolean }[];
   warnings: HoursWindow[];
+  employers: { name: string; hours: number; counted: boolean }[];
+  notCounted: { hours: number; shifts: number };
 }
 export const hrs = (n: number) => `${Math.round(n * 100) / 100} h`;
 const TONE = { ok: 'success', near: 'warning', over: 'error', none: 'primary' } as const;
@@ -58,7 +60,7 @@ export default function WorkHours() {
   const toast = useToast();
   const nav = useNavigate();
   const q = useQuery({ queryKey: ['work-hours'], queryFn: () => get<WorkHoursData>('/work-hours') });
-  const [form, setForm] = useState<{ hoursLimit: string; fortnightMode: 'rolling' | 'fixed'; fortnightAnchor: string; countTypes: string[] } | null>(null);
+  const [form, setForm] = useState<{ hoursLimit: string; fortnightMode: 'rolling' | 'fixed'; fortnightAnchor: string; countTypes: string[]; excludeEmployers: string[] } | null>(null);
   const [saving, setSaving] = useState(false);
   useEffect(() => { if (q.data && !form) setForm({ ...q.data.settings, hoursLimit: q.data.settings.hoursLimit ? String(q.data.settings.hoursLimit) : '' }); }, [q.data, form]);
   if (q.isLoading || !form) return <LoadingBlock rows={6} height={64} />;
@@ -71,7 +73,7 @@ export default function WorkHours() {
   const save = async () => {
     setSaving(true);
     try {
-      await patch('/settings', { work: { hoursLimit: Number(form.hoursLimit) || 0, fortnightMode: form.fortnightMode, fortnightAnchor: form.fortnightAnchor || '', countTypes: form.countTypes } });
+      await patch('/settings', { work: { hoursLimit: Number(form.hoursLimit) || 0, fortnightMode: form.fortnightMode, fortnightAnchor: form.fortnightAnchor || '', countTypes: form.countTypes, excludeEmployers: form.excludeEmployers } });
       await Promise.all(['work-hours', 'settings', 'alerts'].map((k) => qc.invalidateQueries({ queryKey: [k] })));
       toast('Saved');
     } catch (e) { toast((e as Error).message, 'error'); } finally { setSaving(false); }
@@ -86,6 +88,7 @@ export default function WorkHours() {
           <Grid key={w.from} size={12}><Alert severity="error">{hrs(w.over)} over the {hrs(d.limit)} limit in the fortnight {fmtShort(w.from)} – {fmtShort(w.to)} ({hrs(w.total)} in total). {w.scheduled > 0 ? 'Some of it is still only scheduled, so there is time to change a shift.' : ''}</Alert></Grid>
         ))}
 
+        {d.notCounted.shifts > 0 && <Grid size={12}><Alert severity="info">{hrs(d.notCounted.hours)} in this fortnight ({d.notCounted.shifts} job{d.notCounted.shifts === 1 ? '' : 's'}) {d.notCounted.shifts === 1 ? 'is' : 'are'} left out of these totals because you chose not to count {d.notCounted.shifts === 1 ? 'it' : 'them'}. Change this under Settings below.</Alert></Grid>}
         <Grid size={{ xs: 6, md: 3 }}><StatCard label="This week" value={hrs(d.thisWeek.total)} hint={`${hrs(d.thisWeek.worked)} worked · ${hrs(d.thisWeek.scheduled)} to come`} /></Grid>
         <Grid size={{ xs: 6, md: 3 }}><StatCard label={rolling ? 'Fullest fortnight' : 'This fortnight'} value={d.current ? hrs(d.current.total) : '—'} hint={d.limit > 0 ? `limit ${hrs(d.limit)}` : 'no limit set'} tone={d.current?.status === 'over' ? 'negative' : d.current?.status === 'near' ? 'warning' : 'neutral'} /></Grid>
         <Grid size={{ xs: 12, md: 6 }}><StatCard label="Room left this week" value={d.roomThisWeek === null ? '—' : hrs(d.roomThisWeek)} hint={d.roomThisWeek === null ? 'Set a limit to see this' : d.roomThisWeek > 0 ? 'More hours you could take on this week without any fortnight going over' : 'Taking on more this week would put a fortnight over the limit'} tone={d.roomThisWeek === null ? 'neutral' : d.roomThisWeek > 0 ? 'positive' : 'negative'} /></Grid>
@@ -176,9 +179,23 @@ export default function WorkHours() {
                   {TYPES.map((t) => <FormControlLabel key={t.value} control={<Checkbox checked={form.countTypes.includes(t.value)} onChange={(e) => setForm({ ...form, countTypes: e.target.checked ? [...form.countTypes, t.value] : form.countTypes.filter((x) => x !== t.value) })} />} label={t.label} />)}
                 </FormGroup>
               </Grid>
+              <Grid size={12}>
+                <Divider sx={{ mb: 2 }} />
+                <Typography variant="subtitle2">Leave out work for (e.g. cash work)</Typography>
+                <Typography variant="caption" color="text.secondary" component="div" sx={{ mb: 0.5 }}>Tick anyone whose hours should not be counted here. To leave out a single job instead, open it in Jobs and turn on “Don’t count this in Work hours”.</Typography>
+                {!d.employers.length ? <Typography variant="body2" color="text.secondary">No work in this period yet.</Typography> : (
+                  <FormGroup row>
+                    {d.employers.map((e) => {
+                      const off = form.excludeEmployers.some((x) => x.toLowerCase() === e.name.toLowerCase());
+                      return <FormControlLabel key={e.name} sx={{ mr: 3 }} control={<Checkbox checked={off} onChange={(ev) => setForm({ ...form, excludeEmployers: ev.target.checked ? [...form.excludeEmployers, e.name] : form.excludeEmployers.filter((x) => x.toLowerCase() !== e.name.toLowerCase()) })} />}
+                        label={<>{e.name} <Typography component="span" variant="caption" color="text.secondary">· {hrs(e.hours)} in the last 3 months</Typography></>} />;
+                    })}
+                  </FormGroup>
+                )}
+              </Grid>
             </Grid>
             <Button variant="contained" sx={{ mt: 2 }} onClick={save} disabled={saving || !form.countTypes.length}>{saving ? 'Saving…' : 'Save'}</Button>
-            <Typography variant="caption" color="text.secondary" component="div" sx={{ mt: 1.5 }}>This adds up the hours you have entered here. If a limit applies to you by law or by contract, check the exact rule with whoever sets it — the app can’t know your conditions.</Typography>
+            <Typography variant="caption" color="text.secondary" component="div" sx={{ mt: 1.5 }}>This adds up the hours you have entered here. If a limit applies to you by law or by contract, check the exact rule with whoever sets it — the app can’t know your conditions, and work you leave out here may still count under that rule.</Typography>
           </SectionCard>
         </Grid>
       </Grid>

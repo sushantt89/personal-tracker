@@ -49,6 +49,7 @@ export const jobFields: FieldDef[] = [
   { name: 'endTime', label: 'End', type: 'time', span: 4 },
   { name: 'amount', label: 'Amount', type: 'money', quick: true, span: 4, helper: 'Leave empty if you don’t know the pay yet' },
   { name: 'amountEstimated', label: 'This amount is an estimate (actual pay not known yet)', type: 'switch', showIf: (v) => Number(v.amount) > 0 },
+  { name: 'excludeFromHours', label: 'Don’t count this in Work hours (e.g. a cash job)', type: 'switch' },
   { name: 'hoursWorked', label: 'Hours worked', type: 'number', span: 4 },
   { name: 'status', label: 'Status', type: 'select', options: opts(['scheduled', 'in_progress', 'completed', 'cancelled']), span: 4 },
   { name: 'h-addr', label: 'Address', type: 'heading' },

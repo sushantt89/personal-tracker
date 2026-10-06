@@ -77,6 +77,19 @@ describe('hours per fortnight', () => {
     await a.patch('/api/settings').send({ work: { countTypes: ['employee'] } }).expect(200);
     expect((await a.get('/api/work-hours').query(q)).body.current.total).toBe(39.5);
     await a.patch('/api/settings').send({ work: { countTypes: [] } }).expect(400);
+
+    // Leaving out cash work: a whole employer, or a single job
+    await a.patch('/api/settings').send({ work: { countTypes: ['employee', 'subcontract', 'own'], excludeEmployers: ['cafe'] } }).expect(200);
+    r = (await a.get('/api/work-hours').query(q).expect(200)).body;
+    expect(r.current.total).toBe(34.5); // 42.5 with the own-business job, less the Cafe's 8 h
+    expect(r.notCounted).toEqual({ hours: 8, shifts: 1 });
+    expect(r.byEmployer.map((e: any) => e.name)).not.toContain('Cafe');
+    expect(r.employers.find((e: any) => e.name === 'Cafe')).toMatchObject({ counted: false, hours: 8 });
+    const cash = (await a.post('/api/jobs').query(q).send({ date: '2026-10-12', startTime: '09:00', endTime: '13:00', clientName: 'Factory', workType: 'employee', excludeFromHours: true }).expect(201)).body;
+    expect(cash.excludeFromHours).toBe(true);
+    expect((await a.get('/api/work-hours').query(q)).body.current.total).toBe(34.5);
+    await a.patch(`/api/jobs/${cash.id}`).query(q).send({ excludeFromHours: false }).expect(200);
+    expect((await a.get('/api/work-hours').query(q)).body.current.total).toBe(38.5);
   });
 });
 

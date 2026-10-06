@@ -54,6 +54,8 @@ const settingsSchema = new Schema(
       fortnightMode: { type: String, enum: ['rolling', 'fixed'], default: 'rolling' },
       fortnightAnchor: { type: String, default: '' },
       countTypes: { type: [String], default: ['employee', 'subcontract', 'own'] },
+      /** Employers / contractors whose work is never counted (e.g. cash work) */
+      excludeEmployers: { type: [String], default: [] },
     },
     integrations: {
       googleDrive: {

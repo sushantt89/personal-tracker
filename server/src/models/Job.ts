@@ -22,6 +22,8 @@ const jobSchema = new Schema(
     amount: moneyOpt,
     /** true = `amount` is only what you expect to be paid; the real figure replaces it when pay is recorded */
     amountEstimated: { type: Boolean, default: false },
+    /** Left out of the work-hours tracker (e.g. a cash job that isn't part of the hours being watched) */
+    excludeFromHours: { type: Boolean, default: false },
     hoursWorked: { type: Number, min: 0, max: 24 },
     address: addressSchema,
     meetingPoint: { type: String, maxlength: 300 },

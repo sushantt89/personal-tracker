@@ -34,6 +34,7 @@ const settingsPatch = z.object({
     hoursLimit: z.coerce.number().min(0).max(336), fortnightMode: z.enum(['rolling', 'fixed']),
     fortnightAnchor: z.union([z.string().regex(/^\d{4}-\d{2}-\d{2}$/), z.literal('')]),
     countTypes: z.array(z.enum(['employee', 'subcontract', 'own'])).min(1, 'Count at least one kind of work'),
+    excludeEmployers: z.array(z.string().trim().min(1).max(120)).max(50),
   }).partial().optional(),
   integrations: z.object({
     googleDrive: z.object({ enabled: z.boolean(), rootFolderName: z.string().trim().min(1).max(120), autoUploadInvoices: z.boolean(), autoUploadDocuments: z.boolean() }).partial(),

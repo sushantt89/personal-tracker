@@ -17,10 +17,11 @@ Adds up worked and still-scheduled hours per fortnight (two Monday-to-Sunday wee
 - **Any two weeks in a row** (default, strictest): this week is checked with last week *and* with next week. **Fixed fortnights** run back-to-back from a start date you choose.
 - **Room left this week** — how many more hours you could take on this week without any fortnight that includes it going over.
 - **Work that counts** — employee shifts, work under a contractor, own-business jobs; untick what shouldn't count.
+- **Leaving work out (e.g. cash work)** — under Settings on the page, tick an employer or contractor to stop counting all of their work; or open a single job and turn on *Don't count this in Work hours*. Left-out hours are not in any total, bar or warning; a note on the page says how many hours were left out of the current fortnight. Work you leave out here may still count under whatever rule applies to you.
 - **Notifications** — one when a fortnight that includes today, or one coming up, reaches 90% of the limit, and another when it goes over (part of "job reminders").
 - The app only adds up what you enter. If a limit applies by law or contract, check the exact rule with whoever sets it.
 
-API: `GET /api/work-hours` · settings under `PATCH /api/settings { work: { hoursLimit, fortnightMode: 'rolling'|'fixed', fortnightAnchor, countTypes[] } }`.
+API: `GET /api/work-hours` · settings under `PATCH /api/settings { work: { hoursLimit, fortnightMode: 'rolling'|'fixed', fortnightAnchor, countTypes[], excludeEmployers[] } }` · per job: `excludeFromHours`.
 
 ## Kilometre log
 Driving for work across a financial year (1 July – 30 June), from the saved daily routes. Needs **Settings → Travel** turned on with a home address.

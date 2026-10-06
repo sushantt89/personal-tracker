@@ -86,7 +86,7 @@ export interface ParseResponse {
   kind: 'schedule' | 'payment' | 'mixed' | 'unknown'; recipientName?: string; scheduleDate?: string; meetingPoint?: string; meetingTime?: string;
   jobs: ParsedJob[]; payments: ParsedPayment[]; warnings: string[]; unparsedLines: string[];
   summary: { jobCount: number; paymentCount: number; totalAmount: number; addressCount: number; dateCount: number; dates: string[] };
-  suggestedWorkType?: WorkType; suggestedContractorId?: string | null;
+  suggestedWorkType?: WorkType; suggestedContractorId?: string | null; /** who published the shift, when the screenshot says */ suggestedContractorName?: string;
   /** 'roster' = a shift list for an employer (pay usually unknown); 'message' = a schedule or payment message */
   format?: 'roster' | 'message'; text?: string; ocrConfidence?: number;
   messageHash: string; alreadyImported: { at: string; jobCount: number } | null; suggestedIncomeSourceId: string | null;

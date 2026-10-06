@@ -4,7 +4,7 @@ import mongoose from 'mongoose';
 import request from 'supertest';
 import path from 'node:path';
 import type { Express } from 'express';
-import { parseRoster, parseMessage } from '../src/services/parser/index.js';
+import { parseRoster, parseMessage, parseShiftCard } from '../src/services/parser/index.js';
 
 // Text exactly as OCR read a real roster screenshot (note "0ct" for "Oct")
 const OCR = `Tuesday 06/0ct/2026
@@ -81,6 +81,49 @@ describe('roster parser', () => {
     const msg = 'Hi Sush, schedule for Friday 2 Oct\n8:45am Priya K\n8 Fisher Street, Malvern SA 5061 ($35)\n10:00am Sonia\n25 Angus Street, Goodwood SA 5034 ($25)';
     expect(parseRoster(msg, { today: '2026-10-01' })).toBeNull();
     expect(parseMessage(msg, { today: '2026-10-01' }).jobs).toHaveLength(2);
+  });
+});
+
+// A single "shift details" screen as OCR reads it, icons and all (names, address and agency are made up)
+const SHIFT_CARD = `1:37                                 ul 4G BE
+<                   Shift details                 i=
+Jordan Example weekly
+wednesdays
+Current shift status
+1 Thursday, Oct 08, 2026
+(0 1:00 PM - 3:00 PM (2:00 hours)
+1] Job
+Cleaning (ACS)
+my Apartment 12, Level 3, 9 Sample Street Adelaide
+V' 5000
+®  Attachments
+2hrs
+if cannot find a free parking spot, please pay and send
+receipt for reimbursement
+Cleaning and for someone to help her with unpacking
+( general cleaning please ask the client for further
+assistance please thank you)
+=h       Sam Worker       2 Find a replacement
+Published by    A Bright Agency         [2] Chat
+()    ~                ® Open Timeclock`;
+
+describe('single shift screen from a rostering app', () => {
+  it('reads the client, date, times, address, role, notes and who published it', () => {
+    const r = parseShiftCard(SHIFT_CARD, { today: '2026-10-07' })!;
+    expect(r.jobs).toHaveLength(1);
+    expect(r.publisher).toBe('Bright Agency');
+    const j = r.jobs[0];
+    expect(j).toMatchObject({ clientName: 'Jordan Example', date: '2026-10-08', startTime: '13:00', endTime: '15:00', hours: 2, warnings: [] });
+    expect(j.address).toMatchObject({ line1: 'Apartment 12, Level 3, 9 Sample Street', suburb: 'Adelaide', state: 'SA', postcode: '5000', formatted: 'Apartment 12, Level 3, 9 Sample Street, Adelaide SA 5000' });
+    expect(j.description).toBe('Cleaning (ACS) · Jordan Example weekly wednesdays');
+    expect(j.specialInstructions).toBe('if cannot find a free parking spot, please pay and send receipt for reimbursement Cleaning and for someone to help her with unpacking (general cleaning please ask the client for further assistance please thank you)');
+    // None of the app's own buttons or the worker's name leak into the job
+    expect(JSON.stringify({ ...j, sourceText: '' })).not.toMatch(/Timeclock|replacement|Sam Worker|Attachments|4G/);
+  });
+  it('leaves rosters with several shifts, and ordinary messages, to the other readers', () => {
+    expect(parseShiftCard(OCR, { today: '2026-10-03' })).toBeNull();
+    expect(parseShiftCard('Hi Sam\nSchedule for THU 1 OCT\nJo T 9am - 10am ($30)\n12 Example Street, Parkside', { today: '2026-09-30' })).toBeNull();
+    expect(parseShiftCard('Shift details\nThursday, Oct 08, 2026\nno times here\nPublished by X', { today: '2026-10-07' })).toBeNull();
   });
 });
 
@@ -191,5 +234,15 @@ describe('roster import and pay added later', () => {
     const b = request.agent(app);
     await b.post('/api/auth/register').send({ name: 'Other', email: 'other-roster@example.com', password: 'password123' }).expect(201);
     await b.post('/api/jobs/record-pay').send({ jobIds: [unpaid[0].id], total: 50 }).expect(400);
+  });
+
+  it('imports a shift screen as a job under the agency that published it', async () => {
+    const parsed = (await a.post('/api/import/parse').query(q).send({ text: SHIFT_CARD }).expect(200)).body;
+    expect(parsed).toMatchObject({ format: 'message', suggestedWorkType: 'subcontract', suggestedContractorId: null, suggestedContractorName: 'Bright Agency' });
+    expect(parsed.jobs[0]).toMatchObject({ clientName: 'Jordan Example', date: '2026-10-08', hours: 2 });
+    // Once the agency exists as a contractor, it is suggested by id
+    const agency = (await a.post('/api/clients').query(q).send({ name: 'Bright Agency', type: 'contractor' }).expect(201)).body;
+    const again = (await a.post('/api/import/parse').query(q).send({ text: SHIFT_CARD }).expect(200)).body;
+    expect(again.suggestedContractorId).toBe(agency.id);
   });
 });

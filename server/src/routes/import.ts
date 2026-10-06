@@ -2,10 +2,10 @@ import { Router } from 'express';
 import crypto from 'node:crypto';
 import { z } from 'zod';
 import multer from 'multer';
-import { parseMessage, parseRoster, normaliseForHash, formatAddress, type ParseResult } from '../services/parser/index.js';
+import { parseMessage, parseRoster, parseShiftCard, normaliseForHash, formatAddress, type ParseResult } from '../services/parser/index.js';
 import { extractText, isHeic, OCR_IMAGE_TYPES } from '../services/ocr/engine.js';
 import { env } from '../config/env.js';
-import { ImportBatch, Job, Income, IncomeSource, Invoice, Settings } from '../models/index.js';
+import { ImportBatch, Job, Income, IncomeSource, Invoice, Settings, Client } from '../models/index.js';
 import { WORK_TYPES } from '../models/Job.js';
 import { queueCalendarSync } from '../services/google/calendar.js';
 import { queueTravelDay } from '../services/travel/index.js';
@@ -76,11 +76,31 @@ async function reviewPayload(userId: string, text: string, result: ParseResult, 
     suggestedWorkType: jobSources[0]?.workType ?? 'own',
     suggestedContractorId: jobSources[0]?.contractorId ? String(jobSources[0].contractorId) : null,
     paymentMatches,
+    ...(await publisherSuggestion(userId, (result as any).publisher, jobSources)),
+  };
+}
+
+/**
+ * A shift screen names who published it. Use that as the contractor the work is done under:
+ * an existing contractor with that name (and its income source) if there is one, otherwise the name for a new one.
+ */
+async function publisherSuggestion(userId: string, publisher: string | undefined, sources: any[]) {
+  if (!publisher) return {};
+  const existing = await Client.findOne({ userId, name: new RegExp(`^${escapeRegex(publisher)}$`, 'i') }).lean();
+  const source = existing ? sources.find((s) => String(s.contractorId ?? '') === String(existing._id)) : undefined;
+  return {
+    suggestedWorkType: source?.workType === 'employee' ? 'employee' : 'subcontract',
+    suggestedContractorId: existing ? String(existing._id) : null,
+    suggestedContractorName: existing?.name ?? publisher,
+    ...(source ? { suggestedIncomeSourceId: String(source._id) } : {}),
   };
 }
 
 /** A roster (labelled start/finish times or a list of dated shifts) is read by the roster parser, anything else as a message. */
 function analyse(text: string, today: string, employer?: string): { result: ParseResult; format: 'roster' | 'message' } {
+  // A single "shift details" screen from a rostering app: one job at a client's place, published by an agency
+  const card = parseShiftCard(text, { today });
+  if (card) return { result: card, format: 'message' };
   const roster = parseRoster(text, { today, employer });
   return roster ? { result: roster, format: 'roster' } : { result: parseMessage(text, { today }), format: 'message' };
 }

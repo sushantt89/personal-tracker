@@ -115,7 +115,7 @@ export default function PasteImport() {
       setSourceId(r.suggestedIncomeSourceId ?? '');
       setWorkType(r.suggestedWorkType ?? 'own');
       const sc = contractors.find((x) => x.id === r.suggestedContractorId);
-      setContractor(sc ? { id: sc.id, name: sc.name } : { name: '' });
+      setContractor(sc ? { id: sc.id, name: sc.name } : { name: r.suggestedContractorName ?? '' });
       setAllowDuplicates(false);
   };
 

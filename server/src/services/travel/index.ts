@@ -33,8 +33,10 @@ export async function geocode(userId: string, address: string, countryCode = 'au
   // A house number can match the same street in the wrong suburb, so check the postcode when we have one,
   // and fall back to the street without its number (OSM often lacks house numbers).
   const expectedPostcode = /\b(\d{4})\b(?!.*\b\d{4}\b)/.exec(address.replace(/^\s*[\d/-]+[a-z]?\s+/i, ''))?.[1];
-  const simpler = address.replace(/^\s*(?:unit|u)?\s*\d+[a-z]?\s*\/\s*/i, '').replace(/^\s*\d+[a-z]?(-\d+)?\s+/, '');
-  const queries = simpler !== address ? [address, simpler] : [address];
+  // Maps rarely know apartment or level numbers: "Apartment 12, Level 3, 9 Sample Street…" is looked up as "9 Sample Street…"
+  const noUnit = address.replace(/^\s*(?:(?:apartment|apt|unit|level|lvl|suite|shop|flat|lot|floor|villa|townhouse)\s*[a-z0-9-]+\s*,?\s*)+(?=\d)/i, '');
+  const simpler = noUnit.replace(/^\s*(?:unit|u)?\s*\d+[a-z]?\s*\/\s*/i, '').replace(/^\s*\d+[a-z]?(-\d+)?\s+/, '');
+  const queries = [...new Set([noUnit, simpler])];
   let hit: (LatLng & { displayName?: string }) | null = null;
   let firstAny: (LatLng & { displayName?: string }) | null = null;
   for (const q of queries) {

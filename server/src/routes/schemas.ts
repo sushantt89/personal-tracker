@@ -88,6 +88,7 @@ export const expenseSchema = z.object({
   billId: zOptId,
   billOccurrence: zOptDate,
   receiptId: zOptId,
+  contractorId: zOptId,
   gst: zOptMoney,
   notes: zOptStr(2000),
 });

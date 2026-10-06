@@ -23,7 +23,7 @@ export interface Income {
 
 export interface Expense {
   id: Id; date: string; amount: number; categoryId?: Id | null; description?: string; merchant?: string; paymentMethod?: string; isRecurring?: boolean;
-  billId?: Id | null; billOccurrence?: string; receiptId?: Id | null; gst?: number; notes?: string;
+  billId?: Id | null; billOccurrence?: string; receiptId?: Id | null; contractorId?: Id | null; gst?: number; notes?: string;
 }
 
 export type Frequency = 'weekly' | 'fortnightly' | 'monthly' | 'quarterly' | 'yearly' | 'custom';

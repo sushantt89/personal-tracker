@@ -6,7 +6,7 @@ import {
 import CloseIcon from '@mui/icons-material/Close';
 import { useCategories, useIncomeSources, useClients, useSettings } from '../hooks/useLookups';
 
-export type FieldType = 'text' | 'textarea' | 'number' | 'money' | 'date' | 'time' | 'select' | 'category' | 'source' | 'client' | 'paymentMethod' | 'switch' | 'tags' | 'heading';
+export type FieldType = 'text' | 'textarea' | 'number' | 'money' | 'date' | 'time' | 'select' | 'category' | 'source' | 'client' | 'contractor' | 'paymentMethod' | 'switch' | 'tags' | 'heading';
 
 export interface FieldDef {
   name: string;
@@ -90,6 +90,16 @@ export function FieldInput({ f, values, onChange, error }: { f: FieldDef; values
               {c.name}
             </MenuItem>
           ))}
+        </TextField>
+      );
+    }
+    case 'contractor': {
+      // One of the contractors already set up (or none)
+      const opts = (clients.data ?? []).filter((c) => c.type === 'contractor');
+      return (
+        <TextField {...common} select value={opts.some((c) => c.id === v) ? v : ''} onChange={(e) => onChange(f.name, e.target.value)}>
+          <MenuItem value=""><em>None</em></MenuItem>
+          {opts.map((c) => <MenuItem key={c.id} value={c.id}>{c.name}</MenuItem>)}
         </TextField>
       );
     }

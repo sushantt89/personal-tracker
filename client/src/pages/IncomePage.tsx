@@ -12,12 +12,13 @@ import { incomeFields, incomeDefaults } from '../utils/forms';
 import { money, fmtDate, localToday } from '../utils/format';
 import { patch, post } from '../api/client';
 import { useConfirm } from '../components/common';
-import { useLookupMaps } from '../hooks/useLookups';
+import { useLookupMaps, useClients } from '../hooks/useLookups';
 import { useInvalidateFinance } from '../hooks/useInvalidate';
 import { useToast } from '../hooks/useToast';
 
 export default function IncomePage() {
   const { sources, srcById } = useLookupMaps();
+  const contractors = (useClients().data ?? []).filter((c) => c.type === 'contractor');
   const invalidate = useInvalidateFinance();
   const toast = useToast();
   const confirm = useConfirm();
@@ -45,6 +46,8 @@ export default function IncomePage() {
     filters: [
       { name: 'status', label: 'Status', options: ['expected', 'pending', 'paid', 'cancelled'].map((s) => ({ value: s, label: s })) },
       { name: 'incomeSourceId', label: 'Source', options: sources.map((s) => ({ value: s.id, label: s.name })) },
+      // Income for work under a contractor is recorded against the contractor who pays it
+      { name: 'clientId', label: 'Contractor', options: contractors.map((c) => ({ value: c.id, label: c.name })) },
     ],
     columns: [
       { key: 'date', label: 'Date', render: (i) => fmtDate(i.date, 'ddd D MMM YYYY') },

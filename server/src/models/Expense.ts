@@ -14,6 +14,8 @@ const expenseSchema = new Schema(
     billId: ref('RecurringBill'),
     billOccurrence: dateOpt, // which due date of the bill this payment covers
     receiptId: ref('Document'),
+    /** The contractor this cost was for (e.g. parking or supplies on their job, to claim back) */
+    contractorId: ref('Client'),
     gst: { type: Number, min: 0 },
     notes: { type: String, maxlength: 2000 },
   },

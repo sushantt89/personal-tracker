@@ -476,9 +476,9 @@ incomeRouter.use('/', incomeCrud);
 // ---------- Expenses ----------
 export const expensesRouter = crudRouter({
   model: Expense, entity: 'Expense', schema: expenseSchema,
-  refs: { categoryId: Category, billId: RecurringBill },
+  refs: { categoryId: Category, billId: RecurringBill, contractorId: Client },
   searchFields: ['merchant', 'description', 'notes', 'paymentMethod'],
-  filterFields: ['categoryId', 'paymentMethod', 'billId', 'isRecurring'],
+  filterFields: ['categoryId', 'paymentMethod', 'billId', 'isRecurring', 'contractorId'],
   dateField: 'date',
 });
 

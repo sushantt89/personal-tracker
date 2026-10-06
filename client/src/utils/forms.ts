@@ -10,6 +10,7 @@ export const expenseFields: FieldDef[] = [
   { name: 'paymentMethod', label: 'Payment method', type: 'paymentMethod', quick: true },
   { name: 'merchant', label: 'Merchant', type: 'text', quick: true },
   { name: 'description', label: 'Description', type: 'text' },
+  { name: 'contractorId', label: 'For contractor (optional)', type: 'contractor', helper: 'A cost on a contractor’s job, e.g. parking or supplies to claim back' },
   { name: 'isRecurring', label: 'Recurring expense', type: 'switch' },
   { name: 'notes', label: 'Notes', type: 'textarea' },
 ];

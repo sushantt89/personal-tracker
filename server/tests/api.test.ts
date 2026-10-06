@@ -490,4 +490,30 @@ describe('reset everything', () => {
     await b.post('/api/invoices').query(q).send({ issueDate: '2026-10-09', clientName: 'Agency', items: [{ description: 'E', quantity: 1, rate: 20, jobId: j5.id }], status: 'paid' }).expect(201);
     expect((await incomeOf()).find((i) => i.jobId === j5.id)).toMatchObject({ status: 'paid', amount: 20 });
   });
+
+  it('filters income and expenses by contractor', async () => {
+    const b = request.agent(app);
+    await b.post('/api/auth/register').send({ name: 'Filter', email: 'filter@example.com', password: 'password123' }).expect(201);
+    const q = { today: '2026-10-10' };
+    const agency = (await b.post('/api/clients').query(q).send({ name: 'Bright Agency', type: 'contractor' }).expect(201)).body;
+    const other = (await b.post('/api/clients').query(q).send({ name: 'Other Co', type: 'contractor' }).expect(201)).body;
+    // A job under the agency: its income is recorded against the agency
+    await b.post('/api/jobs').query(q).send({ date: '2026-10-06', clientName: 'Jordan', workType: 'subcontract', contractorId: agency.id, amount: 60 }).expect(201);
+    await b.post('/api/jobs').query(q).send({ date: '2026-10-06', clientName: 'Own client', amount: 40 }).expect(201);
+    const inc = (await b.get(`/api/income?from=2026-10-01&to=2026-10-31&clientId=${agency.id}`).query(q).expect(200)).body.items;
+    expect(inc.map((i: any) => i.amount)).toEqual([60]);
+    expect((await b.get(`/api/income?from=2026-10-01&to=2026-10-31&clientId=${other.id}`).query(q)).body.items).toHaveLength(0);
+
+    // Expenses can be marked as being for a contractor, and filtered by it
+    const parking = (await b.post('/api/expenses').query(q).send({ date: '2026-10-06', amount: 12, merchant: 'Car park', contractorId: agency.id }).expect(201)).body;
+    await b.post('/api/expenses').query(q).send({ date: '2026-10-06', amount: 30, merchant: 'Groceries' }).expect(201);
+    expect(parking.contractorId).toBe(agency.id);
+    const exp = (await b.get(`/api/expenses?from=2026-10-01&to=2026-10-31&contractorId=${agency.id}`).query(q).expect(200)).body.items;
+    expect(exp.map((e: any) => e.merchant)).toEqual(['Car park']);
+    expect((await b.get('/api/expenses?from=2026-10-01&to=2026-10-31').query(q)).body.items).toHaveLength(2);
+    // Someone else's contractor can't be attached, and the link can be cleared
+    await b.post('/api/expenses').query(q).send({ date: '2026-10-06', amount: 5, contractorId: '64b000000000000000000001' }).expect(400);
+    const cleared = (await b.patch(`/api/expenses/${parking.id}`).query(q).send({ contractorId: null }).expect(200)).body;
+    expect(cleared.contractorId ?? null).toBeNull();
+  });
 });

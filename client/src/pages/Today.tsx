@@ -13,7 +13,7 @@ import type { BillDue, Job, TravelDay } from '../api/types';
 import { SectionCard, LoadingBlock, ErrorBlock, WeekChange } from '../components/common';
 import SwipeAction from '../components/SwipeAction';
 import { HoursBar, hrs, type WorkHoursData } from './WorkHours';
-import { money, fmtDay, fmtShort, fmtTime, fmtDate, mapsUrl, directionsUrl, localToday, addDays } from '../utils/format';
+import { money, fmtDay, fmtShort, fmtTime, fmtDate, mapsUrl, routeGroups, localToday, addDays } from '../utils/format';
 import { useAuth } from '../hooks/useAuth';
 import { useToast } from '../hooks/useToast';
 import { useInvalidateFinance } from '../hooks/useInvalidate';
@@ -49,7 +49,8 @@ export default function Today() {
   const jobs: Job[] = [...d.today.jobs].filter((j: Job) => j.status !== 'cancelled').sort((a: Job, b: Job) => (a.startTime ?? '99').localeCompare(b.startTime ?? '99'));
   const left = jobs.filter((j) => j.status !== 'completed');
   // The route covers the jobs still to do, so it never sends you back to one that is finished
-  const stops = (left.length ? left : jobs).filter((j) => j.address?.formatted).map((j) => j.address!.formatted!);
+  // Jobs more than an hour apart get their own route (a morning run and an evening job aren't one trip)
+  const routes = routeGroups((left.length ? left : jobs).map((j) => ({ startTime: j.startTime, endTime: j.endTime, hours: j.hoursWorked, address: j.address?.formatted })));
   const tasks: any[] = d.today.tasks.filter((t: any) => t.status !== 'cancelled');
   const billsToday: BillDue[] = d.today.billsDue.filter((b: BillDue) => !b.paid);
   const billsSoon: BillDue[] = d.bills.upcoming.filter((b: BillDue) => b.dueDate > today && b.dueDate <= addDays(today, 7));
@@ -85,7 +86,10 @@ export default function Today() {
           <Box><SectionCard
             title={jobs.length ? `Today’s work · ${jobs.length} job${jobs.length === 1 ? '' : 's'}` : 'Today’s work'}
             subtitle={jobs.length ? [`${hrs(jobs.reduce((a, j) => a + jobHours(j), 0))}`, jobs.some((j) => j.amount) ? money(jobs.reduce((a, j) => a + (j.amount ?? 0), 0)) : '', km > 0 ? `${Math.round(km * 10) / 10} km driving` : '', left.length ? `${left.length} to go` : 'all done'].filter(Boolean).join(' · ') : undefined}
-            action={stops.length > 0 ? <Button size="small" variant="contained" startIcon={<DirectionsIcon />} href={directionsUrl(stops) ?? '#'} target="_blank" rel="noreferrer">{stops.length > 1 ? 'Start route' : 'Directions'}</Button> : undefined}
+            action={routes.length > 0 ? <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap" justifyContent="flex-end">{routes.map((r, i) => (
+              <Button key={i} size="small" variant={i === 0 ? 'contained' : 'outlined'} startIcon={<DirectionsIcon />} href={r.url ?? '#'} target="_blank" rel="noreferrer">
+                {routes.length > 1 ? `${r.startTime ? fmtTime(r.startTime) : `Route ${i + 1}`} · ${r.stops.length} stop${r.stops.length === 1 ? '' : 's'}` : r.stops.length > 1 ? 'Start route' : 'Directions'}
+              </Button>))}</Stack> : undefined}
             noPad={jobs.length > 0}>
             {!jobs.length ? (
               <Box>

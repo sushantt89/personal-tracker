@@ -15,7 +15,7 @@ import { PageHeader, SectionCard, LoadingBlock, StatusChip, useConfirm } from '.
 import { EntityFormDialog } from '../components/EntityForm';
 import { taskFields, taskDefaults, jobFields, jobToForm, jobFromForm, addToGoogleField, taskInGoogle } from '../utils/forms';
 import { useIntegrations, useSettings, useJobDerive } from '../hooks/useLookups';
-import { addDays, fmtDay, fmtTime, money, localToday, directionsUrl, fmtDate } from '../utils/format';
+import { addDays, fmtDay, fmtTime, money, localToday, directionsUrl, routeGroups, fmtDate } from '../utils/format';
 import { useInvalidateFinance } from '../hooks/useInvalidate';
 import { useToast } from '../hooks/useToast';
 import { useThemeMode } from '../theme/ThemeModeProvider';
@@ -174,7 +174,13 @@ export default function MyDay() {
             </SectionCard>
             {jobs.length > 0 && (
               <SectionCard title="Work today" subtitle={`${jobs.length} job(s) · ${money(jobs.reduce((a, j) => a + (j.amount ?? 0), 0))}`}
-                action={jobs.filter((j) => j.location).length > 1 ? <Button size="small" startIcon={<DirectionsIcon />} href={directionsUrl(jobs.filter((j) => j.location).map((j) => j.location!)) ?? '#'} target="_blank">Route</Button> : undefined}>
+                action={(() => {
+                  // Jobs more than an hour apart get their own route
+                  const routes = routeGroups(jobs.map((j) => ({ startTime: j.startTime, endTime: j.endTime, address: j.location })));
+                  if (routes.length < 2 && (routes[0]?.stops.length ?? 0) < 2) return undefined;
+                  return <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap" justifyContent="flex-end">{routes.map((r, i) => (
+                    <Button key={i} size="small" startIcon={<DirectionsIcon />} href={r.url ?? '#'} target="_blank" rel="noreferrer">{routes.length > 1 ? `${r.startTime ? fmtTime(r.startTime) : `Route ${i + 1}`} (${r.stops.length})` : 'Route'}</Button>))}</Stack>;
+                })()}>
                 <Stack spacing={0.5}>
                   {(() => {
                     const legTo = new Map((travel.data?.day?.legs ?? []).filter((l) => l.toJobId).map((l) => [l.toJobId!, l]));

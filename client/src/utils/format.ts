@@ -46,3 +46,34 @@ export const directionsUrl = (stops: string[]) => {
   if (list.length > 1) params.set('waypoints', list.slice(0, -1).join('|'));
   return `https://www.google.com/maps/dir/?${params.toString()}`;
 };
+
+export interface RouteStop { startTime?: string | null; endTime?: string | null; /** hours the job takes, when there's no end time */ hours?: number | null; address?: string | null }
+export interface RouteGroup { startTime?: string; stops: string[]; url?: string }
+const toMin = (t?: string | null) => (t && /^\d{1,2}:\d{2}$/.test(t) ? Number(t.split(':')[0]) * 60 + Number(t.split(':')[1]) : undefined);
+
+/**
+ * Splits a day's jobs into separate driving routes, so a morning run and an evening job don't end up as one trip.
+ * A new route starts when the next job begins more than `gapMinutes` after the previous one finishes.
+ * When a job has no finish time (and no hours), the gap is measured start to start and has to be over 3 hours —
+ * back-to-back jobs listed with only a start time stay together.
+ */
+export function routeGroups(jobs: RouteStop[], gapMinutes = 60): RouteGroup[] {
+  const sorted = [...jobs].sort((a, b) => (toMin(a.startTime) ?? 9999) - (toMin(b.startTime) ?? 9999));
+  const groups: { startTime?: string; stops: string[] }[] = [];
+  let prev: RouteStop | undefined;
+  for (const j of sorted) {
+    const start = toMin(j.startTime);
+    let split = !prev;
+    if (prev && start !== undefined) {
+      const pStart = toMin(prev.startTime);
+      const pEnd = toMin(prev.endTime) ?? (pStart !== undefined && prev.hours ? pStart + Math.round(prev.hours * 60) : undefined);
+      if (pEnd !== undefined) split = start - pEnd > gapMinutes;
+      else if (pStart !== undefined) split = start - pStart > 180;
+    }
+    if (split) groups.push({ startTime: j.startTime ?? undefined, stops: [] });
+    const addr = j.address?.trim();
+    if (addr) groups[groups.length - 1].stops.push(addr);
+    prev = j;
+  }
+  return groups.filter((g) => g.stops.length).map((g) => ({ ...g, url: directionsUrl(g.stops) }));
+}

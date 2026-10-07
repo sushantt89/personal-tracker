@@ -21,6 +21,7 @@ export default function AlertsMenu() {
       <Stack direction="row" alignItems="center" sx={{ px: 2, py: 1.25 }}>
         <Typography variant="subtitle1" fontWeight={700} sx={{ flex: 1 }}>Notifications{unread ? ` · ${unread} new` : ''}</Typography>
         <Button size="small" disabled={!unread} onClick={() => act('read', { all: true })}>Mark all read</Button>
+        <Button size="small" color="inherit" disabled={!items.length} onClick={() => act('dismiss', { all: true })}>Clear all</Button>
       </Stack>
       <Divider />
       <Box sx={{ overflowY: 'auto', flex: 1 }}>

@@ -113,24 +113,97 @@ describe('helpers', () => {
   it('infers state from postcode', () => {
     expect(parseAddress(['10 Smith St Richmond 3121']).state).toBe('VIC');
     // A comma after the house number is tolerated and dropped
-    expect(parseAddress([' 29, Porter Street, Parkside SA 5063 '])).toMatchObject({ line1: '29 Porter Street', suburb: 'Parkside', state: 'SA', postcode: '5063', formatted: '29 Porter Street, Parkside SA 5063' });
+    expect(parseAddress([' 12, Example Street, Parkside SA 5063 '])).toMatchObject({ line1: '12 Example Street', suburb: 'Parkside', state: 'SA', postcode: '5063', formatted: '12 Example Street, Parkside SA 5063' });
     expect(parseAddress(['Unit 2, 14 Smith Road, Unley']).line1).toBe('Unit 2, 14 Smith Road');
   });
 });
 
 describe('schedule with a comma after the house number, ticked checklists and key notes', () => {
   const r = parseMessage(readFileSync(new URL('./fixtures/schedule-comma-address.txt', import.meta.url), 'utf8'), { today: '2026-09-30' });
-  it('finds every address, including "29, Porter Street"', () => {
-    expect(r.jobs.map((j) => j.address?.formatted)).toEqual(['29 Porter Street, Parkside SA 5063', '6 Boffa Street, Goodwood', '13 Windermere Avenue, Clapham', '1 Woodfield Avenue, Warradale']);
+  it('finds every address, including "12, Example Street"', () => {
+    expect(r.jobs.map((j) => j.address?.formatted)).toEqual(['12 Example Street, Parkside SA 5063', '8 Sample Street, Goodwood', '15 Demo Avenue, Clapham', '3 Test Avenue, Warradale']);
     expect(r.jobs.every((j) => j.date === '2026-10-01' && j.amount === 30)).toBe(true);
     expect(r.jobs.flatMap((j) => j.warnings ?? [])).toEqual([]);
   });
   it('keeps key and passcode notes as access instructions and drops the ***** lines', () => {
-    expect(r.jobs[0].specialInstructions).toContain('Passcode 020678');
+    expect(r.jobs[0].specialInstructions).toContain('Passcode 000000');
     expect(r.jobs[1].specialInstructions).toContain('under the mat');
     expect(r.jobs.map((j) => `${j.description ?? ''} ${j.specialInstructions ?? ''} ${(j.tasks ?? []).join(' ')}`).join(' ')).not.toContain('***');
   });
   it('turns each ticked line into one task', () => {
     expect(r.jobs[2].tasks).toEqual(['Kitchen full clean', 'Bathroom x2 full clean', 'Thorough dusting and spray wipe surfaces, tables, shelves', 'Dust spray wipe skirtings and window seals', 'Laundry', 'Floor - vacuum and mop']);
+  });
+});
+
+describe('loosely written job headers and street names', () => {
+  // Made-up names and addresses, shaped like a real team schedule
+  const msg = `Schedule for Thu 8 OCT
+
+Meet at Example Cafe tomorrow at 8:30am.
+
+Team = Sam, Lee and Kim
+
+⬇️⬇️⬇️
+
+Alex Stone - 900am ($40)
+
+53 Example Hill Road, Stirling
+
+🔑 is under the mat next to the garage
+
+✅ Bathrooms, kitchen, Laundry, dusting / spray wipe.
+‼️ thorough vacuum + mop
+
+*********
+
+Robin Vale - 10:30am  ($30)
+
+19 Sample Rd
+Stirling, SA, Australia
+
+Kitchen. 3 bathroom. Laundry.
+
+*********
+
+Pat - 11am ($25)
+
+11 vista terrace, Stirling
+
+Kitchen, 2 bathrooms,
+Vacuum carpet
+
+********
+
+Jo H - 12:30pm ($25)
+
+4 Sample Ct, CRAFERS
+
+✅ kitchen
+✅ dusting`;
+  const r = parseMessage(msg, { today: '2026-10-07' });
+  it('reads a time written without a colon ("900am") so the first job is not lost', () => {
+    expect(r.jobs.map((j) => [j.clientName, j.startTime, j.amount])).toEqual([['Alex Stone', '09:00', 40], ['Robin Vale', '10:30', 30], ['Pat', '11:00', 25], ['Jo H', '12:30', 25]]);
+    expect(r.jobs[0].address?.formatted).toBe('53 Example Hill Road, Stirling');
+  });
+  it('keeps a street whose name is itself a street word ("11 vista terrace")', () => {
+    expect(r.jobs[2].address?.line1).toBe('11 vista terrace');
+    expect(r.jobs[2].address?.suburb).toBe('Stirling');
+    expect(parseAddress(['10 View Street, Unley']).line1).toBe('10 View Street');
+    expect(parseAddress(['5 Smith St Glen Osmond'])).toMatchObject({ line1: '5 Smith St', suburb: 'Glen Osmond' });
+    expect(parseAddress(['7 Esplanade, Henley Beach']).line1).toBe('7 Esplanade');
+  });
+  it('understands many ways of writing the header line', () => {
+    const h = (s: string) => { const x = parseHeader(s); return x ? [x.clientName, x.startTime, x.endTime, x.amount] : null; };
+    expect(h('Alex Stone - 1030am ($40)')).toEqual(['Alex Stone', '10:30', undefined, 40]);
+    expect(h('Alex Stone – 9AM (40$)')).toEqual(['Alex Stone', '09:00', undefined, 40]);
+    expect(h('1) Alex Stone - 9am ($40)')).toEqual(['Alex Stone', '09:00', undefined, 40]);
+    expect(h('Alex Stone - 12noon ($40)')).toEqual(['Alex Stone', '12:00', undefined, 40]);
+    expect(h('Alex Stone - 9-11am ($40)')).toEqual(['Alex Stone', '09:00', '11:00', 40]);
+    expect(h('Alex Stone - 11-1pm ($40)')).toEqual(['Alex Stone', '11:00', '13:00', 40]);
+    // A bare number is only taken as a time when the line also has a price, and is flagged for checking
+    expect(h('Alex Stone - 9 ($40)')).toEqual(['Alex Stone', '09:00', undefined, 40]);
+    expect(h('Alex Stone - 930 $40')).toEqual(['Alex Stone', '09:30', undefined, 40]);
+    expect(parseHeader('Alex Stone - 0900 ($40)')?.ambiguousTime).toBe(true);
+    for (const notHeader of ['Vacuum 3 bedrooms', 'Kitchen. 3 bathroom. Toilet next to laundry.', 'They have 2 dogs. Friendly and will bark for 2 minutes', 'Team = Sam, Lee and Kim', '53 Example Hill Road, Stirling']) expect(parseHeader(notHeader)).toBeNull();
   });
 });

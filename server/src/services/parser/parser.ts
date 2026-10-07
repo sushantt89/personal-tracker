@@ -7,13 +7,16 @@ import type { ParsedJob, ParsedPayment, ParseResult } from './types.js';
  * Pure function: no I/O, never saves anything. The caller shows the result for review.
  */
 
-const TIME_SRC = String.raw`(\d{1,2})(?:[:.](\d{2}))?\s*(a\.?m\.?|p\.?m\.?)|(\d{1,2}):(\d{2})`;
+// The separator is optional before am/pm, so "900am" and "1030am" read the same as "9:00am" and "10.30am"
+const TIME_SRC = String.raw`(\d{1,2})(?:[:.]?(\d{2}))?\s*(a\.?m\.?|p\.?m\.?)|(\d{1,2}):(\d{2})`;
 const TIME_RE = new RegExp(`\\b(?:${TIME_SRC})(?![\\d/])`, 'i');
-const RANGE_RE = new RegExp(`\\b(?:${TIME_SRC})\\s*(?:-|to|until|till)\\s*(?:${TIME_SRC})`, 'i');
-const AMOUNT_RE = /\(?\s*(?:AUD\s*|A?\$\s*)(\d{1,3}(?:,\d{3})+|\d+)(?:\.(\d{1,2}))?\s*\)?|\b(\d+(?:\.\d{1,2})?)\s*(?:dollars|bucks)\b/i;
+const RANGE_RE = new RegExp(`\\b(?:${TIME_SRC})\\s*(?:[-–—]|to|until|till)\\s*(?:${TIME_SRC})`, 'i');
+const AMOUNT_RE = /\(?\s*(?:AUD\s*|A?\$\s*)(\d{1,3}(?:,\d{3})+|\d+)(?:\.(\d{1,2}))?\s*\)?|\b(\d+(?:\.\d{1,2})?)\s*(?:(?:dollars|bucks)\b|\$(?!\s*\d))/i;
+/** A time written as a bare number between the name and the price: " - 9 (", " @ 930 $", " - 0900 (" */
+const BARE_TIME_RE = /(?:\s[-–—@:]|:)\s*([01]?\d|2[0-3])([0-5]\d)?\s*(?:h|hrs?)?\s*((?:[-–—]\s*)?[(]?\s*(?:AUD|A?\$))/i;
 const HOURS_RE = /\(?\b(\d+(?:\.\d+)?)\s*(?:hours?|hrs?)\b\)?/i;
 const GREETING_RE = /^(?:hi|hello|hey|hiya|good\s+(?:morning|afternoon|evening)|dear)\b[\s,!]*(.*?)[,!.]*$/i;
-const MEETING_RE = /^(?:please\s+)?(?:meet(?:ing)?(?:\s+point)?|start(?:ing)?(?:\s+(?:point|location))?|pick\s*up)\s*(?:is\s+)?(?:at|:|@)?\s*(.+?)(?:\s+(?:at|@|by)\s+(\d{1,2}(?:[:.]\d{2})?\s*(?:am|pm)))?\s*[.!]?$/i;
+const MEETING_RE = /^(?:please\s+)?(?:meet(?:ing)?(?:\s+point)?|start(?:ing)?(?:\s+(?:point|location))?|pick\s*up)\s*(?:is\s+)?(?:at|:|@)?\s*(.+?)(?:\s+(?:at|@|by)\s+(\d{1,2}(?:[:.]?\d{2})?\s*(?:am|pm)))?\s*[.!]?$/i;
 const PAYMENT_HINT_RE = /\b(received|paid|payment|transfer(?:red)?|deposit(?:ed)?|sent you|credited|remittance|payid|osko)\b/i;
 const PHONE_RE = /(?:\+?61|0)[2-478](?:[ -]?\d){8}\b/;
 
@@ -97,7 +100,15 @@ interface Header {
 /** Detects a job header line such as "Andrew Dana - 10am ($30)" or "10:00am Sonia $25". */
 export function parseHeader(line: string): Header | null {
   if (isStreetLine(line)) return null;
-  let rest = line;
+  let rest = line
+    // "12 noon", "noon", "midday" → 12pm
+    .replace(/\b(?:12\s*)?(?:noon|midday)\b/i, '12pm')
+    // "9-11am", "11 to 1pm": the first time borrows am/pm from the second (flipped when it would otherwise run backwards)
+    .replace(/\b(\d{1,2})((?:[:.]\d{2})?)(\s*(?:[-–—]|to|until|till)\s*)(\d{1,2})((?:[:.]?\d{2})?)\s*(am|pm)\b/i, (_m, h1, m1, sep, h2, m2, mer) => {
+      const a = Number(h1) % 12, b = Number(h2) % 12, pm = /p/i.test(mer);
+      const first = a > b || (a === b && m1 > m2) ? (pm ? 'am' : 'pm') : mer;
+      return `${h1}${m1}${first}${sep}${h2}${m2}${mer}`;
+    });
   let startTime: string | undefined, endTime: string | undefined, ambiguous = false;
 
   const range = RANGE_RE.exec(rest);
@@ -111,11 +122,21 @@ export function parseHeader(line: string): Header | null {
     rest = rest.replace(range[0], ' ');
   } else {
     const t = TIME_RE.exec(rest);
-    if (!t) return null;
-    const r = timeFromGroups(Array.from(t), 1);
-    startTime = r.time;
-    ambiguous = r.ambiguous;
-    rest = rest.replace(t[0], ' ');
+    if (t) {
+      const r = timeFromGroups(Array.from(t), 1);
+      startTime = r.time;
+      ambiguous = r.ambiguous;
+      rest = rest.replace(t[0], ' ');
+    } else {
+      // No am/pm and no colon — "Name - 9 ($40)", "Name - 930 ($40)", "Name - 0900 $40". Only trusted when the line
+      // also carries a price, and flagged so the time gets checked.
+      const bare = BARE_TIME_RE.exec(rest);
+      if (!bare || parseAmount(rest) === undefined) return null;
+      const h = Number(bare[1]), min = Number(bare[2] ?? 0);
+      startTime = to24h(h >= 1 && h <= 6 ? h + 12 : h, min);
+      ambiguous = true;
+      rest = rest.slice(0, bare.index) + ' ' + rest.slice(bare.index + bare[0].length - bare[3].length);
+    }
   }
   if (!startTime) return null;
 
@@ -129,6 +150,7 @@ export function parseHeader(line: string): Header | null {
   }
 
   const name = rest
+    .replace(/^\s*(?:\d{1,2}\s*[.)]|#\s*\d{1,2}\b)\s*/, '') // "1) Name", "2. Name", "#3 Name"
     .replace(/[()[\]|•*]/g, ' ')
     .replace(/\s[-–—:@,]\s/g, ' ')
     .replace(/^[\s\-–—:@,.]+|[\s\-–—:@,.]+$/g, '')

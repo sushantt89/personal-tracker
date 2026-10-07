@@ -23,7 +23,7 @@ import type { ParsedAddress, ParsedJob, ParseResult } from './types.js';
  * Pure function. Returns null when the text doesn't look like this, so other readers can try.
  */
 
-const TIME_SRC = String.raw`\d{1,2}(?:[:.]\d{2})?\s*(?:a\.?m\.?|p\.?m\.?)|\d{1,2}:\d{2}`;
+const TIME_SRC = String.raw`\d{1,2}(?:[:.]?\d{2})?\s*(?:a\.?m\.?|p\.?m\.?)|\d{1,2}:\d{2}`;
 const RANGE_RE = new RegExp(`(${TIME_SRC})\\s*(?:-|to|until|till)\\s*(${TIME_SRC})`, 'i');
 const MARKER_RE = /\b(shift\s+details?|shift\s+status|published\s+by|open\s+time\s*clock|find\s+a\s+replacement|clock\s+in|assigned\s+to|shift\s+notes?)\b/i;
 const HOURS_HM_RE = /\b(\d{1,2}):(\d{2})\s*(?:hrs?|hours?|h)\b/i;

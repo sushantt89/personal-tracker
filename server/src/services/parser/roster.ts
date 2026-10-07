@@ -36,7 +36,7 @@ export function normaliseRosterText(input: string): string {
 
 const START_RE = /^(?:shift\s+)?(?:start(?:s|ing|ed)?|begin(?:s|ning)?|commenc(?:e|es|ing)|from|clock(?:ed)?\s*-?\s*in|time\s+in|in)\b(?:\s+time)?\s*[:\-]?\s*(.*)$/i;
 const FINISH_RE = /^(?:shift\s+)?(?:finish(?:es|ing|ed)?|end(?:s|ing|ed)?|until|till|to|clock(?:ed)?\s*-?\s*out|time\s+out|out)\b(?:\s+time)?\s*[:\-]?\s*(.*)$/i;
-const TIME_SRC = String.raw`\d{1,2}(?:[:.]\d{2})?\s*(?:a\.?m\.?|p\.?m\.?)|\d{1,2}:\d{2}`;
+const TIME_SRC = String.raw`\d{1,2}(?:[:.]?\d{2})?\s*(?:a\.?m\.?|p\.?m\.?)|\d{1,2}:\d{2}`;
 const RANGE_RE = new RegExp(`(${TIME_SRC})\\s*(?:-|to|until|till)\\s*(${TIME_SRC})`, 'i');
 const HOURS_HM_RE = /\b(\d{1,2}):(\d{2})\s*(?:hrs?|hours?|h)\b/i;
 const HOURS_DEC_RE = /\b(\d{1,2}(?:\.\d{1,2})?)\s*(?:hrs?|hours?)\b/i;

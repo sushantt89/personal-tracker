@@ -312,14 +312,15 @@ r.post('/:id/send', async (req, res) => {
   const to = body.to || d.to;
   if (!to) throw badRequest(`There is no email address for ${inv.clientName}. Add one in Clients & contractors, then send again.`);
   if (!z.string().email().safeParse(to).success) throw badRequest(`“${to}” is not a valid email address. Fix it in Clients & contractors.`);
-  if (!d.via) throw badRequest('Email isn’t set up yet. Connect your Google account in Settings → Integrations (with permission to send email) and try again.');
+  // Invoices only ever go out from the user's own Google account, so the client sees their address and it lands in their Gmail Sent
+  if (d.via !== 'gmail') throw badRequest('Invoices are sent from your own Google account. Connect it in Settings → Integrations and allow it to send email, then send again.');
   const pdf = await renderInvoicePdf(inv, d.settings, d.currency);
   const filename = `${inv.number.replace(/[^\w.-]/g, '_')}.pdf`;
   let sent: SendResult;
   try {
-    sent = await sendUserEmailDetailed(req.userId!, to, body.subject || d.subject, body.message || d.message, undefined, { attachments: [{ filename, content: pdf, contentType: 'application/pdf' }], fromName: d.business || undefined, replyTo: d.replyTo });
+    sent = await sendUserEmailDetailed(req.userId!, to, body.subject || d.subject, body.message || d.message, undefined, { attachments: [{ filename, content: pdf, contentType: 'application/pdf' }], fromName: d.business || undefined, replyTo: d.replyTo }, { gmailOnly: true });
   } catch (e) {
-    return res.status(502).json({ error: `The email could not be sent: ${(e as Error).message}` });
+    return res.status(502).json({ error: `The email could not be sent from your Google account: ${(e as Error).message}. Reconnect Google in Settings → Integrations if this keeps happening.` });
   }
   // Never call it sent unless a mail service really accepted it
   if (!sent.via) return res.status(502).json({ error: 'The email was not sent — no mail service accepted it. Reconnect your Google account in Settings → Integrations and allow it to send email.' });

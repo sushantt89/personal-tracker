@@ -42,7 +42,7 @@ async function gmailAccount(userId: string) {
 
 /** How email will be delivered for this user: their connected Google account, the server's SMTP settings, or not at all. */
 export async function emailRoute(userId: string): Promise<EmailRoute> {
-  if (override) return 'smtp';
+  if (override) return 'gmail';
   if (await gmailAccount(userId)) return 'gmail';
   return smtpConfigured() ? 'smtp' : null;
 }
@@ -88,9 +88,10 @@ export interface SendResult { via: EmailRoute; /** address it was sent from, whe
  * permission to send (works on hosts that block mail ports, and the message lands in their Gmail "Sent"), otherwise the
  * server's SMTP settings. `via: null` means nothing was delivered — it was only printed to the server log.
  */
-export async function sendUserEmailDetailed(userId: string, to: string, subject: string, text: string, html?: string, extras?: EmailExtras): Promise<SendResult> {
-  if (override) { await override({ userId, to, subject, text, html, extras }); return { via: 'smtp' }; }
+export async function sendUserEmailDetailed(userId: string, to: string, subject: string, text: string, html?: string, extras?: EmailExtras, opts: { /** only ever send from the user's own Google account — never fall back to the server's mail service */ gmailOnly?: boolean } = {}): Promise<SendResult> {
+  if (override) { await override({ userId, to, subject, text, html, extras }); return { via: 'gmail' }; }
   const acc = await gmailAccount(userId);
+  if (opts.gmailOnly && !acc) throw new Error('Your Google account is not connected with permission to send email');
   let googleError: string | undefined;
   if (acc) {
     try {
@@ -99,10 +100,11 @@ export async function sendUserEmailDetailed(userId: string, to: string, subject:
         await apis.sendMail(buildRawEmail(acc.googleEmail ?? to, to, subject, text, html, extras));
         return { via: 'gmail', from: acc.googleEmail ?? undefined };
       }
+      if (opts.gmailOnly) throw new Error('Google sending is not available');
       googleError = 'Google sending is not available';
     } catch (e) {
       await recordGoogleError(userId, e, 'Sending email through Google');
-      if (!smtpConfigured()) throw e;
+      if (opts.gmailOnly || !smtpConfigured()) throw e;
       googleError = (e as Error).message;
     }
   }

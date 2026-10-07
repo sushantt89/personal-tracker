@@ -81,25 +81,35 @@ export function buildRawEmail(from: string, to: string, subject: string, text: s
   return Buffer.from([...head, ...body].join('\r\n'), 'utf8').toString('base64url');
 }
 
+export interface SendResult { via: EmailRoute; /** address it was sent from, when known */ from?: string; /** set when Google was tried first and refused */ googleError?: string }
+
 /**
- * Sends an email on behalf of a user. Uses their connected Google account when it has permission to send
- * (works on hosts that block mail ports), otherwise the server's SMTP settings, otherwise prints it to the server log.
+ * Sends an email on behalf of a user and says how it actually went out. Uses their connected Google account when it has
+ * permission to send (works on hosts that block mail ports, and the message lands in their Gmail "Sent"), otherwise the
+ * server's SMTP settings. `via: null` means nothing was delivered — it was only printed to the server log.
  */
-export async function sendUserEmail(userId: string, to: string, subject: string, text: string, html?: string, extras?: EmailExtras): Promise<EmailRoute> {
-  if (override) { await override({ userId, to, subject, text, html, extras }); return 'smtp'; }
+export async function sendUserEmailDetailed(userId: string, to: string, subject: string, text: string, html?: string, extras?: EmailExtras): Promise<SendResult> {
+  if (override) { await override({ userId, to, subject, text, html, extras }); return { via: 'smtp' }; }
   const acc = await gmailAccount(userId);
+  let googleError: string | undefined;
   if (acc) {
     try {
       const apis = await googleApis(userId);
       if (apis?.sendMail) {
         await apis.sendMail(buildRawEmail(acc.googleEmail ?? to, to, subject, text, html, extras));
-        return 'gmail';
+        return { via: 'gmail', from: acc.googleEmail ?? undefined };
       }
+      googleError = 'Google sending is not available';
     } catch (e) {
       await recordGoogleError(userId, e, 'Sending email through Google');
       if (!smtpConfigured()) throw e;
+      googleError = (e as Error).message;
     }
   }
   await emailService.send(to, subject, text, html, extras);
-  return smtpConfigured() ? 'smtp' : null;
+  return smtpConfigured() ? { via: 'smtp', from: env.SMTP_FROM || undefined, googleError } : { via: null, googleError };
+}
+
+export async function sendUserEmail(userId: string, to: string, subject: string, text: string, html?: string, extras?: EmailExtras): Promise<EmailRoute> {
+  return (await sendUserEmailDetailed(userId, to, subject, text, html, extras)).via;
 }

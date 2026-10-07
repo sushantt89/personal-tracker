@@ -22,7 +22,7 @@ import { PageHeader, StatusChip, EmptyState, LoadingBlock, ErrorBlock, StatCard,
 import { money, fmtDate } from '../utils/format';
 import { useInvalidateFinance } from '../hooks/useInvalidate';
 import { useToast } from '../hooks/useToast';
-import { markInvoicePaid, setInvoiceStatus, sendInvoice } from './invoiceActions';
+import { markInvoicePaid, setInvoiceStatus, sendInvoice, sentMessage } from './invoiceActions';
 import EmailOutlinedIcon from '@mui/icons-material/EmailOutlined';
 
 export default function Invoices() {
@@ -104,7 +104,7 @@ export default function Invoices() {
       <Menu anchorEl={menu?.el} open={!!menu} onClose={() => setMenu(null)}>
         {menu && [
           <MenuItem key="pdf" component="a" href={fileUrl(`/invoices/${menu.inv.id}/pdf`, { download: 1 })} onClick={() => setMenu(null)}><ListItemIcon><PictureAsPdfOutlinedIcon fontSize="small" /></ListItemIcon>Download PDF</MenuItem>,
-          menu.inv.status !== 'cancelled' && <MenuItem key="email" onClick={() => { const i = menu.inv; setMenu(null); toast(`Sending ${i.number}…`, 'info'); sendInvoice(i).then((r) => { invalidate(); toast(`Invoice ${i.number} sent to ${r.to}`); }).catch((e) => toast((e as Error).message, 'error')); }}><ListItemIcon><EmailOutlinedIcon fontSize="small" /></ListItemIcon>Send by email</MenuItem>,
+          menu.inv.status !== 'cancelled' && <MenuItem key="email" onClick={() => { const i = menu.inv; setMenu(null); toast(`Sending ${i.number}…`, 'info'); sendInvoice(i).then((r) => { invalidate(); const m = sentMessage(i, r); toast(m.text, m.severity); }).catch((e) => toast((e as Error).message, 'error')); }}><ListItemIcon><EmailOutlinedIcon fontSize="small" /></ListItemIcon>Send by email</MenuItem>,
           menu.inv.status === 'draft' && <MenuItem key="sent" onClick={() => { const i = menu.inv; setMenu(null); run(() => setInvoiceStatus(i, 'sent'), 'Marked as sent'); }}><ListItemIcon><SendOutlinedIcon fontSize="small" /></ListItemIcon>Mark as sent</MenuItem>,
           menu.inv.status !== 'paid' && <MenuItem key="paid" onClick={() => { const i = menu.inv; setMenu(null); run(() => markInvoicePaid(i, confirm), 'Marked as paid — its jobs and their income are marked paid too'); }}><ListItemIcon><CheckCircleOutlineIcon fontSize="small" /></ListItemIcon>Mark as paid</MenuItem>,
           menu.inv.status === 'paid' && <MenuItem key="unpaid" onClick={() => { const i = menu.inv; setMenu(null); run(() => setInvoiceStatus(i, 'sent', true), 'Marked as unpaid'); }}><ListItemIcon><SendOutlinedIcon fontSize="small" /></ListItemIcon>Mark as unpaid</MenuItem>,

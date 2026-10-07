@@ -17,7 +17,7 @@ import { queueTravelDay } from '../services/travel/index.js';
 import { payerOf } from '../services/clients.js';
 import { jobHours } from '../services/finance.js';
 import { round2 } from '../utils/money.js';
-import { emailRoute, sendUserEmail } from '../services/email.js';
+import { emailRoute, sendUserEmailDetailed, type SendResult } from '../services/email.js';
 
 const jobIncomeDescription = (job: any) => job.title || `Job – ${job.clientName ?? ''}${job.workType === 'subcontract' && job.contractorName ? ` (via ${job.contractorName})` : ''}`.trim();
 
@@ -315,11 +315,14 @@ r.post('/:id/send', async (req, res) => {
   if (!d.via) throw badRequest('Email isn’t set up yet. Connect your Google account in Settings → Integrations (with permission to send email) and try again.');
   const pdf = await renderInvoicePdf(inv, d.settings, d.currency);
   const filename = `${inv.number.replace(/[^\w.-]/g, '_')}.pdf`;
+  let sent: SendResult;
   try {
-    await sendUserEmail(req.userId!, to, body.subject || d.subject, body.message || d.message, undefined, { attachments: [{ filename, content: pdf, contentType: 'application/pdf' }], fromName: d.business || undefined, replyTo: d.replyTo });
+    sent = await sendUserEmailDetailed(req.userId!, to, body.subject || d.subject, body.message || d.message, undefined, { attachments: [{ filename, content: pdf, contentType: 'application/pdf' }], fromName: d.business || undefined, replyTo: d.replyTo });
   } catch (e) {
     return res.status(502).json({ error: `The email could not be sent: ${(e as Error).message}` });
   }
+  // Never call it sent unless a mail service really accepted it
+  if (!sent.via) return res.status(502).json({ error: 'The email was not sent — no mail service accepted it. Reconnect your Google account in Settings → Integrations and allow it to send email.' });
   const before = inv.toJSON();
   inv.sentAt = new Date();
   inv.sentTo = to;
@@ -329,7 +332,7 @@ r.post('/:id/send', async (req, res) => {
   // A sent invoice's income is waiting to be paid
   if (before.status === 'draft') await Income.updateMany({ userId: req.userId, invoiceId: inv._id, status: 'expected' }, { status: 'pending' });
   queueCalendarSync(req.userId!, 'invoice', inv._id);
-  res.json({ invoice: withStatus(inv, today), to, via: d.via });
+  res.json({ invoice: withStatus(inv, today), to, via: sent.via, from: sent.from ?? null, googleError: sent.googleError ?? null });
 });
 
 /** Upload the PDF to Google Drive (or replace the file uploaded before — never a duplicate). */

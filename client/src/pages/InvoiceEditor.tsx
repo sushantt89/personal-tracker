@@ -25,7 +25,7 @@ import { money, fmtDate, fmtShort, localToday, addDays, startOfMonth, endOfMonth
 import { useClients, useIncomeSources, useSettings, useIntegrations } from '../hooks/useLookups';
 import { useInvalidateFinance } from '../hooks/useInvalidate';
 import { useToast } from '../hooks/useToast';
-import { markInvoicePaid, setInvoiceStatus, sendInvoice } from './invoiceActions';
+import { markInvoicePaid, setInvoiceStatus, sendInvoice, sentMessage } from './invoiceActions';
 import EmailOutlinedIcon from '@mui/icons-material/EmailOutlined';
 import EditOutlinedIcon from '@mui/icons-material/EditOutlined';
 import dayjs from 'dayjs';
@@ -172,7 +172,7 @@ export default function InvoiceEditor() {
   const sendNow = async () => {
     if (!inv || sending) return;
     setSending(true);
-    try { const r = await sendInvoice(inv); invalidate(); setForm(null); existing.refetch(); toast(`Invoice ${inv.number} sent to ${r.to}`); }
+    try { const r = await sendInvoice(inv); invalidate(); setForm(null); existing.refetch(); { const m = sentMessage(inv, r); toast(m.text, m.severity); }; }
     catch (e) { toast((e as Error).message, 'error'); }
     setSending(false);
   };

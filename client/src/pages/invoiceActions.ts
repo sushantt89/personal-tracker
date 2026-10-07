@@ -11,4 +11,10 @@ export async function markInvoicePaid(inv: Invoice, _confirm?: Confirm) {
 export const setInvoiceStatus = (inv: Invoice, status: 'draft' | 'sent' | 'cancelled', updateIncome = status === 'sent') => post(`/invoices/${inv.id}/status`, { status, updateIncome });
 
 /** Emails the invoice PDF straight to the address saved in Clients & contractors — subject and message are filled in by the server. */
-export const sendInvoice = (inv: Invoice) => post<{ to: string }>(`/invoices/${inv.id}/send`, {});
+export interface SentInvoice { to: string; via: 'gmail' | 'smtp'; from: string | null; googleError: string | null }
+export const sendInvoice = (inv: Invoice) => post<SentInvoice>(`/invoices/${inv.id}/send`, {});
+/** Says where the email really went out from, so it's clear whether to expect it in Gmail's Sent folder. */
+export const sentMessage = (inv: Invoice, r: SentInvoice): { text: string; severity: 'success' | 'warning' } =>
+  r.via === 'gmail'
+    ? { text: `Invoice ${inv.number} sent to ${r.to} from ${r.from ?? 'your Google account'} — it's in that account's Gmail Sent folder`, severity: 'success' }
+    : { text: `Invoice ${inv.number} sent to ${r.to} through the app's mail service${r.from ? ` (${r.from})` : ''}, not your Gmail — it won't show in Gmail Sent.${r.googleError ? ` Google refused: ${r.googleError}. Reconnect Google in Settings → Integrations.` : ' Connect Google with send-email permission in Settings → Integrations to send from your own Gmail.'}`, severity: 'warning' };

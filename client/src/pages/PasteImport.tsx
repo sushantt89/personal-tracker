@@ -1,4 +1,5 @@
 import CameraButton from '../components/CameraButton';
+import { makeJobDerive } from '../utils/forms';
 import { useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
@@ -37,13 +38,16 @@ Kitchen, 2 bathrooms, 3 rooms.
 Dusting and wipedown surfaces, vacuum and mop floor.
 Change the bed in master bedroom.`;
 
+const payDerive = makeJobDerive([], []);
+
 const jobFields: FieldDef[] = [
   { name: 'clientName', label: 'Client / employer', type: 'text', required: true, span: 6 },
-  { name: 'amount', label: 'Amount', type: 'money', span: 6 },
-  { name: 'date', label: 'Date', type: 'date', required: true, span: 4 },
-  { name: 'startTime', label: 'Start', type: 'time', span: 4 },
-  { name: 'endTime', label: 'End', type: 'time', span: 4 },
+  { name: 'date', label: 'Date', type: 'date', required: true, span: 6 },
+  { name: 'startTime', label: 'Start', type: 'time', span: 6 },
+  { name: 'endTime', label: 'End', type: 'time', span: 6 },
   { name: 'hoursWorked', label: 'Paid hours', type: 'number', span: 4, helper: 'Leave empty to work it out from the times' },
+  { name: 'hourlyRate', label: 'Rate per hour', type: 'money', span: 4, helper: 'Optional — fills the amount as rate × hours' },
+  { name: 'amount', label: 'Amount', type: 'money', span: 4 },
   { name: 'address.line1', label: 'Street address', type: 'text', span: 12 },
   { name: 'address.suburb', label: 'Suburb', type: 'text', span: 5 },
   { name: 'address.state', label: 'State', type: 'text', span: 3 },
@@ -188,7 +192,7 @@ export default function PasteImport() {
         syncCalendar: calendarAvailable && syncCalendar,
         allowDuplicates,
         jobs: included.map((j) => ({
-          clientName: j.clientName.trim(), date: j.date, startTime: j.startTime || undefined, endTime: j.endTime || undefined, amount: num(j.amount), amountEstimated: isRoster && Number(j.amount) > 0, hoursWorked: num(j.hoursWorked),
+          clientName: j.clientName.trim(), date: j.date, startTime: j.startTime || undefined, endTime: j.endTime || undefined, amount: num(j.amount), hourlyRate: num(j.hourlyRate), amountEstimated: isRoster && Number(j.amount) > 0, hoursWorked: num(j.hoursWorked),
           address: j.address, description: j.description || undefined, tasks: j.tasks, rooms: num(j.rooms), bathrooms: num(j.bathrooms),
           specialInstructions: j.specialInstructions || undefined, meetingPoint: j.meetingPoint || undefined,
         })),
@@ -206,7 +210,8 @@ export default function PasteImport() {
     }
   };
 
-  const updateJob = (id: string, fn: (v: Values) => Values) => setJobs((js) => js.map((j) => (j.tempId === id ? ({ ...j, ...fn(j) } as EditJob) : j)));
+  // Typing a rate (or changing the hours) works the amount out as rate × hours; an amount typed by hand is left alone
+  const updateJob = (id: string, fn: (v: Values) => Values) => setJobs((js) => js.map((j) => (j.tempId === id ? (payDerive({ ...j, ...fn(j) }, j) as EditJob) : j)));
 
   return (
     <Box>

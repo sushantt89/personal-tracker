@@ -145,6 +145,7 @@ const commitJob = z.object({
   startTime: zOptTime,
   endTime: zOptTime,
   amount: zOptMoney,
+  hourlyRate: zOptMoney,
   /** The amount is an estimate (e.g. roster hours × expected hourly rate); real pay is recorded later */
   amountEstimated: z.boolean().optional(),
   hoursWorked: z.coerce.number().min(0).max(24).optional().nullable(),

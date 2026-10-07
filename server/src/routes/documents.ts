@@ -14,7 +14,7 @@ import { ocrService } from '../services/integrations/index.js';
 import { scanReceipt } from '../services/ocr/index.js';
 import { heicToJpeg, isHeic } from '../services/ocr/engine.js';
 import { userCtx } from '../utils/userCtx.js';
-import { queueDocumentUpload, uploadDocument, readDocumentFile } from '../services/google/drive.js';
+import { queueDocumentUpload, uploadDocument, readDocumentFile, queueDriveDelete } from '../services/google/drive.js';
 import { googleApis } from '../services/google/client.js';
 import { zDate, zMoney, zOptId, zOptStr } from '../utils/zod.js';
 
@@ -169,6 +169,7 @@ r.delete('/:id', async (req, res) => {
   await Expense.updateMany({ userId: req.userId, receiptId: doc._id }, { receiptId: null });
   await doc.deleteOne();
   await audit(req.userId!, 'Document', doc._id, 'delete', doc.toJSON());
+  queueDriveDelete(req.userId!, doc.sync?.googleDriveFileId, doc.title || 'a document');
   res.json({ ok: true });
 });
 

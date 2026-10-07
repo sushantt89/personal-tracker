@@ -221,6 +221,28 @@ describe('Google integration (fake Google APIs)', () => {
     expect(gone.body.error).toContain('no longer stored');
   });
 
+  it('removes the Drive copy when an invoice or receipt is deleted', async () => {
+    await a().patch('/api/settings').send({ integrations: { googleDrive: { enabled: true } } }).expect(200);
+    const before = fake.uploaded().length;
+    const inv = (await a().post('/api/invoices').send({ issueDate: '2026-10-06', clientName: 'Bin Test Co', status: 'sent', items: [{ description: 'Work', quantity: 1, rate: 50 }] })).body;
+    await flush();
+    await a().post(`/api/invoices/${inv.id}/drive`).send({}).expect(200);
+    const doc = (await a().post('/api/documents').field('meta', JSON.stringify({ kind: 'receipt', title: 'Bin receipt', date: '2026-10-06' })).attach('file', Buffer.from('%PDF-1.4 bin receipt'), { filename: 'bin-receipt.pdf', contentType: 'application/pdf' })).body;
+    await flush();
+    expect(fake.uploaded().length).toBe(before + 2);
+    await a().delete(`/api/invoices/${inv.id}`).expect(200);
+    await a().delete(`/api/documents/${doc.id}`).expect(200);
+    await flush();
+    expect(fake.uploaded().length).toBe(before);
+    expect(fake.trashed()).toEqual(expect.arrayContaining(['bin-receipt.pdf', expect.stringContaining('Bin Test Co')]));
+    // A copy already removed from Drive by hand doesn't stop the delete or raise an error
+    const inv2 = (await a().post('/api/invoices').send({ issueDate: '2026-10-06', clientName: 'Gone Co', items: [{ description: 'Work', quantity: 1, rate: 50 }] })).body;
+    const { Invoice } = await import('../src/models/index.js');
+    await Invoice.updateOne({ _id: inv2.id }, { $set: { 'sync.googleDriveFileId': 'no-such-file' } });
+    await a().delete(`/api/invoices/${inv2.id}`).expect(200);
+    await flush();
+  });
+
   it('brings changes made in Google Calendar back into the app (two-way)', async () => {
     await a().patch('/api/settings').send({ integrations: { googleCalendar: { enabled: true, syncTypes: ['job', 'appointment', 'bill'] } } }).expect(200);
     const job = (await a().post('/api/jobs').send({ date: '2026-10-08', startTime: '09:00', endTime: '10:00', clientName: 'Moved Job', amount: 40 })).body;

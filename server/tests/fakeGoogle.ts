@@ -73,7 +73,8 @@ export function createFakeGoogle() {
   return {
     apis: { calendar, drive, sendMail: async (raw: string) => { maybeFail(); sent.push(Buffer.from(raw, 'base64url').toString('utf8')); } } as any,
     events, files, sent,
-    uploaded: () => [...files.values()].filter((f) => f.mimeType !== 'application/vnd.google-apps.folder').map((f) => ({ ...f, path: pathOf(f) })),
+    uploaded: () => [...files.values()].filter((f) => f.mimeType !== 'application/vnd.google-apps.folder' && !f.trashed).map((f) => ({ ...f, path: pathOf(f) })),
+    trashed: () => [...files.values()].filter((f) => f.trashed).map((f) => f.name as string),
     folders: () => [...files.values()].filter((f) => f.mimeType === 'application/vnd.google-apps.folder').map(pathOf),
     /** Simulate the person adding their own event in the Google Calendar app. */
     userCreates: (event: any) => { const e = { ...event, id: id('own'), status: 'confirmed', htmlLink: 'https://calendar.example/event', updated: new Date().toISOString() }; events.set(e.id, e); return e.id as string; },

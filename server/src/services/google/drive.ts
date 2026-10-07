@@ -185,3 +185,20 @@ export function queueDocumentUpload(userId: string, docId: unknown) {
     await uploadDocument(userId, docId);
   });
 }
+
+/**
+ * Removes the Drive copy of something deleted in the app. It goes to the Drive bin (recoverable for 30 days) rather than
+ * being erased outright. Runs in the background and never fails the delete; a file already gone from Drive is fine.
+ */
+export function queueDriveDelete(userId: string, fileId?: string | null, what = 'a deleted file') {
+  if (!fileId) return;
+  background(async () => {
+    const apis = await googleApis(userId);
+    if (!apis) return;
+    try {
+      await apis.drive.files.update({ fileId, requestBody: { trashed: true } });
+    } catch (e) {
+      if (!isNotFound(e)) await recordGoogleError(userId, e, `Removing ${what} from Google Drive`);
+    }
+  });
+}

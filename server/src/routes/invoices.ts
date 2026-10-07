@@ -10,7 +10,7 @@ import { assertOwnedRefs, escapeRegex } from '../services/crud.js';
 import { computeTotals, effectiveStatus, nextInvoiceNumber, renderInvoicePdf } from '../services/invoices.js';
 import { userCtx } from '../utils/userCtx.js';
 import { addDays } from '../utils/dates.js';
-import { uploadInvoice, queueInvoiceUpload } from '../services/google/drive.js';
+import { uploadInvoice, queueInvoiceUpload, queueDriveDelete } from '../services/google/drive.js';
 import { queueCalendarSync, queueCalendarDelete } from '../services/google/calendar.js';
 import { googleApis } from '../services/google/client.js';
 import { queueTravelDay } from '../services/travel/index.js';
@@ -254,6 +254,7 @@ r.delete('/:id', async (req, res) => {
   await inv.deleteOne();
   await audit(req.userId!, 'Invoice', inv._id, 'delete', inv.toJSON());
   queueCalendarDelete(req.userId!, inv.sync?.googleCalendarEventId);
+  queueDriveDelete(req.userId!, inv.sync?.googleDriveFileId, `invoice ${inv.number}`);
   res.json({ ok: true });
 });
 

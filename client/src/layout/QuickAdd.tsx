@@ -12,7 +12,7 @@ import DocumentScannerOutlinedIcon from '@mui/icons-material/DocumentScannerOutl
 import ContentPasteGoIcon from '@mui/icons-material/ContentPasteGo';
 import { EntityFormDialog, type FieldDef, type Values } from '../components/EntityForm';
 import { post } from '../api/client';
-import { expenseFields, expenseDefaults, incomeFields, incomeDefaults, jobFields, jobDefaults, taskFields, taskDefaults, billFields, billDefaults, withFormattedAddress } from '../utils/forms';
+import { expenseFields, expenseDefaults, incomeFields, incomeDefaults, jobFields, jobDefaults, jobFromForm, taskFields, taskDefaults, billFields, billDefaults } from '../utils/forms';
 import { useToast } from '../hooks/useToast';
 import { useInvalidateFinance } from '../hooks/useInvalidate';
 
@@ -84,7 +84,7 @@ export default function QuickAdd({ phone = false, sheetOpen = false, onSheetClos
       {cfg && (
         <EntityFormDialog open={!!kind} title={cfg.title} fields={cfg.fields.filter((f) => f.quick)} initial={cfg.defaults()} onClose={() => setKind(null)}
           onSubmit={async (v) => {
-            await post(cfg.endpoint, kind === 'job' ? withFormattedAddress(v) : v);
+            await post(cfg.endpoint, kind === 'job' ? jobFromForm(v) : v);
             invalidate();
             toast(`${cfg.title.replace('Quick ', '')} saved`);
           }} />

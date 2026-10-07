@@ -48,7 +48,8 @@ export const jobFields: FieldDef[] = [
   { name: 'date', label: 'Date', type: 'date', required: true, quick: true, span: 4 },
   { name: 'startTime', label: 'Start', type: 'time', quick: true, span: 4 },
   { name: 'endTime', label: 'End', type: 'time', span: 4 },
-  { name: 'amount', label: 'Amount', type: 'money', quick: true, span: 4, helper: 'Leave empty if you don’t know the pay yet' },
+  { name: 'amount', label: 'Pay', type: 'money', quick: true, span: 4, helper: 'Leave empty if you don’t know the pay yet' },
+  { name: 'fuelAllowance', label: 'Fuel allowance', type: 'money', quick: true, span: 4, helper: 'Extra paid on top of the pay, if this job gives one' },
   { name: 'amountEstimated', label: 'This amount is an estimate (actual pay not known yet)', type: 'switch', showIf: (v) => Number(v.amount) > 0 },
   { name: 'excludeFromHours', label: 'Don’t count this in Work hours (e.g. a cash job)', type: 'switch' },
   { name: 'hoursWorked', label: 'Hours worked', type: 'number', span: 4 },
@@ -67,6 +68,18 @@ export const jobFields: FieldDef[] = [
   { name: 'specialInstructions', label: 'Special instructions', type: 'textarea' },
   { name: 'notes', label: 'Notes', type: 'textarea' },
 ];
+const cents = (n: unknown) => Math.round((Number(n) || 0) * 100);
+/** The job form shows pay and fuel allowance separately; a saved job keeps one total (`amount`) with the fuel part noted beside it. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export function jobToForm(job: any) {
+  const fuel = cents(job.fuelAllowance), total = cents(job.amount);
+  return { ...job, address: job.address ?? {}, amount: fuel > 0 && total > fuel ? (total - fuel) / 100 : job.amount, fuelAllowance: fuel > 0 ? fuel / 100 : '' };
+}
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export function jobFromForm(v: any) {
+  const fuel = cents(v.fuelAllowance), pay = cents(v.amount);
+  return { ...withFormattedAddress(v), fuelAllowance: fuel / 100, amount: pay > 0 ? (pay + fuel) / 100 : v.amount };
+}
 export const jobDefaults = () => ({ date: localToday(), status: 'scheduled', tasks: [], address: {} });
 
 export const taskFields: FieldDef[] = [

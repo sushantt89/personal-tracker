@@ -99,7 +99,7 @@ export async function snapshot(userId: string, today: string): Promise<Snapshot>
   }));
   const goals = { total: sum(goalItems.map((g) => g.amount)), items: goalItems };
   const hours = sum(recentJobs.map((j) => jobHours(j)));
-  const avgPerHour = hours > 0 ? round2(sum(recentJobs.map((j) => j.amount ?? 0)) / hours) : 0;
+  const avgPerHour = hours > 0 ? round2(sum(recentJobs.map((j) => Math.max(0, (j.amount ?? 0) - (j.fuelAllowance ?? 0)))) / hours) : 0;
 
   // --- Day-by-day cash for the coming months ---
   const timeline: Snapshot['timeline'] = [];

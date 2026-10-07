@@ -11,7 +11,7 @@ import RecordPayDialog from '../components/RecordPayDialog';
 import { ResourcePage, type ResourceConfig } from '../components/ResourcePage';
 import { StatusChip, StatCard } from '../components/common';
 import type { Job } from '../api/types';
-import { jobFields, jobDefaults, withFormattedAddress } from '../utils/forms';
+import { jobFields, jobDefaults, jobToForm, jobFromForm } from '../utils/forms';
 import { money, fmtDate, fmtTime, mapsUrl } from '../utils/format';
 import { patch, post } from '../api/client';
 import { useInvalidateFinance } from '../hooks/useInvalidate';
@@ -25,7 +25,9 @@ export default function Jobs() {
   const toast = useToast();
   const { sources, srcById } = useLookupMaps();
   const [payOpen, setPayOpen] = useState<false | 'paid' | 'expected'>(false);
-  const amountCell = (j: Job) => (noPay(j) ? payChip : j.amountEstimated ? <Stack direction="row" spacing={0.5} alignItems="center" justifyContent="flex-end"><span>{money(j.amount)}</span><Chip size="small" variant="outlined" color="info" label="Expected" /></Stack> : money(j.amount));
+  const fuelNote = (j: Job) => (j.fuelAllowance && j.amount ? <Typography variant="caption" color="text.secondary" display="block">incl. {money(j.fuelAllowance)} fuel</Typography> : null);
+  const amountCell = (j: Job) => <>{amountCellMain(j)}{fuelNote(j)}</>;
+  const amountCellMain = (j: Job) => (noPay(j) ? payChip : j.amountEstimated ? <Stack direction="row" spacing={0.5} alignItems="center" justifyContent="flex-end"><span>{money(j.amount)}</span><Chip size="small" variant="outlined" color="info" label="Expected" /></Stack> : money(j.amount));
   const noPay = (j: Job) => !j.amount && j.status !== 'cancelled';
   const payChip = <Chip size="small" color="warning" variant="outlined" label="Pay not set" />;
   const setStatus = async (j: Job, status: Job['status']) => {
@@ -54,8 +56,8 @@ export default function Jobs() {
   const config: ResourceConfig<Job> = {
     queryKey: 'jobs', endpoint: '/jobs', title: 'Jobs', singular: 'Job',
     subtitle: 'Own-business jobs are billed to the client; jobs under a contractor are billed to the contractor; employee shifts are paid as wages. If you don’t know the pay yet, set an expected amount now and record the real pay later.',
-    fields: jobFields, defaults: jobDefaults, dateFilter: true, transform: withFormattedAddress,
-    fromRecord: (j) => ({ ...j, address: j.address ?? {}, tasks: j.tasks ?? [] }),
+    fields: jobFields, defaults: jobDefaults, dateFilter: true, transform: jobFromForm,
+    fromRecord: (j) => ({ ...jobToForm(j), tasks: j.tasks ?? [] }),
     filters: [
       // Completed jobs are hidden until asked for; the totals above still count them
       { name: 'status', label: 'Status', defaultValue: 'open', clientSide: (j, v) => (v === 'open' ? j.status !== 'completed' : j.status === v),
@@ -77,7 +79,7 @@ export default function Jobs() {
     ],
     mobileTitle: (j) => j.clientName ?? 'Job',
     mobileSubtitle: (j) => `${fmtDate(j.date, 'ddd D MMM')} ${fmtTime(j.startTime)} · ${j.address?.suburb ?? ''}${j.workType === 'subcontract' ? ` · via ${j.contractorName ?? 'contractor'}` : ''}`,
-    mobileRight: (j) => <>{noPay(j) ? payChip : <Typography variant="body2" fontWeight={600}>{money(j.amount)}{j.amountEstimated ? ' est.' : ''}</Typography>}<Box sx={{ mt: 0.25 }}><StatusChip status={j.status} /></Box></>,
+    mobileRight: (j) => <>{noPay(j) ? payChip : <Typography variant="body2" fontWeight={600}>{money(j.amount)}{j.amountEstimated ? ' est.' : ''}</Typography>}{fuelNote(j)}<Box sx={{ mt: 0.25 }}><StatusChip status={j.status} /></Box></>,
     rowActions: [
       { label: 'Mark completed', icon: <CheckCircleOutlineIcon fontSize="small" />, onClick: (j) => setStatus(j, 'completed'), show: (j) => j.status !== 'completed' },
       { label: 'Cancel job', icon: <CancelOutlinedIcon fontSize="small" />, onClick: (j) => setStatus(j, 'cancelled'), show: (j) => j.status !== 'cancelled' },

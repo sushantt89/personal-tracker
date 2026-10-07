@@ -539,6 +539,25 @@ describe('reset everything', () => {
     expect(cleared.contractorId ?? null).toBeNull();
   });
 
+  it('keeps a job\'s fuel allowance inside its total and on top of expected pay', async () => {
+    const a = request.agent(app);
+    await a.post('/api/auth/register').send({ name: 'Fuel', email: 'fuel@example.com', password: 'password123' }).expect(201);
+    // The form sends the total (pay + fuel) with the fuel part noted
+    const job = (await a.post('/api/jobs').send({ clientName: 'Fuel Co', date: '2026-10-06', startTime: '09:00', endTime: '11:00', amount: 95, fuelAllowance: 15 }).expect(201)).body;
+    expect(job).toMatchObject({ amount: 95, fuelAllowance: 15 });
+    const inc = (await a.get('/api/income').query({ q: 'Fuel Co' })).body.items;
+    expect(inc[0].amount).toBe(95);
+    // Expected pay at an hourly rate: 2 h × $30 plus the $15 allowance
+    await a.post('/api/jobs/expected-pay').send({ jobIds: [job.id], mode: 'perHour', value: 30 }).expect(200);
+    expect((await a.get(`/api/jobs/${job.id}`)).body).toMatchObject({ amount: 75, fuelAllowance: 15 });
+    // Actual pay received for two jobs, one with fuel: the allowance stays with its job, the rest is shared by hours
+    const other = (await a.post('/api/jobs').send({ clientName: 'Fuel Co', date: '2026-10-07', startTime: '09:00', endTime: '11:00' }).expect(201)).body;
+    await a.post('/api/jobs/record-pay').send({ jobIds: [job.id, other.id], total: 135, split: 'hours' }).expect(200);
+    expect((await a.get(`/api/jobs/${job.id}`)).body.amount).toBe(75);
+    expect((await a.get(`/api/jobs/${other.id}`)).body.amount).toBe(60);
+    await a.delete(`/api/jobs/${job.id}`); await a.delete(`/api/jobs/${other.id}`);
+  });
+
   it('emails an invoice PDF to the address in Clients & contractors', async () => {
     const { setEmailOverride, buildRawEmail } = await import('../src/services/email.js');
     const sent: any[] = [];

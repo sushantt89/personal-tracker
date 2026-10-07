@@ -242,8 +242,14 @@ jobsRouter.post('/record-pay', async (req, res) => {
   const weights = byHours ? hours : jobs.map(() => 1);
   const weightSum = weights.reduce((a, b) => a + b, 0);
   const cents = Math.round(body.total * 100);
-  const shares = weights.map((w) => Math.floor((cents * w) / weightSum));
-  shares[shares.length - 1] += cents - shares.reduce((a, b) => a + b, 0);
+  // Fuel allowances are fixed per job: take them out, share the rest by hours, then give each job its own back
+  const fuel = jobs.map((j) => Math.round((j.fuelAllowance ?? 0) * 100));
+  const fuelSum = fuel.reduce((a, b) => a + b, 0);
+  const useFuel = fuelSum > 0 && cents > fuelSum;
+  const pool = useFuel ? cents - fuelSum : cents;
+  const shares = weights.map((w) => Math.floor((pool * w) / weightSum));
+  shares[shares.length - 1] += pool - shares.reduce((a, b) => a + b, 0);
+  if (useFuel) fuel.forEach((f, i) => { shares[i] += f; });
   const paidDate = body.paidDate ?? today;
 
   const out: any[] = [];
@@ -296,7 +302,8 @@ jobsRouter.post('/expected-pay', async (req, res) => {
     const income = await Income.findOne({ userId, jobId: job._id });
     if (income?.status === 'paid') { skippedPaid++; continue; } // already paid for real: leave it alone
     const before = job.toJSON();
-    job.amount = body.mode === 'perHour' ? round2(jobHours(job) * body.value) : body.mode === 'perJob' ? body.value : (each + (i === jobs.length - 1 ? cents - each * jobs.length : 0)) / 100;
+    // An hourly rate or a per-job figure is pay for the work; the job's fuel allowance comes on top of it
+    job.amount = body.mode === 'perHour' ? round2(jobHours(job) * body.value + (job.fuelAllowance ?? 0)) : body.mode === 'perJob' ? round2(body.value + (job.fuelAllowance ?? 0)) : (each + (i === jobs.length - 1 ? cents - each * jobs.length : 0)) / 100;
     job.amountEstimated = true;
     await job.save();
     await audit(userId, 'Job', job._id, 'update', before, job.toJSON(), 'Expected pay set');

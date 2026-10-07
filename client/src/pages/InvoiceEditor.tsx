@@ -140,7 +140,13 @@ export default function InvoiceEditor() {
   const addSelected = () => {
     const chosen = (candidates ?? []).filter((j) => selected.has(j.id));
     const srcName = (sid?: string | null) => sources.data?.find((s) => s.id === (sid || gen.incomeSourceId))?.name ?? 'Service';
-    const newItems: InvoiceItem[] = chosen.map((j) => ({ date: j.date, description: `${srcName(j.incomeSourceId)} – ${j.clientName ?? 'Job'}${j.address?.suburb ? ', ' + j.address.suburb : ''}${j.startTime ? ' (' + j.startTime + ')' : ''}`, quantity: 1, rate: j.amount ?? 0, jobId: j.id }));
+    // A job with a fuel allowance goes on as two lines — the work, then the allowance — both tied to the job
+    const newItems: InvoiceItem[] = chosen.flatMap((j) => {
+      const total = j.amount ?? 0, fuel = j.fuelAllowance && j.fuelAllowance > 0 && j.fuelAllowance < total ? j.fuelAllowance : 0;
+      const where = `${j.clientName ?? 'Job'}${j.address?.suburb ? ', ' + j.address.suburb : ''}`;
+      const work: InvoiceItem = { date: j.date, description: `${srcName(j.incomeSourceId)} – ${where}${j.startTime ? ' (' + j.startTime + ')' : ''}`, quantity: 1, rate: Math.round((total - fuel) * 100) / 100, jobId: j.id };
+      return fuel ? [work, { date: j.date, description: `Fuel allowance – ${where}`, quantity: 1, rate: fuel, jobId: j.id }] : [work];
+    });
     const existingItems = form.items.filter((i) => i.description.trim() || i.rate);
     // Bill the contractor for work done under them; bill the client for your own jobs
     const contractorIds = new Set(chosen.map((j) => j.contractorId).filter(Boolean));
@@ -153,7 +159,7 @@ export default function InvoiceEditor() {
     }));
     if (gen.billTo === 'contractor' && contractorIds.size > 1) toast('These jobs are for more than one contractor — consider one invoice per contractor', 'warning');
     setShowGen(false);
-    toast(`${newItems.length} job(s) added — review the invoice before saving`, 'info');
+    toast(`${chosen.length} job(s) added — review the invoice before saving`, 'info');
   };
 
   const save = async (status?: 'draft' | 'sent') => {

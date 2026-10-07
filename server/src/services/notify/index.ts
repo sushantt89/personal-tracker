@@ -1,6 +1,6 @@
 import webpush from 'web-push';
 import { env } from '../../config/env.js';
-import { AppConfig, NotificationLog, PushSubscription, Settings, User } from '../../models/index.js';
+import { AppConfig, Job, NotificationLog, PushSubscription, Settings, User } from '../../models/index.js';
 import { computeAlerts, alertKey, type Alert } from '../alerts.js';
 import { emailRoute, sendUserEmail } from '../email.js';
 import { todayIn } from '../../utils/dates.js';
@@ -97,6 +97,48 @@ export async function sendPush(userId: string, payload: { title: string; body?: 
   return sent;
 }
 
+const localMinutes = (tz: string, now: Date) => {
+  const [h, m] = new Intl.DateTimeFormat('en-GB', { timeZone: tz, hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(now).split(':').map(Number);
+  return h * 60 + m;
+};
+const fmt12 = (t: string) => { const [h, m] = t.split(':').map(Number); return `${h % 12 || 12}:${String(m).padStart(2, '0')} ${h < 12 ? 'am' : 'pm'}`; };
+
+/** Everything needed at the door for one job: how to get in, what to do, anything to watch for. Nothing from other jobs. */
+export function jobBriefing(job: any): { title: string; body: string } {
+  const lines: string[] = [];
+  const addr = job.address?.formatted || [job.address?.line1, job.address?.suburb].filter(Boolean).join(', ');
+  if (addr) lines.push(addr);
+  if (job.meetingPoint) lines.push(`Meet: ${job.meetingPoint}`);
+  if (job.specialInstructions) lines.push(String(job.specialInstructions).trim());
+  if (job.description) lines.push(String(job.description).trim());
+  const rooms = [job.rooms ? `${job.rooms} room${job.rooms === 1 ? '' : 's'}` : '', job.bathrooms ? `${job.bathrooms} bathroom${job.bathrooms === 1 ? '' : 's'}` : ''].filter(Boolean).join(', ');
+  if (rooms) lines.push(rooms);
+  if (job.tasks?.length) lines.push(job.tasks.map((t: string) => `• ${t}`).join('\n'));
+  if (job.notes) lines.push(String(job.notes).trim());
+  let body = lines.join('\n');
+  // Push messages have a small size limit; keep well under it
+  if (body.length > 1500) body = `${body.slice(0, 1480).trimEnd()}… (open for the rest)`;
+  return { title: `${job.clientName || job.title || 'Job'}${job.startTime ? ` · ${fmt12(job.startTime)}` : ''}`, body: body || 'No instructions were saved for this job.' };
+}
+
+/**
+ * A phone notification with one job's details, sent as the job is about to start (from 15 minutes before until
+ * 20 minutes after its start time), once per job. A web app can't tell when you physically arrive, so the start time stands in for it.
+ */
+async function sendJobBriefings(userId: string, today: string, nowMinutes: number): Promise<number> {
+  const jobs = await Job.find({ userId, date: today, status: { $in: ['scheduled', 'in_progress'] }, startTime: { $exists: true, $ne: null } }).sort({ startTime: 1 }).lean<any[]>();
+  let sent = 0;
+  for (const job of jobs) {
+    if (!/^\d{2}:\d{2}$/.test(job.startTime ?? '')) continue;
+    const start = Number(job.startTime.slice(0, 2)) * 60 + Number(job.startTime.slice(3));
+    if (nowMinutes < start - 15 || nowMinutes > start + 20) continue;
+    if (!(await once(userId, 'push', `job-briefing|${job._id}|${today}|${job.startTime}`))) continue;
+    const b = jobBriefing(job);
+    if (await sendPush(userId, { title: b.title, body: b.body, url: `/jobs?focus=${job._id}`, tag: `job-briefing-${job._id}` })) sent++;
+  }
+  return sent;
+}
+
 const localHour = (tz: string, now: Date) => Number(new Intl.DateTimeFormat('en-GB', { timeZone: tz, hour: '2-digit', hourCycle: 'h23' }).format(now));
 
 /** Sends what is due for one user right now: the daily email (once) and new phone notifications (once each). */
@@ -133,5 +175,7 @@ export async function runNotifications(userId: string, now = new Date()) {
       for (const a of fresh) if (await sendPush(userId, { title: a.title, body: a.message, url: a.link ?? '/', tag: a.id })) result.push++;
     }
   }
+  // A job's own details as it is about to start — at any hour, since evening and night work needs them too
+  if (n.pushEnabled && n.jobReminders !== false && (await PushSubscription.exists({ userId }))) result.push += await sendJobBriefings(userId, today, localMinutes(tz, now));
   return result;
 }

@@ -228,7 +228,7 @@ function NotificationsTab({ settings }: { settings: Settings }) {
             {sw('billReminders', 'Upcoming bills')}
             {n.billReminders && <TextField type="number" label="Remind me this many days before" value={n.billReminderDays} onChange={(e) => setN({ ...n, billReminderDays: Number(e.target.value) })} sx={{ maxWidth: 280 }} />}
             {sw('invoiceReminders', 'Overdue & due-soon invoices')}
-            {sw('jobReminders', 'Jobs today & tomorrow')}
+            {sw('jobReminders', 'Jobs today & tomorrow, and each job’s details as it starts')}
             {sw('budgetAlerts', 'Budget, income and savings alerts')}
             {sw('taskReminders', 'High-priority tasks today')}
             <Divider />

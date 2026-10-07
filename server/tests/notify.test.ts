@@ -82,6 +82,34 @@ describe('email and phone reminders', () => {
     expect((await runNotifications(userId, at('22:30', '2026-10-03'))).push).toBe(0);
   });
 
+  it('sends each job\'s own details to the phone as it is about to start', async () => {
+    const { runNotifications } = await import('../src/services/notify/index.js');
+    const b = request.agent(app);
+    const uid = (await b.post('/api/auth/register').send({ name: 'Brief', email: 'brief@example.com', password: 'password123' })).body.user.id;
+    await b.post('/api/notifications/push/subscribe').send({ subscription: { endpoint: 'https://push.example/brief-phone', keys: { p256dh: 'p'.repeat(60), auth: 'a'.repeat(20) } } }).expect(201);
+    await b.patch('/api/settings').send({ notifications: { pushEnabled: true, billReminders: false, jobReminders: true } }).expect(200);
+    await b.post('/api/jobs').send({ date: '2026-10-02', startTime: '09:00', clientName: 'Alex Stone', address: { line1: '53 Example Hill Road', suburb: 'Stirling', formatted: '53 Example Hill Road, Stirling' }, specialInstructions: 'Key is under the mat next to the garage', tasks: ['Bathrooms', 'Kitchen'], description: 'Thorough vacuum and mop' }).expect(201);
+    await b.post('/api/jobs').send({ date: '2026-10-02', startTime: '22:30', clientName: 'Night Co', specialInstructions: 'Use the side gate' }).expect(201);
+    const mine = () => pushes.filter((p) => p.endpoint === 'https://push.example/brief-phone').map((p) => p.payload as any).filter((p) => String(p.tag).startsWith('job-briefing')); // eslint-disable-line @typescript-eslint/no-explicit-any
+
+    await runNotifications(uid, at('08:30'));
+    expect(mine()).toHaveLength(0); // too early
+    await runNotifications(uid, at('08:50'));
+    expect(mine()).toHaveLength(1);
+    expect(mine()[0].title).toBe('Alex Stone · 9:00 am');
+    expect(mine()[0].body).toContain('53 Example Hill Road, Stirling');
+    expect(mine()[0].body).toContain('Key is under the mat next to the garage');
+    expect(mine()[0].body).toContain('• Bathrooms');
+    expect(mine()[0].body).not.toContain('side gate'); // nothing from the other job
+    expect(mine()[0].url).toMatch(/^\/jobs\?focus=/);
+    await runNotifications(uid, at('09:00'));
+    expect(mine()).toHaveLength(1); // once only
+    // Night work still gets its details, even though ordinary reminders are quiet after 9pm
+    await runNotifications(uid, at('22:20'));
+    expect(mine()).toHaveLength(2);
+    expect(mine()[1].body).toContain('Use the side gate');
+  });
+
   it('test buttons work and report problems clearly', async () => {
     pushes.length = 0;
     await a.post('/api/notifications/test').send({ channel: 'push' }).expect(200);

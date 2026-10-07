@@ -19,6 +19,8 @@ const settingsSchema = new Schema(
       /** Show a small pop-up inside the app when a new notification appears */
       inAppPopups: { type: Boolean, default: true },
     },
+    /** Sequence numbers of deleted invoices, handed out again before the counter moves on */
+    freedInvoiceSequences: { type: [Number], default: [] },
     invoice: {
       businessName: { type: String, default: '' },
       abn: { type: String, default: '' },

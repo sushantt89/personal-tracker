@@ -7,7 +7,7 @@ import { badRequest, conflict, notFound } from '../utils/httpError.js';
 import { zDate, zOptId } from '../utils/zod.js';
 import { audit } from '../services/audit.js';
 import { assertOwnedRefs, escapeRegex } from '../services/crud.js';
-import { computeTotals, effectiveStatus, nextInvoiceNumber, renderInvoicePdf } from '../services/invoices.js';
+import { computeTotals, effectiveStatus, nextInvoiceNumber, releaseInvoiceNumber, renderInvoicePdf } from '../services/invoices.js';
 import { userCtx } from '../utils/userCtx.js';
 import { addDays } from '../utils/dates.js';
 import { uploadInvoice, queueInvoiceUpload, queueDriveDelete } from '../services/google/drive.js';
@@ -252,6 +252,7 @@ r.delete('/:id', async (req, res) => {
   await Job.updateMany({ userId: req.userId, invoiceId: inv._id }, { invoiceId: null });
   await Income.updateMany({ userId: req.userId, invoiceId: inv._id }, { invoiceId: null, invoiceNumber: null });
   await inv.deleteOne();
+  await releaseInvoiceNumber(req.userId!, inv.number, inv.issueDate);
   await audit(req.userId!, 'Invoice', inv._id, 'delete', inv.toJSON());
   queueCalendarDelete(req.userId!, inv.sync?.googleCalendarEventId);
   queueDriveDelete(req.userId!, inv.sync?.googleDriveFileId, `invoice ${inv.number}`);

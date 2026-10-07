@@ -121,6 +121,28 @@ describe('API end-to-end', () => {
     expect(blocked.status).toBe(409);
   });
 
+  it('reuses the number of a deleted invoice', async () => {
+    const mk = async () => (await a.post('/api/invoices').send({ issueDate: '2026-10-05', clientName: 'Number Co', items: [{ description: 'Work', quantity: 1, rate: 10 }] }).expect(201)).body;
+    const n = (x: { number: string }) => Number(x.number.split('-').pop());
+    const one = await mk(), two = await mk(), three = await mk();
+    expect([n(two), n(three)]).toEqual([n(one) + 1, n(one) + 2]);
+    // Deleting one in the middle: the next new invoice fills the gap, then numbering carries on
+    await a.delete(`/api/invoices/${two.id}`).expect(200);
+    expect((await a.get('/api/invoices/next-number').query({ date: '2026-10-05' })).body.number).toBe(two.number);
+    const again = await mk();
+    expect(again.number).toBe(two.number);
+    const four = await mk();
+    expect(n(four)).toBe(n(three) + 1);
+    // Deleting the latest: its number is used again
+    await a.delete(`/api/invoices/${four.id}`).expect(200);
+    expect((await mk()).number).toBe(four.number);
+    // A freed number someone typed in by hand meanwhile is skipped
+    const five = await mk();
+    await a.delete(`/api/invoices/${five.id}`).expect(200);
+    await a.post('/api/invoices').send({ number: five.number, issueDate: '2026-10-05', clientName: 'Number Co', items: [{ description: 'Work', quantity: 1, rate: 10 }] }).expect(201);
+    expect(n(await mk())).toBe(n(five) + 1);
+  });
+
   it('bills, budget, dashboard and required income', async () => {
     const cats = (await a.get('/api/categories')).body.items;
     const insurance = cats.find((c: { name: string }) => c.name === 'Insurance');
@@ -533,12 +555,12 @@ describe('reset everything', () => {
 
     // Email not set up yet: a clear message, nothing changes
     const none = await b.post(`/api/invoices/${inv.id}/send`).query(q).send({}).expect(400);
-    expect(none.body.error).toMatch(/Email isn’t set up/);
+    expect(none.body.error).toMatch(/sent from your own Google account/);
 
     setEmailOverride((m) => { sent.push(m); });
     try {
       const d = (await b.get(`/api/invoices/${inv.id}/send-details`).query(q).expect(200)).body;
-      expect(d).toMatchObject({ to: 'pay@bright.example', toSource: 'client', subject: `Invoice ${inv.number} from Tidy Co`, via: 'smtp', sentAt: null });
+      expect(d).toMatchObject({ to: 'pay@bright.example', toSource: 'client', subject: `Invoice ${inv.number} from Tidy Co`, via: 'gmail', sentAt: null });
       expect(d.message).toContain('Payment is due by 15 October 2026.');
 
       const r = (await b.post(`/api/invoices/${inv.id}/send`).query(q).send({}).expect(200)).body;

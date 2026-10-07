@@ -10,17 +10,44 @@ export function formatInvoiceNumber(format: string, seq: number, date: string): 
     .replace(/\{SEQ(?::(\d))?\}/g, (_, w) => String(seq).padStart(w ? Number(w) : 4, '0'));
 }
 
-/** Reserves the next unused invoice number for a user (atomic counter + uniqueness check). */
+/**
+ * Reserves the next invoice number for a user. Numbers freed by deleting an invoice are reused first (lowest first),
+ * then the counter carries on. Atomic, and never returns a number an existing invoice already has.
+ */
 export async function nextInvoiceNumber(userId: string, issueDate: string, reserve = true): Promise<string> {
+  const fmt = (s: any, seq: number) => formatInvoiceNumber(s?.invoice?.numberFormat || 'INV-{YYYY}-{SEQ}', seq, issueDate); // eslint-disable-line @typescript-eslint/no-explicit-any
+  const first = await Settings.findOne({ userId }).lean();
+  const freed = [...new Set<number>(first?.freedInvoiceSequences ?? [])].filter((n) => n < (first?.invoice?.nextSequence ?? 1)).sort((x, y) => x - y);
+  for (const seq of freed) {
+    const number = fmt(first, seq);
+    if (await Invoice.exists({ userId, number })) { if (reserve) await Settings.updateOne({ userId }, { $pull: { freedInvoiceSequences: seq } }); continue; }
+    if (!reserve) return number;
+    // Claim it; if another request got there first, try the next one
+    const claimed = await Settings.findOneAndUpdate({ userId, freedInvoiceSequences: seq }, { $pull: { freedInvoiceSequences: seq } });
+    if (claimed) return number;
+  }
   for (let attempt = 0; attempt < 50; attempt++) {
     const s = reserve
       ? await Settings.findOneAndUpdate({ userId }, { $inc: { 'invoice.nextSequence': 1 } }, { new: false, upsert: true })
       : await Settings.findOne({ userId });
     const seq = (s?.invoice?.nextSequence ?? 1) + (reserve ? 0 : attempt);
-    const number = formatInvoiceNumber(s?.invoice?.numberFormat || 'INV-{YYYY}-{SEQ}', seq, issueDate);
+    const number = fmt(s, seq);
     if (!(await Invoice.exists({ userId, number }))) return number;
   }
   throw new Error('Could not allocate an invoice number');
+}
+
+/** Call after deleting an invoice: its number becomes available for the next new invoice. */
+export async function releaseInvoiceNumber(userId: string, number: string, issueDate: string): Promise<void> {
+  const s = await Settings.findOne({ userId }).lean();
+  const next = s?.invoice?.nextSequence ?? 1;
+  const format = s?.invoice?.numberFormat || 'INV-{YYYY}-{SEQ}';
+  // Work out which sequence number this was (hand-typed numbers that don't fit the format are simply not tracked)
+  for (let seq = next - 1; seq >= Math.max(1, next - 2000); seq--) {
+    if (formatInvoiceNumber(format, seq, issueDate) !== number) continue;
+    await Settings.updateOne({ userId }, { $addToSet: { freedInvoiceSequences: seq } });
+    return;
+  }
 }
 
 export interface ItemInput {

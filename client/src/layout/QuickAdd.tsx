@@ -10,6 +10,7 @@ import EventRepeatOutlinedIcon from '@mui/icons-material/EventRepeatOutlined';
 import ReceiptLongOutlinedIcon from '@mui/icons-material/ReceiptLongOutlined';
 import DocumentScannerOutlinedIcon from '@mui/icons-material/DocumentScannerOutlined';
 import ContentPasteGoIcon from '@mui/icons-material/ContentPasteGo';
+import { useJobDerive } from '../hooks/useLookups';
 import { EntityFormDialog, type FieldDef, type Values } from '../components/EntityForm';
 import { post } from '../api/client';
 import { expenseFields, expenseDefaults, incomeFields, incomeDefaults, jobFields, jobDefaults, jobFromForm, taskFields, taskDefaults, billFields, billDefaults } from '../utils/forms';
@@ -30,6 +31,7 @@ export default function QuickAdd({ phone = false, sheetOpen = false, onSheetClos
   const nav = useNavigate();
   const { pathname } = useLocation();
   const toast = useToast();
+  const jobDerive = useJobDerive();
   const invalidate = useInvalidateFinance();
   const [open, setOpen] = useState(false);
   const [kind, setKind] = useState<Kind | null>(null);
@@ -82,7 +84,7 @@ export default function QuickAdd({ phone = false, sheetOpen = false, onSheetClos
         </>
       )}
       {cfg && (
-        <EntityFormDialog open={!!kind} title={cfg.title} fields={cfg.fields.filter((f) => f.quick)} initial={cfg.defaults()} onClose={() => setKind(null)}
+        <EntityFormDialog open={!!kind} title={cfg.title} fields={cfg.fields.filter((f) => f.quick)} initial={cfg.defaults()} onClose={() => setKind(null)} derive={kind === 'job' ? jobDerive : undefined}
           onSubmit={async (v) => {
             await post(cfg.endpoint, kind === 'job' ? jobFromForm(v) : v);
             invalidate();

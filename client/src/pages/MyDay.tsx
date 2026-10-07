@@ -14,7 +14,7 @@ import type { CalendarEvent, Task, Job, TravelDay } from '../api/types';
 import { PageHeader, SectionCard, LoadingBlock, StatusChip, useConfirm } from '../components/common';
 import { EntityFormDialog } from '../components/EntityForm';
 import { taskFields, taskDefaults, jobFields, jobToForm, jobFromForm, addToGoogleField, taskInGoogle } from '../utils/forms';
-import { useIntegrations, useSettings } from '../hooks/useLookups';
+import { useIntegrations, useSettings, useJobDerive } from '../hooks/useLookups';
 import { addDays, fmtDay, fmtTime, money, localToday, directionsUrl, fmtDate } from '../utils/format';
 import { useInvalidateFinance } from '../hooks/useInvalidate';
 import { useToast } from '../hooks/useToast';
@@ -30,6 +30,7 @@ export default function MyDay() {
   const { chart } = useThemeMode();
   const nav = useNavigate();
   const toast = useToast();
+  const jobDerive = useJobDerive();
   const invalidate = useInvalidateFinance();
   const confirm = useConfirm();
   const [params, setParams] = useSearchParams();
@@ -264,7 +265,7 @@ export default function MyDay() {
           if (!googleConnected || !!v.addToGoogle === !!editingTask?.initial.addToGoogle) delete v.addToGoogle;
           if (editingTask?.id) await patch(`/tasks/${editingTask.id}`, v); else await post('/tasks', v); invalidate(); toast('Task saved'); }}
         extra={editingTask?.id ? <Button color="error" sx={{ mt: 2 }} onClick={async () => { const id = editingTask.id!; if (await confirm({ title: 'Delete this task?', message: 'Recurring tasks are deleted for all dates.', confirmText: 'Delete', danger: true })) { await del(`/tasks/${id}`); setEditingTask(null); invalidate(); toast('Task deleted'); } }}>Delete task</Button> : undefined} />
-      <EntityFormDialog open={!!editingJob} title="Edit job" fields={jobFields} initial={editingJob ? jobToForm(editingJob) : {}} onClose={() => setEditingJob(null)}
+      <EntityFormDialog open={!!editingJob} title="Edit job" fields={jobFields} initial={editingJob ? jobToForm(editingJob) : {}} derive={jobDerive} onClose={() => setEditingJob(null)}
         onSubmit={async (v) => { await patch(`/jobs/${editingJob!.id}`, jobFromForm(v)); invalidate(); toast('Job saved'); }} />
     </Box>
   );

@@ -149,15 +149,18 @@ export function FieldGrid({ fields, values, setValues }: { fields: FieldDef[]; v
   );
 }
 
-export function EntityFormDialog({ open, title, fields, initial, onSubmit, onClose, submitLabel = 'Save', extra }: {
+export function EntityFormDialog({ open, title, fields, initial, onSubmit, onClose, submitLabel = 'Save', extra, derive }: {
   open: boolean; title: string; fields: FieldDef[]; initial: Values; onSubmit: (v: Values) => Promise<unknown>; onClose: () => void; submitLabel?: string; extra?: ReactNode;
+  /** Fills in fields that follow from others (e.g. pay = rate × hours) each time something changes */
+  derive?: (next: Values, prev: Values) => Values;
 }) {
   const theme = useTheme();
   const fullScreen = useMediaQuery(theme.breakpoints.down('sm'));
-  const [values, setValues] = useState<Values>(initial);
+  const [values, setRaw] = useState<Values>(initial);
+  const setValues = (fn: Values | ((v: Values) => Values)) => setRaw((prev) => { const next = typeof fn === 'function' ? fn(prev) : fn; return derive ? derive(next, prev) : next; });
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
-  useEffect(() => { if (open) { setValues(initial); setError(null); } }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (open) { setRaw(initial); setError(null); } }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const submit = async (e?: React.FormEvent) => {
     e?.preventDefault();

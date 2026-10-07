@@ -16,7 +16,7 @@ import { money, fmtDate, fmtTime, mapsUrl } from '../utils/format';
 import { patch, post } from '../api/client';
 import { useInvalidateFinance } from '../hooks/useInvalidate';
 import { useToast } from '../hooks/useToast';
-import { useLookupMaps } from '../hooks/useLookups';
+import { useLookupMaps, useJobDerive } from '../hooks/useLookups';
 import { Grid } from '@mui/material';
 
 export default function Jobs() {
@@ -24,6 +24,7 @@ export default function Jobs() {
   const invalidate = useInvalidateFinance();
   const toast = useToast();
   const { sources, srcById } = useLookupMaps();
+  const jobDerive = useJobDerive();
   const [payOpen, setPayOpen] = useState<false | 'paid' | 'expected'>(false);
   const fuelNote = (j: Job) => (j.fuelAllowance && j.amount ? <Typography variant="caption" color="text.secondary" display="block">incl. {money(j.fuelAllowance)} fuel</Typography> : null);
   const amountCell = (j: Job) => <>{amountCellMain(j)}{fuelNote(j)}</>;
@@ -56,7 +57,7 @@ export default function Jobs() {
   const config: ResourceConfig<Job> = {
     queryKey: 'jobs', endpoint: '/jobs', title: 'Jobs', singular: 'Job',
     subtitle: 'Own-business jobs are billed to the client; jobs under a contractor are billed to the contractor; employee shifts are paid as wages. If you don’t know the pay yet, set an expected amount now and record the real pay later.',
-    fields: jobFields, defaults: jobDefaults, dateFilter: true, transform: jobFromForm,
+    fields: jobFields, defaults: jobDefaults, dateFilter: true, transform: jobFromForm, derive: jobDerive,
     fromRecord: (j) => ({ ...jobToForm(j), tasks: j.tasks ?? [] }),
     filters: [
       // Completed jobs are hidden until asked for; the totals above still count them

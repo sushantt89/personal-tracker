@@ -23,6 +23,8 @@ const jobSchema = new Schema(
     amount: moneyOpt,
     /** part of `amount` that is a fuel/travel allowance rather than pay for the work (kept apart so hourly rates stay honest) */
     fuelAllowance: moneyOpt,
+    /** Pay per hour, when the job is paid by the hour (the form works `amount` out from it) */
+    hourlyRate: moneyOpt,
     /** true = `amount` is only what you expect to be paid; the real figure replaces it when pay is recorded */
     amountEstimated: { type: Boolean, default: false },
     /** Left out of the work-hours tracker (e.g. a cash job that isn't part of the hours being watched) */

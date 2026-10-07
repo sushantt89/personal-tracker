@@ -42,6 +42,8 @@ export interface ResourceConfig<T extends { id: string }> {
   columns: Column<T>[];
   defaults: () => Values;
   fromRecord?: (row: T) => Values;
+  /** Fills in form fields that follow from others while the form is being edited */
+  derive?: (next: Values, prev: Values) => Values;
   dateFilter?: boolean;
   defaultRange?: DateRange['preset'];
   filters?: FilterDef<T>[];
@@ -265,7 +267,7 @@ export function ResourcePage<T extends { id: string }>({ config }: { config: Res
         <MenuItem onClick={() => { const row = menu!.row; setMenu(null); remove(row); }} sx={{ color: 'error.main' }}><ListItemIcon><DeleteOutlineIcon fontSize="small" color="error" /></ListItemIcon>Delete</MenuItem>
       </Menu>
 
-      <EntityFormDialog open={!!editing} title={editing?.row ? `Edit ${config.singular.toLowerCase()}` : `Add ${config.singular.toLowerCase()}`} fields={config.fields} initial={editing?.initial ?? {}} onSubmit={(v) => save.mutateAsync(v)} onClose={() => setEditing(null)} />
+      <EntityFormDialog open={!!editing} title={editing?.row ? `Edit ${config.singular.toLowerCase()}` : `Add ${config.singular.toLowerCase()}`} fields={config.fields} initial={editing?.initial ?? {}} onSubmit={(v) => save.mutateAsync(v)} onClose={() => setEditing(null)} derive={config.derive} />
     </Box>
   );
 }

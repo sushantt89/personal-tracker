@@ -48,11 +48,12 @@ export const jobFields: FieldDef[] = [
   { name: 'date', label: 'Date', type: 'date', required: true, quick: true, span: 4 },
   { name: 'startTime', label: 'Start', type: 'time', quick: true, span: 4 },
   { name: 'endTime', label: 'End', type: 'time', span: 4 },
-  { name: 'amount', label: 'Pay', type: 'money', quick: true, span: 4, helper: 'Leave empty if you don’t know the pay yet' },
+  { name: 'hourlyRate', label: 'Rate per hour', type: 'money', quick: true, span: 4, helper: 'Filled in from the client or contractor’s default rate' },
+  { name: 'hoursWorked', label: 'Hours', type: 'number', quick: true, span: 4, helper: 'Leave empty to use start–end' },
+  { name: 'amount', label: 'Pay', type: 'money', quick: true, span: 4, helper: 'Rate × hours, or type a fixed amount. Leave empty if you don’t know yet' },
   { name: 'fuelAllowance', label: 'Fuel allowance', type: 'money', quick: true, span: 4, helper: 'Extra paid on top of the pay, if this job gives one' },
   { name: 'amountEstimated', label: 'This amount is an estimate (actual pay not known yet)', type: 'switch', showIf: (v) => Number(v.amount) > 0 },
   { name: 'excludeFromHours', label: 'Don’t count this in Work hours (e.g. a cash job)', type: 'switch' },
-  { name: 'hoursWorked', label: 'Hours worked', type: 'number', span: 4 },
   { name: 'status', label: 'Status', type: 'select', options: opts(['scheduled', 'in_progress', 'completed', 'cancelled']), span: 4 },
   { name: 'h-addr', label: 'Address', type: 'heading' },
   { name: 'address.line1', label: 'Street address', type: 'text', quick: true, span: 12 },
@@ -68,6 +69,43 @@ export const jobFields: FieldDef[] = [
   { name: 'specialInstructions', label: 'Special instructions', type: 'textarea' },
   { name: 'notes', label: 'Notes', type: 'textarea' },
 ];
+/** Hours for a job being typed in: the Hours field if filled, otherwise start–end. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export function formJobHours(v: any): number {
+  const h = Number(v.hoursWorked);
+  if (h > 0) return h;
+  const mins = (t?: string) => (/^\d{1,2}:\d{2}$/.test(t ?? '') ? Number(t!.split(':')[0]) * 60 + Number(t!.split(':')[1]) : NaN);
+  const d = mins(v.endTime) - mins(v.startTime);
+  return d > 0 ? d / 60 : 0;
+}
+const autoPay = (rate: unknown, hours: number) => (Number(rate) > 0 && hours > 0 ? Math.round(Number(rate) * hours * 100) / 100 : undefined);
+const blank = (x: unknown) => x === '' || x === undefined || x === null;
+
+/**
+ * Keeps the job form's rate and pay in step while it is being filled in:
+ *  - choosing a client/contractor brings in their default hourly rate (the contractor's for subcontract work),
+ *    falling back to the income source's rate — unless a different rate was typed by hand;
+ *  - pay becomes rate × hours — unless a different pay was typed by hand.
+ */
+export function makeJobDerive(clients: { id: string; defaultRate?: number }[], sources: { id: string; defaultHourlyRate?: number }[]) {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const defaultRate = (v: any): number | undefined => {
+    const of = (id?: string) => clients.find((c) => c.id === id)?.defaultRate || undefined;
+    return (v.workType === 'subcontract' || v.contractorId ? of(v.contractorId) : undefined) ?? of(v.clientId) ?? (sources.find((s) => s.id === v.incomeSourceId)?.defaultHourlyRate || undefined);
+  };
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return (next: any, prev: any) => {
+    let out = next;
+    const was = defaultRate(prev), now = defaultRate(next);
+    // A rate that is empty, or still the one we filled in, follows the payer; a hand-typed rate is left alone
+    if (now !== was && now && (blank(next.hourlyRate) || Number(next.hourlyRate) === was)) out = { ...out, hourlyRate: now };
+    const before = autoPay(prev.hourlyRate, formJobHours(prev)), after = autoPay(out.hourlyRate, formJobHours(out));
+    // Pay we worked out follows the rate and hours (and empties again if they go); pay typed by hand is left alone
+    if (after !== before && (after !== undefined ? blank(out.amount) || Number(out.amount) === before : !blank(out.amount) && Number(out.amount) === before)) out = { ...out, amount: after ?? '' };
+    return out;
+  };
+}
+
 const cents = (n: unknown) => Math.round((Number(n) || 0) * 100);
 /** The job form shows pay and fuel allowance separately; a saved job keeps one total (`amount`) with the fuel part noted beside it. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -134,7 +172,7 @@ export const clientFields: FieldDef[] = [
   { name: 'address.suburb', label: 'Suburb', type: 'text', span: 5 },
   { name: 'address.state', label: 'State', type: 'text', span: 3 },
   { name: 'address.postcode', label: 'Postcode', type: 'text', span: 4 },
-  { name: 'defaultRate', label: 'Default rate', type: 'money' },
+  { name: 'defaultRate', label: 'Default rate (per hour)', type: 'money', helper: 'Filled in automatically when you add a job for them' },
   { name: 'notes', label: 'Notes', type: 'textarea' },
 ];
 export const clientDefaults = () => ({ type: 'client', address: {} });

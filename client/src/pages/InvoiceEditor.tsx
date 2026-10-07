@@ -25,7 +25,8 @@ import { money, fmtDate, fmtShort, localToday, addDays, startOfMonth, endOfMonth
 import { useClients, useIncomeSources, useSettings, useIntegrations } from '../hooks/useLookups';
 import { useInvalidateFinance } from '../hooks/useInvalidate';
 import { useToast } from '../hooks/useToast';
-import { markInvoicePaid, setInvoiceStatus, sendInvoice, sentMessage } from './invoiceActions';
+import { markInvoicePaid, setInvoiceStatus, sendInvoice, sentMessage, shareInvoicePdf } from './invoiceActions';
+import ShareOutlinedIcon from '@mui/icons-material/ShareOutlined';
 import EmailOutlinedIcon from '@mui/icons-material/EmailOutlined';
 import EditOutlinedIcon from '@mui/icons-material/EditOutlined';
 import dayjs from 'dayjs';
@@ -175,6 +176,7 @@ export default function InvoiceEditor() {
       else { setForm(null); existing.refetch(); }
     } catch (e) { setError((e as Error).message); } finally { setSaving(false); }
   };
+  const share = async (i: Invoice) => { try { const r = await shareInvoicePdf(i); if (r === 'downloaded') toast('This browser can’t share files directly, so the PDF was downloaded — attach it from your downloads', 'info'); } catch (e) { toast((e as Error).message, 'error'); } };
   const sendNow = async () => {
     if (!inv || sending) return;
     setSending(true);
@@ -211,6 +213,7 @@ export default function InvoiceEditor() {
           {inv && <>
             <Button startIcon={<VisibilityOutlinedIcon />} onClick={() => setPreview(true)}>Preview</Button>
             <Button startIcon={<PictureAsPdfOutlinedIcon />} href={fileUrl(`/invoices/${inv.id}/pdf`, { download: 1 })}>PDF</Button>
+            <Button startIcon={<ShareOutlinedIcon />} onClick={() => share(inv)}>Share</Button>
             {inv.status !== 'cancelled' && <Button variant="contained" startIcon={<EmailOutlinedIcon />} disabled={sending} onClick={sendNow}>{inv.sentAt ? 'Send again' : 'Send'}</Button>}
             {inv.status === 'draft' && <Button startIcon={<SendOutlinedIcon />} onClick={() => act(() => setInvoiceStatus(inv, 'sent'), 'Marked as sent')}>Mark sent</Button>}
             {inv.status !== 'paid' && <Button color="success" startIcon={<CheckCircleOutlineIcon />} onClick={() => act(() => markInvoicePaid(inv, confirm), 'Marked as paid — its jobs and their income are marked paid too')}>Mark paid</Button>}
@@ -408,6 +411,7 @@ export default function InvoiceEditor() {
         <DialogActions sx={{ px: 3, pb: 2, flexWrap: 'wrap', gap: 1 }}>
           <Button color="inherit" startIcon={<EditOutlinedIcon />} onClick={() => setCreated(false)}>Edit</Button>
           <Button startIcon={<PictureAsPdfOutlinedIcon />} href={inv ? fileUrl(`/invoices/${inv.id}/pdf`) : '#'} target="_blank" rel="noreferrer">View PDF</Button>
+          <Button startIcon={<ShareOutlinedIcon />} onClick={() => { if (inv) { setCreated(false); share(inv); } }}>Share</Button>
           <Button variant="contained" startIcon={<EmailOutlinedIcon />} disabled={sending} onClick={() => { setCreated(false); sendNow(); }}>Send</Button>
         </DialogActions>
       </Dialog>

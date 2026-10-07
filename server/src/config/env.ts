@@ -12,6 +12,9 @@ const schema = z.object({
   COOKIE_SECURE: z.enum(['true', 'false']).optional(),
   UPLOAD_DIR: z.string().default('./uploads'),
   MAX_UPLOAD_MB: z.coerce.number().positive().default(10),
+  /** Shown on the public Privacy policy and Terms pages: who runs this copy of the app and how to reach them */
+  CONTACT_EMAIL: z.string().optional().default(''),
+  OPERATOR_NAME: z.string().optional().default(''),
   SMTP_HOST: z.string().optional().default(''),
   SMTP_PORT: z.coerce.number().default(587),
   SMTP_USER: z.string().optional().default(''),

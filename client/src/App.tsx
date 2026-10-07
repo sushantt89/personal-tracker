@@ -26,6 +26,8 @@ const SearchPage = lazy(() => import('./pages/SearchPage'));
 const NotificationsPage = lazy(() => import('./pages/NotificationsPage'));
 const Assistant = lazy(() => import('./pages/Assistant'));
 const News = lazy(() => import('./pages/News'));
+const PrivacyPage = lazy(() => import('./pages/Legal').then((m) => ({ default: m.PrivacyPage })));
+const TermsPage = lazy(() => import('./pages/Legal').then((m) => ({ default: m.TermsPage })));
 const Today = lazy(() => import('./pages/Today'));
 const WorkHours = lazy(() => import('./pages/WorkHours'));
 const Kilometres = lazy(() => import('./pages/Kilometres'));
@@ -68,6 +70,8 @@ export default function App() {
           <Route path="/register" element={<PublicOnly><RegisterPage /></PublicOnly>} />
           <Route path="/forgot-password" element={<ForgotPasswordPage />} />
           <Route path="/reset-password" element={<ResetPasswordPage />} />
+          <Route path="/privacy" element={<PrivacyPage />} />
+          <Route path="/terms" element={<TermsPage />} />
           <Route element={<Protected><AppLayout /></Protected>}>
             <Route index element={<Today />} />
             <Route path="dashboard" element={<Dashboard />} />

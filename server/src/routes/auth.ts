@@ -22,7 +22,8 @@ const password = z.string().min(8, 'Password must be at least 8 characters').max
 const email = z.string().trim().toLowerCase().email('Enter a valid email');
 
 /** Which sign-in methods the login page should offer. */
-r.get('/providers', (_req, res) => res.json({ google: googleConfigured() }));
+/** Public facts the sign-in and legal pages need. Nothing here is secret. */
+r.get('/providers', (_req, res) => res.json({ google: googleConfigured(), contactEmail: env.CONTACT_EMAIL || undefined, operatorName: env.OPERATOR_NAME || undefined }));
 
 r.post('/register', limiter, async (req, res) => {
   const body = parseBody(z.object({ name: z.string().trim().min(1, 'Name is required').max(100), email, password, timezone: z.string().max(60).optional() }), req.body);

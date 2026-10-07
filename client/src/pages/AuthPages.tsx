@@ -18,6 +18,10 @@ function Shell({ title, subtitle, children }: { title: string; subtitle?: string
           <Typography variant="h5" gutterBottom>{title}</Typography>
           {subtitle && <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>{subtitle}</Typography>}
           {children}
+          <Stack direction="row" spacing={2} justifyContent="center" sx={{ mt: 3 }}>
+            <Link component={RouterLink} to="/privacy" variant="caption" color="text.secondary">Privacy policy</Link>
+            <Link component={RouterLink} to="/terms" variant="caption" color="text.secondary">Terms of service</Link>
+          </Stack>
         </CardContent>
       </Card>
     </Box>

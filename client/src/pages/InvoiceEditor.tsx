@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import {
   Box, Card, CardContent, Grid, TextField, Button, Stack, Typography, IconButton, Table, TableHead, TableRow, TableCell, TableBody, Alert, MenuItem,
@@ -25,7 +25,9 @@ import { money, fmtDate, fmtShort, localToday, addDays, startOfMonth, endOfMonth
 import { useClients, useIncomeSources, useSettings, useIntegrations } from '../hooks/useLookups';
 import { useInvalidateFinance } from '../hooks/useInvalidate';
 import { useToast } from '../hooks/useToast';
-import { markInvoicePaid, setInvoiceStatus } from './invoiceActions';
+import { markInvoicePaid, setInvoiceStatus, sendInvoice } from './invoiceActions';
+import EmailOutlinedIcon from '@mui/icons-material/EmailOutlined';
+import EditOutlinedIcon from '@mui/icons-material/EditOutlined';
 import dayjs from 'dayjs';
 
 interface Form {
@@ -54,6 +56,11 @@ export default function InvoiceEditor() {
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [preview, setPreview] = useState(false);
+  const [sending, setSending] = useState(false);
+  // Straight after creating an invoice: offer to send it or keep editing
+  const loc = useLocation() as { state?: { justCreated?: boolean } };
+  const [created, setCreated] = useState(Boolean(loc.state?.justCreated));
+  useEffect(() => { if (loc.state?.justCreated) { setCreated(true); nav('.', { replace: true, state: null }); } }, [loc.state?.justCreated]); // eslint-disable-line react-hooks/exhaustive-deps
   const [showGen, setShowGen] = useState(params.get('generate') === '1');
   const templates = useQuery({ queryKey: ['invoice-templates'], queryFn: () => get<{ items: InvoiceTemplate[] }>('/invoice-templates') });
   const [tplMenu, setTplMenu] = useState<HTMLElement | null>(null);
@@ -158,9 +165,16 @@ export default function InvoiceEditor() {
       const saved = id ? await put<Invoice>(`/invoices/${id}`, body) : await post<Invoice>('/invoices', { ...body, status: status ?? 'draft' });
       invalidate();
       toast(`Invoice ${saved.number} saved`);
-      if (!id) nav(`/invoices/${saved.id}`, { replace: true });
+      if (!id) nav(`/invoices/${saved.id}`, { replace: true, state: { justCreated: true } });
       else { setForm(null); existing.refetch(); }
     } catch (e) { setError((e as Error).message); } finally { setSaving(false); }
+  };
+  const sendNow = async () => {
+    if (!inv || sending) return;
+    setSending(true);
+    try { const r = await sendInvoice(inv); invalidate(); setForm(null); existing.refetch(); toast(`Invoice ${inv.number} sent to ${r.to}`); }
+    catch (e) { toast((e as Error).message, 'error'); }
+    setSending(false);
   };
   const act = async (fn: () => Promise<unknown>, msg: string) => { try { await fn(); invalidate(); existing.refetch(); toast(msg); } catch (e) { toast((e as Error).message, 'error'); } };
   const saveTemplate = async () => {
@@ -191,6 +205,7 @@ export default function InvoiceEditor() {
           {inv && <>
             <Button startIcon={<VisibilityOutlinedIcon />} onClick={() => setPreview(true)}>Preview</Button>
             <Button startIcon={<PictureAsPdfOutlinedIcon />} href={fileUrl(`/invoices/${inv.id}/pdf`, { download: 1 })}>PDF</Button>
+            {inv.status !== 'cancelled' && <Button variant="contained" startIcon={<EmailOutlinedIcon />} disabled={sending} onClick={sendNow}>{inv.sentAt ? 'Send again' : 'Send'}</Button>}
             {inv.status === 'draft' && <Button startIcon={<SendOutlinedIcon />} onClick={() => act(() => setInvoiceStatus(inv, 'sent'), 'Marked as sent')}>Mark sent</Button>}
             {inv.status !== 'paid' && <Button color="success" startIcon={<CheckCircleOutlineIcon />} onClick={() => act(() => markInvoicePaid(inv, confirm), 'Marked as paid — its jobs and their income are marked paid too')}>Mark paid</Button>}
             {inv.status === 'paid' && <Button onClick={() => act(() => setInvoiceStatus(inv, 'sent', true), 'Marked as unpaid')}>Mark unpaid</Button>}
@@ -378,6 +393,17 @@ export default function InvoiceEditor() {
         <DialogContent sx={{ p: 0, height: '80vh' }}>
           {inv && <iframe title="Invoice PDF preview" src={fileUrl(`/invoices/${inv.id}/pdf`)} style={{ border: 0, width: '100%', height: '100%' }} />}
         </DialogContent>
+      </Dialog>
+      <Dialog open={created && !!inv} onClose={() => setCreated(false)} maxWidth="xs" fullWidth>
+        <DialogTitle>Invoice {inv?.number} created</DialogTitle>
+        <DialogContent>
+          <Typography variant="body2" color="text.secondary">{inv?.clientName} · {money(inv?.total)}. What would you like to do next?</Typography>
+        </DialogContent>
+        <DialogActions sx={{ px: 3, pb: 2, flexWrap: 'wrap', gap: 1 }}>
+          <Button color="inherit" startIcon={<EditOutlinedIcon />} onClick={() => setCreated(false)}>Edit</Button>
+          <Button startIcon={<PictureAsPdfOutlinedIcon />} href={inv ? fileUrl(`/invoices/${inv.id}/pdf`) : '#'} target="_blank" rel="noreferrer">View PDF</Button>
+          <Button variant="contained" startIcon={<EmailOutlinedIcon />} disabled={sending} onClick={() => { setCreated(false); sendNow(); }}>Send</Button>
+        </DialogActions>
       </Dialog>
     </Box>
   );

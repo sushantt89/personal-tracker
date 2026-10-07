@@ -516,4 +516,61 @@ describe('reset everything', () => {
     const cleared = (await b.patch(`/api/expenses/${parking.id}`).query(q).send({ contractorId: null }).expect(200)).body;
     expect(cleared.contractorId ?? null).toBeNull();
   });
+
+  it('emails an invoice PDF to the address in Clients & contractors', async () => {
+    const { setEmailOverride, buildRawEmail } = await import('../src/services/email.js');
+    const sent: any[] = [];
+    const b = request.agent(app);
+    await b.post('/api/auth/register').send({ name: 'Sender', email: 'sender@example.com', password: 'password123' }).expect(201);
+    const q = { today: '2026-10-10' };
+    await b.patch('/api/settings').send({ invoice: { businessName: 'Tidy Co', email: 'accounts@tidy.example', paymentDetails: 'PayID 0400 000 000' } }).expect(200);
+    const agency = (await b.post('/api/clients').query(q).send({ name: 'Bright Agency', type: 'contractor', email: 'pay@bright.example' }).expect(201)).body;
+    const noMail = (await b.post('/api/clients').query(q).send({ name: 'No Mail Pty' }).expect(201)).body;
+    const job = (await b.post('/api/jobs').query(q).send({ date: '2026-10-06', clientName: 'Jordan', workType: 'subcontract', contractorId: agency.id, amount: 60 }).expect(201)).body;
+    const items = [{ description: 'Cleaning', quantity: 1, rate: 60, jobId: job.id }];
+    const inv = (await b.post('/api/invoices').query(q).send({ issueDate: '2026-10-08', dueDate: '2026-10-15', clientId: agency.id, clientName: 'Bright Agency', items }).expect(201)).body;
+    expect(inv.status).toBe('draft');
+
+    // Email not set up yet: a clear message, nothing changes
+    const none = await b.post(`/api/invoices/${inv.id}/send`).query(q).send({}).expect(400);
+    expect(none.body.error).toMatch(/Email isn’t set up/);
+
+    setEmailOverride((m) => { sent.push(m); });
+    try {
+      const d = (await b.get(`/api/invoices/${inv.id}/send-details`).query(q).expect(200)).body;
+      expect(d).toMatchObject({ to: 'pay@bright.example', toSource: 'client', subject: `Invoice ${inv.number} from Tidy Co`, via: 'smtp', sentAt: null });
+      expect(d.message).toContain('Payment is due by 15 October 2026.');
+
+      const r = (await b.post(`/api/invoices/${inv.id}/send`).query(q).send({}).expect(200)).body;
+      expect(r).toMatchObject({ to: 'pay@bright.example' });
+      expect(r.invoice).toMatchObject({ status: 'sent', sentTo: 'pay@bright.example' });
+      expect(sent).toHaveLength(1);
+      expect(sent[0]).toMatchObject({ to: 'pay@bright.example', subject: `Invoice ${inv.number} from Tidy Co` });
+      expect(sent[0].extras).toMatchObject({ fromName: 'Tidy Co', replyTo: 'accounts@tidy.example' });
+      const att = sent[0].extras.attachments[0];
+      expect(att).toMatchObject({ filename: `${inv.number}.pdf`, contentType: 'application/pdf' });
+      expect(att.content.subarray(0, 5).toString()).toBe('%PDF-');
+      // The job's income now waits for payment
+      expect((await b.get('/api/income?from=2026-10-01&to=2026-10-31').query(q)).body.items[0].status).toBe('pending');
+
+      // A different address and wording for one send
+      await b.post(`/api/invoices/${inv.id}/send`).query(q).send({ to: 'boss@bright.example', subject: 'Reminder', message: 'Second copy attached.' }).expect(200);
+      expect(sent[1]).toMatchObject({ to: 'boss@bright.example', subject: 'Reminder', text: 'Second copy attached.' });
+      await b.post(`/api/invoices/${inv.id}/send`).query(q).send({ to: 'not-an-email' }).expect(400);
+
+      // No address anywhere: told where to add it
+      const inv2 = (await b.post('/api/invoices').query(q).send({ issueDate: '2026-10-08', clientId: noMail.id, clientName: 'No Mail Pty', items: [{ description: 'X', quantity: 1, rate: 10 }] }).expect(201)).body;
+      const missing = await b.post(`/api/invoices/${inv2.id}/send`).query(q).send({}).expect(400);
+      expect(missing.body.error).toMatch(/no email address for No Mail Pty.*Clients & contractors/);
+      expect(sent).toHaveLength(2);
+    } finally { setEmailOverride(null); }
+
+    // The message Gmail receives carries the PDF as an attachment
+    const raw = Buffer.from(buildRawEmail('me@example.com', 'you@example.com', 'Invoice 1', 'Hello', undefined, { fromName: 'Tidy Co', replyTo: 'accounts@tidy.example', attachments: [{ filename: 'INV-1.pdf', content: Buffer.from('%PDF-1.3 test'), contentType: 'application/pdf' }] }), 'base64url').toString();
+    expect(raw).toContain('From: Tidy Co <me@example.com>');
+    expect(raw).toContain('Reply-To: accounts@tidy.example');
+    expect(raw).toContain('Content-Type: multipart/mixed;');
+    expect(raw).toContain('Content-Disposition: attachment; filename="INV-1.pdf"');
+    expect(raw).toContain(Buffer.from('%PDF-1.3 test').toString('base64'));
+  });
 });

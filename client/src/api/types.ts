@@ -45,7 +45,7 @@ export type InvoiceStatus = 'draft' | 'sent' | 'paid' | 'overdue' | 'cancelled';
 export interface Invoice {
   id: Id; number: string; issueDate: string; dueDate?: string | null; incomeSourceId?: Id | null; clientId?: Id | null; clientName: string; billToType?: 'client' | 'contractor'; clientAddress?: string; clientEmail?: string;
   items: InvoiceItem[]; subtotal: number; gstRate: number; gstAmount: number; total: number; notes?: string; paymentDetails?: string; status: InvoiceStatus;
-  effectiveStatus: InvoiceStatus; paidDate?: string; periodFrom?: string; periodTo?: string; sync?: { googleDriveLink?: string; googleDriveFileId?: string; googleCalendarEventId?: string; syncError?: string };
+  effectiveStatus: InvoiceStatus; paidDate?: string; /** last emailed from the app */ sentAt?: string; sentTo?: string; periodFrom?: string; periodTo?: string; sync?: { googleDriveLink?: string; googleDriveFileId?: string; googleCalendarEventId?: string; syncError?: string };
 }
 
 export interface DocumentRec {

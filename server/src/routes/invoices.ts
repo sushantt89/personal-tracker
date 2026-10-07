@@ -17,6 +17,7 @@ import { queueTravelDay } from '../services/travel/index.js';
 import { payerOf } from '../services/clients.js';
 import { jobHours } from '../services/finance.js';
 import { round2 } from '../utils/money.js';
+import { emailRoute, sendUserEmail } from '../services/email.js';
 
 const jobIncomeDescription = (job: any) => job.title || `Job – ${job.clientName ?? ''}${job.workType === 'subcontract' && job.contractorName ? ` (via ${job.contractorName})` : ''}`.trim();
 
@@ -265,6 +266,70 @@ r.get('/:id/pdf', async (req, res) => {
   res.setHeader('Content-Type', 'application/pdf');
   res.setHeader('Content-Disposition', `${req.query.download === '1' ? 'attachment' : 'inline'}; filename="${safe}.pdf"`);
   res.send(pdf);
+});
+
+/** Who an invoice would be emailed to and what the email would say. The address comes from Clients & contractors. */
+async function sendDetails(userId: string, inv: any) {
+  const [settings, user, client] = await Promise.all([
+    Settings.findOne({ userId }).lean(), User.findById(userId).lean(),
+    inv.clientId ? Client.findOne({ _id: inv.clientId, userId }).select('name email contactName').lean() : null,
+  ]);
+  const currency = user?.currency ?? 'AUD';
+  const money = (n: number) => new Intl.NumberFormat('en-AU', { style: 'currency', currency }).format(n);
+  const day = (d: string) => new Date(`${d}T00:00:00Z`).toLocaleDateString('en-AU', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' });
+  const business = settings?.invoice?.businessName || user?.name || '';
+  const to = (client?.email || inv.clientEmail || '').trim();
+  const greetName = ((client as any)?.contactName || inv.clientName || '').trim();
+  const lines = [
+    `Hi${greetName ? ` ${greetName}` : ''},`, '',
+    `Please find attached invoice ${inv.number} for ${money(inv.total)}${inv.periodFrom && inv.periodTo ? `, covering ${day(inv.periodFrom)} to ${day(inv.periodTo)}` : ''}.`,
+    ...(inv.dueDate ? [`Payment is due by ${day(inv.dueDate)}.`] : []),
+    ...(inv.paymentDetails ? ['', `Payment details: ${inv.paymentDetails}`] : []),
+    '', 'Thank you,', business,
+  ];
+  return {
+    to, toSource: client?.email ? 'client' as const : inv.clientEmail ? 'invoice' as const : null, clientId: inv.clientId ? String(inv.clientId) : null,
+    subject: `Invoice ${inv.number}${business ? ` from ${business}` : ''}`, message: lines.join('\n').trim(),
+    via: await emailRoute(userId), business, replyTo: settings?.invoice?.email || user?.email || undefined, settings, currency,
+  };
+}
+
+r.get('/:id/send-details', async (req, res) => {
+  const inv = await Invoice.findOne({ _id: req.params.id, userId: req.userId });
+  if (!inv) throw notFound('Invoice not found');
+  const d = await sendDetails(req.userId!, inv);
+  res.json({ to: d.to, toSource: d.toSource, clientId: d.clientId, subject: d.subject, message: d.message, via: d.via, sentAt: inv.sentAt ?? null, sentTo: inv.sentTo ?? null });
+});
+
+/** Email the invoice as a PDF. Goes to the address in Clients & contractors unless another is given; a draft becomes "sent". */
+r.post('/:id/send', async (req, res) => {
+  const { today } = await userCtx(req);
+  const body = parseBody(z.object({ to: z.string().trim().email('Enter a valid email address').max(200).optional(), subject: z.string().trim().min(1).max(200).optional(), message: z.string().trim().min(1).max(5000).optional() }), req.body ?? {});
+  const inv = await Invoice.findOne({ _id: req.params.id, userId: req.userId });
+  if (!inv) throw notFound('Invoice not found');
+  if (inv.status === 'cancelled') throw badRequest('This invoice is cancelled.');
+  const d = await sendDetails(req.userId!, inv);
+  const to = body.to || d.to;
+  if (!to) throw badRequest(`There is no email address for ${inv.clientName}. Add one in Clients & contractors, then send again.`);
+  if (!z.string().email().safeParse(to).success) throw badRequest(`“${to}” is not a valid email address. Fix it in Clients & contractors.`);
+  if (!d.via) throw badRequest('Email isn’t set up yet. Connect your Google account in Settings → Integrations (with permission to send email) and try again.');
+  const pdf = await renderInvoicePdf(inv, d.settings, d.currency);
+  const filename = `${inv.number.replace(/[^\w.-]/g, '_')}.pdf`;
+  try {
+    await sendUserEmail(req.userId!, to, body.subject || d.subject, body.message || d.message, undefined, { attachments: [{ filename, content: pdf, contentType: 'application/pdf' }], fromName: d.business || undefined, replyTo: d.replyTo });
+  } catch (e) {
+    return res.status(502).json({ error: `The email could not be sent: ${(e as Error).message}` });
+  }
+  const before = inv.toJSON();
+  inv.sentAt = new Date();
+  inv.sentTo = to;
+  if (inv.status === 'draft') inv.status = 'sent';
+  await inv.save();
+  await audit(req.userId!, 'Invoice', inv._id, 'update', before, inv.toJSON(), `Emailed to ${to}`);
+  // A sent invoice's income is waiting to be paid
+  if (before.status === 'draft') await Income.updateMany({ userId: req.userId, invoiceId: inv._id, status: 'expected' }, { status: 'pending' });
+  queueCalendarSync(req.userId!, 'invoice', inv._id);
+  res.json({ invoice: withStatus(inv, today), to, via: d.via });
 });
 
 /** Upload the PDF to Google Drive (or replace the file uploaded before — never a duplicate). */

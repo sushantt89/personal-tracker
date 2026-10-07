@@ -39,6 +39,9 @@ const invoiceSchema = new Schema(
     paymentDetails: { type: String, maxlength: 2000 },
     status: { type: String, enum: INVOICE_STATUSES, default: 'draft' },
     paidDate: dateOpt,
+    /** Last time the invoice was emailed from the app, and to whom */
+    sentAt: Date,
+    sentTo: { type: String, maxlength: 200 },
     periodFrom: dateOpt,
     periodTo: dateOpt,
     uploadedDocumentId: ref('Document'), // for invoices uploaded rather than generated

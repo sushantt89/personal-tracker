@@ -9,3 +9,6 @@ export async function markInvoicePaid(inv: Invoice, _confirm?: Confirm) {
 }
 
 export const setInvoiceStatus = (inv: Invoice, status: 'draft' | 'sent' | 'cancelled', updateIncome = status === 'sent') => post(`/invoices/${inv.id}/status`, { status, updateIncome });
+
+/** Emails the invoice PDF straight to the address saved in Clients & contractors — subject and message are filled in by the server. */
+export const sendInvoice = (inv: Invoice) => post<{ to: string }>(`/invoices/${inv.id}/send`, {});

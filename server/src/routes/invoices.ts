@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
-import { Invoice, Job, Income, Settings, Client, IncomeSource, User } from '../models/index.js';
+import { Invoice, Job, Income, Settings, Client, IncomeSource, User, DocumentModel } from '../models/index.js';
+import { readDocumentFile } from '../services/google/drive.js';
 import { invoiceSchema } from './schemas.js';
 import { parseBody } from '../middleware/validate.js';
 import { badRequest, conflict, notFound } from '../utils/httpError.js';
@@ -271,6 +272,20 @@ r.get('/:id/pdf', async (req, res) => {
 });
 
 /** Who an invoice would be emailed to and what the email would say. The address comes from Clients & contractors. */
+/** Parking receipts saved on the jobs this invoice bills — they go out with the invoice. */
+async function invoiceReceipts(userId: string, inv: any) {
+  const jobIds = [...new Set((inv.items ?? []).map((i: any) => i.jobId && String(i.jobId)).filter(Boolean))];
+  if (!jobIds.length) return [];
+  const jobs = await Job.find({ userId, _id: { $in: jobIds }, parkingReceiptId: { $ne: null } }).select('parkingReceiptId clientName date').lean<any[]>();
+  const docs = await DocumentModel.find({ userId, _id: { $in: jobs.map((j) => j.parkingReceiptId) } }).select('+storageKey').lean<any[]>();
+  return docs.map((d) => {
+    const job = jobs.find((j) => String(j.parkingReceiptId) === String(d._id));
+    const ext = (d.originalName ?? '').match(/\.[a-z0-9]{2,5}$/i)?.[0] ?? (d.mimeType === 'application/pdf' ? '.pdf' : '.jpg');
+    const filename = `Parking receipt ${job?.date ?? ''} ${job?.clientName ?? ''}`.replace(/[\\/:*?"<>|]+/g, ' ').replace(/\s+/g, ' ').trim() + ext;
+    return { doc: d, id: String(d._id), filename, mimeType: d.mimeType || 'application/octet-stream' };
+  });
+}
+
 async function sendDetails(userId: string, inv: any) {
   const [settings, user, client] = await Promise.all([
     Settings.findOne({ userId }).lean(), User.findById(userId).lean(),
@@ -289,10 +304,12 @@ async function sendDetails(userId: string, inv: any) {
     ...(inv.paymentDetails ? ['', `Payment details: ${inv.paymentDetails}`] : []),
     '', 'Thank you,', business,
   ];
+  const receipts = await invoiceReceipts(userId, inv);
+  if (receipts.length) lines.splice(lines.indexOf('Thank you,') - 1, 0, '', `${receipts.length === 1 ? 'The parking receipt is' : `${receipts.length} parking receipts are`} attached as well.`);
   return {
     to, toSource: client?.email ? 'client' as const : inv.clientEmail ? 'invoice' as const : null, clientId: inv.clientId ? String(inv.clientId) : null,
     subject: `Invoice ${inv.number}${business ? ` from ${business}` : ''}`, message: lines.join('\n').trim(),
-    via: await emailRoute(userId), business, replyTo: settings?.invoice?.email || user?.email || undefined, settings, currency,
+    receipts, via: await emailRoute(userId), business, replyTo: settings?.invoice?.email || user?.email || undefined, settings, currency,
   };
 }
 
@@ -300,7 +317,7 @@ r.get('/:id/send-details', async (req, res) => {
   const inv = await Invoice.findOne({ _id: req.params.id, userId: req.userId });
   if (!inv) throw notFound('Invoice not found');
   const d = await sendDetails(req.userId!, inv);
-  res.json({ to: d.to, toSource: d.toSource, clientId: d.clientId, subject: d.subject, message: d.message, via: d.via, sentAt: inv.sentAt ?? null, sentTo: inv.sentTo ?? null });
+  res.json({ receipts: d.receipts.map((x) => ({ id: x.id, filename: x.filename, mimeType: x.mimeType })), to: d.to, toSource: d.toSource, clientId: d.clientId, subject: d.subject, message: d.message, via: d.via, sentAt: inv.sentAt ?? null, sentTo: inv.sentTo ?? null });
 });
 
 /** Email the invoice as a PDF. Goes to the address in Clients & contractors unless another is given; a draft becomes "sent". */
@@ -318,9 +335,15 @@ r.post('/:id/send', async (req, res) => {
   if (d.via !== 'gmail') throw badRequest('Invoices are sent from your own Google account. Connect it in Settings → Integrations and allow it to send email, then send again.');
   const pdf = await renderInvoicePdf(inv, d.settings, d.currency);
   const filename = `${inv.number.replace(/[^\w.-]/g, '_')}.pdf`;
+  // Parking receipts ride along (a missing file is skipped rather than stopping the invoice); Gmail allows 25 MB in all
+  const extra: { filename: string; content: Buffer; contentType: string }[] = [];
+  let bytes = pdf.length;
+  for (const r of d.receipts) {
+    try { const content = await readDocumentFile(req.userId!, r.doc); if (bytes + content.length > 20 * 1024 * 1024) continue; bytes += content.length; extra.push({ filename: r.filename, content, contentType: r.mimeType }); } catch { /* file gone */ }
+  }
   let sent: SendResult;
   try {
-    sent = await sendUserEmailDetailed(req.userId!, to, body.subject || d.subject, body.message || d.message, undefined, { attachments: [{ filename, content: pdf, contentType: 'application/pdf' }], fromName: d.business || undefined, replyTo: d.replyTo }, { gmailOnly: true });
+    sent = await sendUserEmailDetailed(req.userId!, to, body.subject || d.subject, body.message || d.message, undefined, { attachments: [{ filename, content: pdf, contentType: 'application/pdf' }, ...extra], fromName: d.business || undefined, replyTo: d.replyTo }, { gmailOnly: true });
   } catch (e) {
     return res.status(502).json({ error: `The email could not be sent from your Google account: ${(e as Error).message}. Reconnect Google in Settings → Integrations if this keeps happening.` });
   }
@@ -335,7 +358,7 @@ r.post('/:id/send', async (req, res) => {
   // A sent invoice's income is waiting to be paid
   if (before.status === 'draft') await Income.updateMany({ userId: req.userId, invoiceId: inv._id, status: 'expected' }, { status: 'pending' });
   queueCalendarSync(req.userId!, 'invoice', inv._id);
-  res.json({ invoice: withStatus(inv, today), to, via: sent.via, from: sent.from ?? null, googleError: sent.googleError ?? null });
+  res.json({ invoice: withStatus(inv, today), to, via: sent.via, receipts: extra.length, from: sent.from ?? null, googleError: sent.googleError ?? null });
 });
 
 /** Upload the PDF to Google Drive (or replace the file uploaded before — never a duplicate). */

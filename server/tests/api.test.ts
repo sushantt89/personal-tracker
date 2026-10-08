@@ -558,6 +558,38 @@ describe('reset everything', () => {
     await a.delete(`/api/jobs/${job.id}`); await a.delete(`/api/jobs/${other.id}`);
   });
 
+  it('sends the parking receipt saved on a job along with its invoice', async () => {
+    const { setEmailOverride } = await import('../src/services/email.js');
+    const sent: any[] = [];
+    const b = request.agent(app);
+    await b.post('/api/auth/register').send({ name: 'Parker', email: 'parker@example.com', password: 'password123' }).expect(201);
+    const q = { today: '2026-10-10' };
+    const agency = (await b.post('/api/clients').query(q).send({ name: 'Meter Agency', type: 'contractor', email: 'pay@meter.example' }).expect(201)).body;
+    const receipt = (await b.post('/api/documents').query(q).field('meta', JSON.stringify({ kind: 'receipt', title: 'Parking', date: '2026-10-06' })).attach('file', Buffer.from('%PDF-1.4 parking ticket'), { filename: 'ticket.pdf', contentType: 'application/pdf' }).expect(201)).body;
+    // Pay 60 + fuel 10 + parking 8 = 78 total; the extras don't count as pay for the hours
+    const job = (await b.post('/api/jobs').query(q).send({ date: '2026-10-06', startTime: '09:00', endTime: '11:00', clientName: 'Jordan', workType: 'subcontract', contractorId: agency.id, amount: 78, fuelAllowance: 10, parkingFee: 8, parkingReceiptId: receipt.id }).expect(201)).body;
+    expect(job).toMatchObject({ amount: 78, parkingFee: 8, parkingReceiptId: receipt.id });
+    await b.post('/api/jobs/expected-pay').query(q).send({ jobIds: [job.id], mode: 'perHour', value: 25 }).expect(200);
+    expect((await b.get(`/api/jobs/${job.id}`).query(q)).body.amount).toBe(68); // 2 h × 25 + 10 + 8
+
+    const items = [{ description: 'Cleaning', quantity: 1, rate: 50, jobId: job.id }, { description: 'Fuel allowance', quantity: 1, rate: 10, jobId: job.id }, { description: 'Parking reimbursement (receipt attached)', quantity: 1, rate: 8, jobId: job.id }];
+    const inv = (await b.post('/api/invoices').query(q).send({ issueDate: '2026-10-08', clientId: agency.id, clientName: 'Meter Agency', items }).expect(201)).body;
+    setEmailOverride((m) => { sent.push(m); });
+    try {
+      const d = (await b.get(`/api/invoices/${inv.id}/send-details`).query(q).expect(200)).body;
+      expect(d.receipts).toEqual([expect.objectContaining({ id: receipt.id, mimeType: 'application/pdf' })]);
+      expect(d.message).toContain('The parking receipt is attached as well.');
+      const r = (await b.post(`/api/invoices/${inv.id}/send`).query(q).send({}).expect(200)).body;
+      expect(r.receipts).toBe(1);
+      const files = sent[0].extras.attachments;
+      expect(files.map((f: any) => f.filename)).toEqual([`${inv.number}.pdf`, 'Parking receipt 2026-10-06 Jordan.pdf']);
+      expect(files[1].content.toString()).toBe('%PDF-1.4 parking ticket');
+    } finally { setEmailOverride(null); }
+    // Deleting the receipt unlinks it from the job
+    await b.delete(`/api/documents/${receipt.id}`).query(q).expect(200);
+    expect((await b.get(`/api/jobs/${job.id}`).query(q)).body.parkingReceiptId ?? null).toBeNull();
+  });
+
   it('emails an invoice PDF to the address in Clients & contractors', async () => {
     const { setEmailOverride, buildRawEmail } = await import('../src/services/email.js');
     const sent: any[] = [];

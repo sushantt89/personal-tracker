@@ -2,7 +2,7 @@ import { Router } from 'express';
 import multer from 'multer';
 import crypto from 'node:crypto';
 import { z } from 'zod';
-import { DocumentModel, Expense, Category, Invoice } from '../models/index.js';
+import { DocumentModel, Expense, Category, Invoice, Job } from '../models/index.js';
 import { documentMetaSchema } from './schemas.js';
 import { parseBody } from '../middleware/validate.js';
 import { badRequest, notFound } from '../utils/httpError.js';
@@ -167,6 +167,7 @@ r.delete('/:id', async (req, res) => {
   if (!doc) throw notFound('Document not found');
   await storage.remove(doc.storageKey).catch(() => undefined);
   await Expense.updateMany({ userId: req.userId, receiptId: doc._id }, { receiptId: null });
+  await Job.updateMany({ userId: req.userId, parkingReceiptId: doc._id }, { parkingReceiptId: null });
   await doc.deleteOne();
   await audit(req.userId!, 'Document', doc._id, 'delete', doc.toJSON());
   queueDriveDelete(req.userId!, doc.sync?.googleDriveFileId, doc.title || 'a document');

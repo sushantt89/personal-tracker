@@ -45,6 +45,8 @@ export const jobSchema = z.object({
   endTime: zOptTime,
   amount: zOptMoney,
   fuelAllowance: zOptMoney,
+  parkingFee: zOptMoney,
+  parkingReceiptId: zOptId,
   hourlyRate: zOptMoney,
   amountEstimated: z.boolean().optional(),
   excludeFromHours: z.boolean().optional(),

@@ -52,6 +52,8 @@ export const jobFields: FieldDef[] = [
   { name: 'hoursWorked', label: 'Hours', type: 'number', quick: true, span: 4, helper: 'Leave empty to use start–end' },
   { name: 'amount', label: 'Pay', type: 'money', quick: true, span: 4, helper: 'Rate × hours, or type a fixed amount. Leave empty if you don’t know yet' },
   { name: 'fuelAllowance', label: 'Fuel allowance', type: 'money', quick: true, span: 4, helper: 'Extra paid on top of the pay, if this job gives one' },
+  { name: 'parkingFee', label: 'Parking (reimbursed)', type: 'money', span: 4, helper: 'Paid back to you — billed as its own invoice line' },
+  { name: 'parkingReceiptId', label: 'Parking receipt', type: 'receipt', span: 8, showIf: (v) => Number(v.parkingFee) > 0 || !!v.parkingReceiptId, helper: 'Sent along with the invoice' },
   { name: 'amountEstimated', label: 'This amount is an estimate (actual pay not known yet)', type: 'switch', showIf: (v) => Number(v.amount) > 0 },
   { name: 'excludeFromHours', label: 'Don’t count this in Work hours (e.g. a cash job)', type: 'switch' },
   { name: 'status', label: 'Status', type: 'select', options: opts(['scheduled', 'in_progress', 'completed', 'cancelled']), span: 4 },
@@ -110,13 +112,13 @@ const cents = (n: unknown) => Math.round((Number(n) || 0) * 100);
 /** The job form shows pay and fuel allowance separately; a saved job keeps one total (`amount`) with the fuel part noted beside it. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function jobToForm(job: any) {
-  const fuel = cents(job.fuelAllowance), total = cents(job.amount);
-  return { ...job, address: job.address ?? {}, amount: fuel > 0 && total > fuel ? (total - fuel) / 100 : job.amount, fuelAllowance: fuel > 0 ? fuel / 100 : '' };
+  const fuel = cents(job.fuelAllowance), parking = cents(job.parkingFee), total = cents(job.amount), extra = fuel + parking;
+  return { ...job, address: job.address ?? {}, amount: extra > 0 && total > extra ? (total - extra) / 100 : job.amount, fuelAllowance: fuel > 0 ? fuel / 100 : '', parkingFee: parking > 0 ? parking / 100 : '' };
 }
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function jobFromForm(v: any) {
-  const fuel = cents(v.fuelAllowance), pay = cents(v.amount);
-  return { ...withFormattedAddress(v), fuelAllowance: fuel / 100, amount: pay > 0 ? (pay + fuel) / 100 : v.amount };
+  const fuel = cents(v.fuelAllowance), parking = cents(v.parkingFee), pay = cents(v.amount);
+  return { ...withFormattedAddress(v), fuelAllowance: fuel / 100, parkingFee: parking / 100, amount: pay > 0 ? (pay + fuel + parking) / 100 : v.amount };
 }
 export const jobDefaults = () => ({ date: localToday(), status: 'scheduled', tasks: [], address: {} });
 

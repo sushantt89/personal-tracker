@@ -23,6 +23,10 @@ const jobSchema = new Schema(
     amount: moneyOpt,
     /** part of `amount` that is a fuel/travel allowance rather than pay for the work (kept apart so hourly rates stay honest) */
     fuelAllowance: moneyOpt,
+    /** part of `amount` that is a parking fee paid back by the client/contractor (billed as its own invoice line) */
+    parkingFee: moneyOpt,
+    /** photo/PDF of the parking receipt, sent with the invoice */
+    parkingReceiptId: ref('Document'),
     /** Pay per hour, when the job is paid by the hour (the form works `amount` out from it) */
     hourlyRate: moneyOpt,
     /** true = `amount` is only what you expect to be paid; the real figure replaces it when pay is recorded */

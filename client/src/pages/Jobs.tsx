@@ -27,7 +27,10 @@ export default function Jobs() {
   const { sources, srcById } = useLookupMaps();
   const jobDerive = useJobDerive();
   const [payOpen, setPayOpen] = useState<false | 'paid' | 'expected'>(false);
-  const fuelNote = (j: Job) => (j.fuelAllowance && j.amount ? <Typography variant="caption" color="text.secondary" display="block">incl. {money(j.fuelAllowance)} fuel</Typography> : null);
+  const fuelNote = (j: Job) => {
+    const parts = [j.fuelAllowance ? `${money(j.fuelAllowance)} fuel` : '', j.parkingFee ? `${money(j.parkingFee)} parking${j.parkingReceiptId ? ' 🧾' : ''}` : ''].filter(Boolean);
+    return parts.length && j.amount ? <Typography variant="caption" color="text.secondary" display="block">incl. {parts.join(' + ')}</Typography> : null;
+  };
   const amountCell = (j: Job) => <>{amountCellMain(j)}{fuelNote(j)}</>;
   const amountCellMain = (j: Job) => (noPay(j) ? payChip : j.amountEstimated ? <Stack direction="row" spacing={0.5} alignItems="center" justifyContent="flex-end"><span>{money(j.amount)}</span><Chip size="small" variant="outlined" color="info" label="Expected" /></Stack> : money(j.amount));
   const noPay = (j: Job) => !j.amount && j.status !== 'cancelled';

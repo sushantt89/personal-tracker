@@ -143,10 +143,14 @@ export default function InvoiceEditor() {
     const srcName = (sid?: string | null) => sources.data?.find((s) => s.id === (sid || gen.incomeSourceId))?.name ?? 'Service';
     // A job with a fuel allowance goes on as two lines — the work, then the allowance — both tied to the job
     const newItems: InvoiceItem[] = chosen.flatMap((j) => {
-      const total = j.amount ?? 0, fuel = j.fuelAllowance && j.fuelAllowance > 0 && j.fuelAllowance < total ? j.fuelAllowance : 0;
+      const total = j.amount ?? 0, fuelRaw = j.fuelAllowance && j.fuelAllowance > 0 ? j.fuelAllowance : 0, parkRaw = j.parkingFee && j.parkingFee > 0 ? j.parkingFee : 0;
+      // Extras only split out when the job's total actually covers them (pay known)
+      const fits = fuelRaw + parkRaw < total, fuel = fits ? fuelRaw : 0, parking = fits ? parkRaw : 0;
       const where = `${j.clientName ?? 'Job'}${j.address?.suburb ? ', ' + j.address.suburb : ''}`;
-      const work: InvoiceItem = { date: j.date, description: `${srcName(j.incomeSourceId)} – ${where}${j.startTime ? ' (' + j.startTime + ')' : ''}`, quantity: 1, rate: Math.round((total - fuel) * 100) / 100, jobId: j.id };
-      return fuel ? [work, { date: j.date, description: `Fuel allowance – ${where}`, quantity: 1, rate: fuel, jobId: j.id }] : [work];
+      const work: InvoiceItem = { date: j.date, description: `${srcName(j.incomeSourceId)} – ${where}${j.startTime ? ' (' + j.startTime + ')' : ''}`, quantity: 1, rate: Math.round((total - fuel - parking) * 100) / 100, jobId: j.id };
+      return [work,
+        ...(fuel ? [{ date: j.date, description: `Fuel allowance – ${where}`, quantity: 1, rate: fuel, jobId: j.id }] : []),
+        ...(parking ? [{ date: j.date, description: `Parking reimbursement – ${where}${j.parkingReceiptId ? ' (receipt attached)' : ''}`, quantity: 1, rate: parking, jobId: j.id }] : [])];
     });
     const existingItems = form.items.filter((i) => i.description.trim() || i.rate);
     // Bill the contractor for work done under them; bill the client for your own jobs

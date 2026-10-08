@@ -1,7 +1,11 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { crudRouter } from '../services/crud.js';
-import { Category, IncomeSource, Client, Job, Income, Expense, RecurringBill, Task, InvoiceTemplate } from '../models/index.js';
+import { Category, IncomeSource, Client, Job, Income, Expense, RecurringBill, Task, InvoiceTemplate, DocumentModel } from '../models/index.js';
+
+/** Money on a job that isn't pay for the hours: fuel allowance and reimbursed parking */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const jobExtras = (j: any) => (j.fuelAllowance ?? 0) + (j.parkingFee ?? 0);
 import { categorySchema, incomeSourceSchema, clientSchema, jobSchema, incomeSchema, expenseSchema, billSchema, taskSchema, invoiceTemplateSchema } from './schemas.js';
 import { resolveClient, applyWorkArrangement, payerOf } from '../services/clients.js';
 import { audit } from '../services/audit.js';
@@ -79,7 +83,7 @@ async function createIncomeForJob(userId: string, job: any) {
 
 const jobsCrud = crudRouter({
   model: Job, entity: 'Job', schema: jobSchema,
-  refs: { clientId: Client, incomeSourceId: IncomeSource, contractorId: Client },
+  refs: { clientId: Client, incomeSourceId: IncomeSource, contractorId: Client, parkingReceiptId: DocumentModel },
   searchFields: ['clientName', 'contractorName', 'title', 'description', 'address.formatted', 'address.suburb', 'notes'],
   filterFields: ['status', 'clientId', 'incomeSourceId', 'invoiceId', 'workType', 'contractorId'],
   dateField: 'date', sort: { date: -1, startTime: 1 }, calendarKind: 'job',
@@ -243,7 +247,7 @@ jobsRouter.post('/record-pay', async (req, res) => {
   const weightSum = weights.reduce((a, b) => a + b, 0);
   const cents = Math.round(body.total * 100);
   // Fuel allowances are fixed per job: take them out, share the rest by hours, then give each job its own back
-  const fuel = jobs.map((j) => Math.round((j.fuelAllowance ?? 0) * 100));
+  const fuel = jobs.map((j) => Math.round(jobExtras(j) * 100));
   const fuelSum = fuel.reduce((a, b) => a + b, 0);
   const useFuel = fuelSum > 0 && cents > fuelSum;
   const pool = useFuel ? cents - fuelSum : cents;
@@ -303,7 +307,7 @@ jobsRouter.post('/expected-pay', async (req, res) => {
     if (income?.status === 'paid') { skippedPaid++; continue; } // already paid for real: leave it alone
     const before = job.toJSON();
     // An hourly rate or a per-job figure is pay for the work; the job's fuel allowance comes on top of it
-    job.amount = body.mode === 'perHour' ? round2(jobHours(job) * body.value + (job.fuelAllowance ?? 0)) : body.mode === 'perJob' ? round2(body.value + (job.fuelAllowance ?? 0)) : (each + (i === jobs.length - 1 ? cents - each * jobs.length : 0)) / 100;
+    job.amount = body.mode === 'perHour' ? round2(jobHours(job) * body.value + jobExtras(job)) : body.mode === 'perJob' ? round2(body.value + jobExtras(job)) : (each + (i === jobs.length - 1 ? cents - each * jobs.length : 0)) / 100;
     job.amountEstimated = true;
     await job.save();
     await audit(userId, 'Job', job._id, 'update', before, job.toJSON(), 'Expected pay set');

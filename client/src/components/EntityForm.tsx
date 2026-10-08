@@ -5,8 +5,9 @@ import {
 } from '@mui/material';
 import CloseIcon from '@mui/icons-material/Close';
 import { useCategories, useIncomeSources, useClients, useSettings } from '../hooks/useLookups';
+import ReceiptField from './ReceiptField';
 
-export type FieldType = 'text' | 'textarea' | 'number' | 'money' | 'date' | 'time' | 'select' | 'category' | 'source' | 'client' | 'contractor' | 'paymentMethod' | 'switch' | 'tags' | 'heading';
+export type FieldType = 'text' | 'textarea' | 'number' | 'money' | 'date' | 'time' | 'select' | 'category' | 'source' | 'client' | 'contractor' | 'paymentMethod' | 'switch' | 'tags' | 'heading' | 'receipt';
 
 export interface FieldDef {
   name: string;
@@ -41,7 +42,7 @@ export function toPayload(fields: FieldDef[], values: Values): Values {
     if (f.type === 'heading') continue;
     const v = getPath(values, f.name);
     if (f.type === 'number' || f.type === 'money') out = setPath(out, f.name, v === '' || v === undefined || v === null ? null : Number(v));
-    else if (['category', 'source', 'client'].includes(f.type)) out = setPath(out, f.name, v || null);
+    else if (['category', 'source', 'client', 'receipt'].includes(f.type)) out = setPath(out, f.name, v || null);
     else if (typeof v === 'string') out = setPath(out, f.name, v.trim());
   }
   return out;
@@ -58,6 +59,9 @@ export function FieldInput({ f, values, onChange, error }: { f: FieldDef; values
   switch (f.type) {
     case 'heading':
       return <Typography variant="overline" color="text.secondary">{f.label}</Typography>;
+    case 'receipt':
+      return <ReceiptField label={f.label} helper={f.helper} value={(v as string) || null} onChange={(id) => onChange(f.name, id)}
+        title={`Parking – ${values.clientName || 'job'}${values.date ? ` ${values.date}` : ''}`} date={values.date} />;
     case 'switch':
       return <FormControlLabel control={<Switch checked={!!v} onChange={(e) => onChange(f.name, e.target.checked)} />} label={f.label} />;
     case 'textarea':

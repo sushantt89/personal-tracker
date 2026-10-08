@@ -38,13 +38,38 @@ function nominatimThrottle<T>(fn: () => Promise<T>): Promise<T> {
   return run;
 }
 
+/** Photon (photon.komoot.io): OpenStreetMap address search, used when Nominatim has nothing or refuses. */
+export async function photonGeocode(query: string, countryCode = 'au'): Promise<GeocodeResult[]> {
+  const data = await getJson(`https://photon.komoot.io/api/?limit=8&lang=en&q=${encodeURIComponent(query)}`);
+  const cc = countryCode.toUpperCase();
+  return (data.features ?? [])
+    .filter((f: any) => !cc || f.properties?.countrycode === cc) // eslint-disable-line @typescript-eslint/no-explicit-any
+    .map((f: any) => { // eslint-disable-line @typescript-eslint/no-explicit-any
+      const p = f.properties ?? {};
+      const street = [p.housenumber, p.street ?? (p.type === 'street' ? p.name : undefined)].filter(Boolean).join(' ');
+      const place = p.city ?? p.district ?? p.locality ?? p.county;
+      return { lat: f.geometry.coordinates[1], lng: f.geometry.coordinates[0], displayName: [p.type === 'street' ? '' : p.name, street, place, p.state, p.postcode, p.country].filter(Boolean).join(', '), postcode: p.postcode };
+    });
+}
+
 /** Free OpenStreetMap services: Nominatim (addresses) + OSRM (driving routes). No API key. */
 export const osmProvider: TravelProvider = {
   name: 'OpenStreetMap (Nominatim + OSRM)',
   async geocode(query, countryCode = 'au') {
     const base = env.NOMINATIM_URL.replace(/\/$/, '');
     const url = `${base}/search?format=jsonv2&limit=5&addressdetails=1&countrycodes=${encodeURIComponent(countryCode)}&q=${encodeURIComponent(query)}`;
-    const data = await nominatimThrottle(() => getJson(url));
+    // Nominatim often refuses shared cloud servers (403/429) — fall back to Photon (also OpenStreetMap data, no key)
+    let first: Error | undefined;
+    let data: any; // eslint-disable-line @typescript-eslint/no-explicit-any
+    try { data = await nominatimThrottle(() => getJson(url)); } catch (e) { first = e as Error; }
+    if (!Array.isArray(data) || !data.length) {
+      try {
+        const hits = await photonGeocode(query, countryCode);
+        if (hits.length || !first) return hits;
+      } catch (e) { if (!first) throw e; }
+      if (first) throw first;
+      return [];
+    }
     return (Array.isArray(data) ? data : []).map((h: any) => ({ lat: Number(h.lat), lng: Number(h.lon), displayName: h.display_name, postcode: h.address?.postcode })); // eslint-disable-line @typescript-eslint/no-explicit-any
   },
   async route(points) {

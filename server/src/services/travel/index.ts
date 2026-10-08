@@ -29,18 +29,29 @@ export async function geocode(userId: string, address: string, countryCode = 'au
   const key = normaliseAddress(address);
   if (!key) return null;
   const cached = await GeocodeCache.findOne({ userId, key }).lean();
-  if (cached) return cached.notFound ? null : { lat: cached.lat!, lng: cached.lng!, displayName: cached.displayName ?? undefined };
+  // An address that couldn't be found is tried again after a day (maps get updated; a lookup may have been refused)
+  const stale = cached?.notFound && Date.now() - new Date((cached as { updatedAt?: Date }).updatedAt ?? 0).getTime() > 24 * 60 * 60 * 1000;
+  if (cached && !stale) return cached.notFound ? null : { lat: cached.lat!, lng: cached.lng!, displayName: cached.displayName ?? undefined };
   // A house number can match the same street in the wrong suburb, so check the postcode when we have one,
   // and fall back to the street without its number (OSM often lacks house numbers).
   const expectedPostcode = /\b(\d{4})\b(?!.*\b\d{4}\b)/.exec(address.replace(/^\s*[\d/-]+[a-z]?\s+/i, ''))?.[1];
   // Maps rarely know apartment or level numbers: "Apartment 12, Level 3, 9 Sample Street…" is looked up as "9 Sample Street…"
   const noUnit = address.replace(/^\s*(?:(?:apartment|apt|unit|level|lvl|suite|shop|flat|lot|floor|villa|townhouse)\s*[a-z0-9-]+\s*,?\s*)+(?=\d)/i, '');
   const simpler = noUnit.replace(/^\s*(?:unit|u)?\s*\d+[a-z]?\s*\/\s*/i, '').replace(/^\s*\d+[a-z]?(-\d+)?\s+/, '');
-  const queries = [...new Set([noUnit, simpler])];
+  // Further fallbacks: abbreviations written out ("Rd" → "Road"), and the street with just the suburb or just the postcode
+  const ABBR: Record<string, string> = { rd: 'Road', st: 'Street', ave: 'Avenue', av: 'Avenue', tce: 'Terrace', dr: 'Drive', ct: 'Court', pl: 'Place', cres: 'Crescent', cr: 'Crescent', hwy: 'Highway', pde: 'Parade', ln: 'Lane', blvd: 'Boulevard', cl: 'Close', gr: 'Grove', cct: 'Circuit', sq: 'Square', esp: 'Esplanade', gdns: 'Gardens', pkwy: 'Parkway' };
+  const expand = (s: string) => s.replace(/\b([a-z]+)\b\.?/gi, (w, x: string) => ABBR[x.toLowerCase()] ?? w);
+  const parts = simpler.split(',').map((x) => x.trim()).filter(Boolean);
+  const street = parts[0] ?? '';
+  const suburb = (parts[1] ?? '').replace(/\b(?:sa|nsw|vic|qld|wa|tas|nt|act|australia)\b|\b\d{4}\b/gi, ' ').replace(/\s+/g, ' ').trim();
+  const queries = [...new Set([noUnit, simpler, expand(noUnit), expand(simpler),
+    suburb ? `${expand(street)}, ${suburb}` : '', expectedPostcode ? `${expand(street)} ${expectedPostcode}` : ''].filter((q) => q.trim()))];
   let hit: (LatLng & { displayName?: string }) | null = null;
   let firstAny: (LatLng & { displayName?: string }) | null = null;
+  let failure: Error | undefined;
   for (const q of queries) {
-    const results = await travelProvider().geocode(q, countryCode);
+    let results: Awaited<ReturnType<ReturnType<typeof travelProvider>['geocode']>>;
+    try { results = await travelProvider().geocode(q, countryCode); } catch (e) { failure = e as Error; continue; }
     firstAny ??= results[0] ?? null;
     const suburbWords = address.split(',').slice(1).join(' ').toLowerCase().split(/[^a-z]+/).filter((w) => w.length >= 4 && !['australia', 'south', 'north', 'west', 'east', 'queensland', 'victoria', 'tasmania', 'wales', 'territory'].includes(w));
     const good = results.find((r) => (!expectedPostcode || !r.postcode || r.postcode === expectedPostcode)
@@ -48,6 +59,8 @@ export async function geocode(userId: string, address: string, countryCode = 'au
     if (good) { hit = good; break; }
   }
   hit ??= firstAny;
+  // The map service couldn't be reached at all: don't remember this as "not found", just report it
+  if (!hit && failure) throw failure;
   await GeocodeCache.updateOne({ userId, key }, { $set: hit ? { lat: hit.lat, lng: hit.lng, displayName: hit.displayName, notFound: false } : { notFound: true } }, { upsert: true });
   return hit;
 }
@@ -78,7 +91,9 @@ export async function computeDay(userId: string, date: string, opts: { force?: b
     const geoKey = normaliseAddress(text);
     let lat = j.address?.lat, lng = j.address?.lng;
     if (lat === undefined || lat === null || lng === undefined || lng === null || j.address?.geoKey !== geoKey) {
-      const hit = await geocode(userId, text, s.countryCode);
+      let hit: Awaited<ReturnType<typeof geocode>> = null;
+      try { hit = await geocode(userId, text, s.countryCode); }
+      catch { missing.push({ jobId: j._id, label, address: text, reason: 'The map service didn’t answer — it will be tried again' }); continue; }
       if (!hit) { missing.push({ jobId: j._id, label, address: text, reason: 'Address not found on the map' }); continue; }
       lat = hit.lat; lng = hit.lng;
       await Job.updateOne({ _id: j._id }, { $set: { 'address.lat': lat, 'address.lng': lng, 'address.geoKey': geoKey } });
@@ -90,7 +105,7 @@ export async function computeDay(userId: string, date: string, opts: { force?: b
   if (s.homeAddress && (s.startFrom === 'home' || s.returnHome)) {
     let { homeLat, homeLng } = s;
     if (homeLat === undefined || homeLng === undefined) {
-      const hit = await geocode(userId, s.homeAddress, s.countryCode);
+      const hit = await geocode(userId, s.homeAddress, s.countryCode).catch(() => null);
       if (hit) { homeLat = hit.lat; homeLng = hit.lng; await Settings.updateOne({ userId }, { 'travel.homeLat': hit.lat, 'travel.homeLng': hit.lng }); }
     }
     if (homeLat !== undefined && homeLng !== undefined) home = { label: 'Home', kind: 'home', address: s.homeAddress, lat: homeLat, lng: homeLng };

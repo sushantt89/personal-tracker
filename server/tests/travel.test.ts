@@ -128,3 +128,38 @@ describe('distance & travel', () => {
     expect(pdfAll.headers['content-type']).toBe('application/pdf');
   });
 });
+
+describe('finding addresses on the map', () => {
+  it('tries the street written out in full, never remembers a failed lookup as "not found", and retries old misses', async () => {
+    const { geocode, setTravelProvider } = await import('../src/services/travel/index.js');
+    const { GeocodeCache } = await import('../src/models/index.js');
+    const uid = new mongoose.Types.ObjectId().toString();
+    const asked: string[] = [];
+    let down = false;
+    // This map only knows "Sample Road, Hillside" — not the abbreviation, not the house number
+    setTravelProvider({
+      name: 'Picky map',
+      async geocode(q: string) { asked.push(q); if (down) throw new Error('map service responded 403'); return /^sample road, hillside$/i.test(q.trim()) ? [{ lat: -35, lng: 138.7, displayName: 'Sample Road, Hillside, South Australia, 5152' }] : []; },
+      async route() { return { legs: [] }; },
+    });
+    try {
+      expect(await geocode(uid, '12 Sample Rd, Hillside SA 5152')).toMatchObject({ lat: -35, lng: 138.7 });
+      expect(asked).toContain('Sample Road, Hillside');
+
+      // Service refusing every request: an error, and nothing cached
+      down = true;
+      await expect(geocode(uid, '7 Other St, Nowhere SA 5000')).rejects.toThrow(/403/);
+      expect(await GeocodeCache.countDocuments({ userId: uid, notFound: true })).toBe(0);
+
+      // Really not found: remembered, but tried again after a day
+      down = false;
+      expect(await geocode(uid, '7 Other St, Nowhere SA 5000')).toBeNull();
+      const before = asked.length;
+      expect(await geocode(uid, '7 Other St, Nowhere SA 5000')).toBeNull();
+      expect(asked.length).toBe(before); // from the cache
+      await GeocodeCache.collection.updateOne({ userId: new mongoose.Types.ObjectId(uid), notFound: true }, { $set: { updatedAt: new Date(Date.now() - 2 * 24 * 3600 * 1000) } });
+      await geocode(uid, '7 Other St, Nowhere SA 5000');
+      expect(asked.length).toBeGreaterThan(before);
+    } finally { setTravelProvider(fakeProvider); }
+  });
+});

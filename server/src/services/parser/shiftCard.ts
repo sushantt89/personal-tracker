@@ -24,7 +24,8 @@ import type { ParsedAddress, ParsedJob, ParseResult } from './types.js';
  */
 
 const TIME_SRC = String.raw`\d{1,2}(?:[:.]?\d{2})?\s*(?:a\.?m\.?|p\.?m\.?)|\d{1,2}:\d{2}`;
-const RANGE_RE = new RegExp(`(${TIME_SRC})\\s*(?:-|to|until|till)\\s*(${TIME_SRC})`, 'i');
+// OCR often reads the dash between the times as \"=\", \"~\" or a long dash
+const RANGE_RE = new RegExp(`(${TIME_SRC})\\s*(?:[-–—=~]+|to|until|till)\\s*(${TIME_SRC})`, 'i');
 const MARKER_RE = /\b(shift\s+details?|shift\s+status|published\s+by|open\s+time\s*clock|find\s+a\s+replacement|clock\s+in|assigned\s+to|shift\s+notes?)\b/i;
 const HOURS_HM_RE = /\b(\d{1,2}):(\d{2})\s*(?:hrs?|hours?|h)\b/i;
 const HOURS_DEC_RE = /\b(\d{1,2}(?:\.\d{1,2})?)\s*(?:hrs?|hours?)\b/i;
@@ -53,8 +54,12 @@ const tidy = (s: string) => s.replace(/\s+([,.;:!?)])/g, '$1').replace(/\(\s+/g,
 export interface ShiftCardOptions { today: string }
 
 export function parseShiftCard(input: string, opts: ShiftCardOptions): (ParseResult & { publisher?: string }) | null {
-  if (!MARKER_RE.test(input) || /\$\s*\d/.test(input)) return null;
-  const lines = normaliseRosterText(input).split('\n').map((l) => l.replace(/\s+/g, ' ').trim()).filter(Boolean);
+  if (!MARKER_RE.test(input)) return null;
+  // A team message listing several priced jobs isn't a single shift screen (it has more than one time range anyway)
+  if ((input.match(/\$\s*\d/g) ?? []).length > 2) return null;
+  // Raw lines keep the wide gaps OCR leaves between columns (e.g. a map thumbnail beside the title); `lines` collapses them
+  const rawLines = normaliseRosterText(input).split('\n').map((l) => l.trim()).filter(Boolean);
+  const lines = rawLines.map((l) => l.replace(/\s+/g, ' ').trim());
   const dateIdx = lines.map((l, i) => (findDate(l, opts.today) ? i : -1)).filter((i) => i >= 0);
   const rangeIdx = lines.map((l, i) => (RANGE_RE.test(l) ? i : -1)).filter((i) => i >= 0);
   // Exactly one shift on the screen
@@ -86,15 +91,18 @@ export function parseShiftCard(input: string, opts: ShiftCardOptions): (ParseRes
   const titleLines: string[] = [];
   for (let i = 0; i < Math.min(dIdx, rIdx); i++) {
     const raw = lines[i];
-    const bare = stripIcon(raw).replace(/[^A-Za-z0-9 ]+$/g, '').trim();
+    // Only the left-hand column: text after a wide gap is usually the map preview read as letters
+    const bare = stripIcon(rawLines[i].split(/\s{4,}/)[0]).replace(/[^A-Za-z0-9() ]+$/g, '').trim();
     used.add(i);
     if (/shift\s+details?/i.test(raw)) { titleLines.length = 0; continue; } // everything before the header is the phone's status bar
     if (!bare || CHROME_RE.test(bare) || /shift\s+status/i.test(raw)) continue;
     if (/^\d{1,2}:\d{2}\b/.test(raw) && !/[a-z]{4}/i.test(raw)) continue; // clock in the status bar
+    if (!/[A-Za-z]{3}/.test(bare)) continue; // stray letters from icons or the map ("iL", "Ty")
     titleLines.push(bare);
   }
   const title = tidy(titleLines.join(' ')).slice(0, 160);
-  const person = tidy(title.replace(SCHEDULE_WORDS_RE, ' ').replace(/[-–|,:]+/g, ' '));
+  // "(CC)"-style agency codes and schedule words ("Monthly") aren't part of the person's name
+  const person = tidy(title.replace(/\(\s*[A-Z0-9]{1,5}\s*\)/g, ' ').replace(SCHEDULE_WORDS_RE, ' ').replace(/[-–|,:()]+/g, ' '));
 
   // Role: the line under "Job"
   let role = '';
@@ -132,17 +140,32 @@ export function parseShiftCard(input: string, opts: ShiftCardOptions): (ParseRes
     used.add(i);
     const l = lines[i];
     if (/^\d{1,2}(?::\d{2}|\.\d{1,2})?\s*(?:hrs?|hours?)$/i.test(l)) continue; // "2hrs" repeats the length of the shift
+    if (!/[A-Za-z]{3}/.test(l)) continue; // icons and buttons at the bottom read as stray letters ("a Ca —")
     noteLines.push(l);
   }
-  // Wrapped lines are joined back into sentences
-  const notes = tidy(noteLines.join(' ')).slice(0, 1500);
+  // "3h + $20 fuel", "Fuel allowance $15", "$10 petrol": an allowance paid on top of the shift
+  let fuelAllowance: number | undefined;
+  for (const l of noteLines) {
+    const f = /\$\s*(\d{1,4}(?:\.\d{1,2})?)\s*(?:of\s+)?(?:fuel|petrol|travel)\b/i.exec(l) ?? /\b(?:fuel|petrol|travel)(?:\s+allowance)?\s*[:=-]?\s*\$\s*(\d{1,4}(?:\.\d{1,2})?)/i.exec(l);
+    if (f) { fuelAllowance = Number(f[1]); break; }
+  }
+  // Wrapped lines are joined back into sentences; a new "Label:" line or a "- " point starts a new line
+  const paras: string[] = [];
+  for (const l of noteLines) {
+    if (!paras.length || /^(?:[-•*]\s|[A-Z][A-Za-z ()/{}]{1,30}:)/.test(l) || /[.!?:]$/.test(paras[paras.length - 1]) && /^[A-Z]/.test(l)) paras.push(l);
+    else paras[paras.length - 1] += ` ${l}`;
+  }
+  const notes = paras.map(tidy).join('\n').slice(0, 1500);
+  // Room counts written in the notes ("Bedrooms: 3 Bedrooms", "Bathrooms: 2")
+  const count = (re: RegExp) => { const m = re.exec(notes); return m ? Number(m[1]) : undefined; };
+  const rooms = count(/\bbed\s*rooms?\s*:?\s*(\d{1,2})\b/i), bathrooms = count(/\bbath\s*rooms?\s*:?\s*(\d{1,2})\b/i);
 
   if (!person) warnings.push('Check the client name');
   if (hours <= 0 || hours > 16) warnings.push('Unusual shift length — please check the times');
   const job: ParsedJob = {
     tempId: 's1',
     clientName: (person || title || publisher || '').slice(0, 120),
-    date, startTime: start, endTime: end, hours: Math.round(hours * 100) / 100,
+    date, startTime: start, endTime: end, hours: Math.round(hours * 100) / 100, fuelAllowance, rooms, bathrooms,
     address,
     description: [role, title && title !== person ? title : ''].filter(Boolean).join(' · ') || undefined,
     tasks: [],

@@ -15,6 +15,8 @@ export interface ParsedJob {
   endTime?: string;
   hours?: number;
   amount?: number;
+  /** fuel/travel allowance paid on top, when the message or screen mentions one */
+  fuelAllowance?: number;
   address: ParsedAddress;
   description?: string;
   tasks: string[];

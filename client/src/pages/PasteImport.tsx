@@ -47,7 +47,8 @@ const jobFields: FieldDef[] = [
   { name: 'endTime', label: 'End', type: 'time', span: 6 },
   { name: 'hoursWorked', label: 'Paid hours', type: 'number', span: 4, helper: 'Leave empty to work it out from the times' },
   { name: 'hourlyRate', label: 'Rate per hour', type: 'money', span: 4, helper: 'Optional — fills the amount as rate × hours' },
-  { name: 'amount', label: 'Amount', type: 'money', span: 4 },
+  { name: 'amount', label: 'Pay', type: 'money', span: 4 },
+  { name: 'fuelAllowance', label: 'Fuel allowance', type: 'money', span: 4, helper: 'Added on top of the pay' },
   { name: 'address.line1', label: 'Street address', type: 'text', span: 12 },
   { name: 'address.suburb', label: 'Suburb', type: 'text', span: 5 },
   { name: 'address.state', label: 'State', type: 'text', span: 3 },
@@ -85,6 +86,7 @@ export default function PasteImport() {
   const [text, setText] = useState('');
   const [parsing, setParsing] = useState(false);
   const [result, setResult] = useState<ParseResponse | null>(null);
+  const [readingNote, setReadingNote] = useState('');
   const [jobs, setJobs] = useState<EditJob[]>([]);
   const [payments, setPayments] = useState<EditPayment[]>([]);
   const [sourceId, setSourceId] = useState('');
@@ -113,7 +115,7 @@ export default function PasteImport() {
   const show = (r: ParseResponse) => {
       setResult(r);
       // Shifts that are already in the app are left unticked, so re-uploading an updated roster only adds what's new
-      const mapped = r.jobs.map((j) => ({ tempId: j.tempId, include: !(r.format === 'roster' && j.duplicateOfJobId), parsed: j, hoursWorked: j.hours ?? '', clientName: j.clientName, amount: j.amount ?? '', date: j.date ?? '', startTime: j.startTime ?? '', endTime: j.endTime ?? '', address: { ...j.address }, description: j.description ?? '', tasks: j.tasks, rooms: j.rooms ?? '', bathrooms: j.bathrooms ?? '', specialInstructions: j.specialInstructions ?? '', meetingPoint: j.meetingPoint })) as EditJob[];
+      const mapped = r.jobs.map((j) => ({ tempId: j.tempId, include: !(r.format === 'roster' && j.duplicateOfJobId), parsed: j, hoursWorked: j.hours ?? '', clientName: j.clientName, amount: j.amount ?? '', fuelAllowance: j.fuelAllowance ?? '', date: j.date ?? '', startTime: j.startTime ?? '', endTime: j.endTime ?? '', address: { ...j.address }, description: j.description ?? '', tasks: j.tasks, rooms: j.rooms ?? '', bathrooms: j.bathrooms ?? '', specialInstructions: j.specialInstructions ?? '', meetingPoint: j.meetingPoint })) as EditJob[];
       setJobs(r.format === 'roster' && Number(rate) > 0 ? applyRate(rate, mapped) : mapped);
       setPayments(r.payments.map((p) => ({ ...p, include: true, date: p.date ?? localToday(), matchIncomeId: r.paymentMatches[p.tempId]?.find((m) => m.incomeId)?.incomeId ?? '' })));
       setSourceId(r.suggestedIncomeSourceId ?? '');
@@ -134,22 +136,59 @@ export default function PasteImport() {
     }
   };
 
-  /** Roster screenshot or photo: the server reads the text out of it, then it is reviewed exactly like pasted text. */
-  const uploadRoster = async (file: File) => {
+  /**
+   * Roster screenshots or photos — one or several at once. The server reads the text out of each, then all the shifts
+   * found are reviewed together exactly like pasted text. A photo that can't be read doesn't stop the others.
+   */
+  const uploadRosters = async (files: File[]) => {
+    const list = files.filter((f) => /^image\/|pdf$/i.test(f.type) || /\.(heic|heif|jpe?g|png|webp|pdf)$/i.test(f.name)).slice(0, 10);
+    if (!list.length) { setError('Choose roster screenshots or photos (JPG, PNG, HEIC or PDF).'); return; }
     setReading(true); setError(null); setDone(null); setResult(null); setJobs([]); setPayments([]);
+    const ok: ParseResponse[] = [], failed: string[] = [];
     try {
-      const fd = new FormData();
-      fd.append('file', file);
-      if (employer.trim()) fd.append('employer', employer.trim());
-      const r = await api<ParseResponse>('/import/roster', { method: 'POST', form: fd });
-      setText(r.text ?? '');
-      show(r);
-    } catch (e) {
-      setError((e as Error).message);
+      for (const [i, file] of list.entries()) {
+        setReadingNote(list.length > 1 ? `Reading photo ${i + 1} of ${list.length}…` : '');
+        try {
+          const fd = new FormData();
+          fd.append('file', file);
+          if (employer.trim()) fd.append('employer', employer.trim());
+          ok.push(await api<ParseResponse>('/import/roster', { method: 'POST', form: fd }));
+        } catch (e) { failed.push(`${list.length > 1 ? `Photo ${i + 1}` : file.name}: ${(e as Error).message}`); }
+      }
+      if (failed.length) setError(failed.join(' · '));
+      if (!ok.length) return;
+      if (ok.length === 1) { setText(ok[0].text ?? ''); show(ok[0]); return; }
+      // Several photos: one review list with every shift, each photo's ids kept apart
+      const tag = (n: number, id: string) => `p${n + 1}_${id}`;
+      const jobsAll = ok.flatMap((r, n) => r.jobs.map((j) => ({ ...j, tempId: tag(n, j.tempId) })));
+      const paymentsAll = ok.flatMap((r, n) => r.payments.map((p) => ({ ...p, tempId: tag(n, p.tempId) })));
+      const matches = Object.assign({}, ...ok.map((r, n) => Object.fromEntries(Object.entries(r.paymentMatches ?? {}).map(([k, v]) => [tag(n, k), v]))));
+      const dates = [...new Set(jobsAll.map((j) => j.date).filter(Boolean) as string[])].sort();
+      const first = ok.find((r) => r.jobs.length) ?? ok[0];
+      const merged: ParseResponse = {
+        ...first,
+        format: ok.every((r) => r.format === 'roster') ? 'roster' : 'message',
+        jobs: jobsAll, payments: paymentsAll, paymentMatches: matches,
+        scheduleDate: dates.length === 1 ? dates[0] : first.scheduleDate,
+        warnings: ok.flatMap((r, n) => r.warnings.map((w) => `Photo ${n + 1}: ${w}`)),
+        unparsedLines: ok.flatMap((r) => r.unparsedLines),
+        summary: { jobCount: jobsAll.length, paymentCount: paymentsAll.length, totalAmount: Math.round(jobsAll.reduce((a, j) => a + (j.amount ?? 0), 0) * 100) / 100, addressCount: jobsAll.filter((j) => j.address?.formatted).length, dateCount: dates.length, dates },
+        alreadyImported: ok.find((r) => r.alreadyImported)?.alreadyImported ?? null,
+        text: ok.map((r) => r.text ?? '').join('\n\n----------\n\n'),
+      };
+      setText(merged.text ?? '');
+      show(merged);
     } finally {
-      setReading(false);
+      setReading(false); setReadingNote('');
       if (fileRef.current) fileRef.current.value = '';
     }
+  };
+  const uploadRoster = (file: File) => uploadRosters([file]);
+  const [dragging, setDragging] = useState(false);
+  const dropProps = {
+    onDragOver: (e: React.DragEvent) => { if (e.dataTransfer.types.includes('Files')) { e.preventDefault(); setDragging(true); } },
+    onDragLeave: (e: React.DragEvent) => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setDragging(false); },
+    onDrop: (e: React.DragEvent) => { e.preventDefault(); setDragging(false); const fs = Array.from(e.dataTransfer.files ?? []); if (fs.length) uploadRosters(fs); },
   };
 
   /** Employer chosen for a roster: name every shift, remember it for next time and re-check for shifts already imported. */
@@ -192,7 +231,7 @@ export default function PasteImport() {
         syncCalendar: calendarAvailable && syncCalendar,
         allowDuplicates,
         jobs: included.map((j) => ({
-          clientName: j.clientName.trim(), date: j.date, startTime: j.startTime || undefined, endTime: j.endTime || undefined, amount: num(j.amount), hourlyRate: num(j.hourlyRate), amountEstimated: isRoster && Number(j.amount) > 0, hoursWorked: num(j.hoursWorked),
+          clientName: j.clientName.trim(), date: j.date, startTime: j.startTime || undefined, endTime: j.endTime || undefined, amount: Number(j.amount) > 0 ? Math.round((Number(j.amount) + (Number(j.fuelAllowance) || 0)) * 100) / 100 : undefined, fuelAllowance: num(j.fuelAllowance), hourlyRate: num(j.hourlyRate), amountEstimated: isRoster && Number(j.amount) > 0, hoursWorked: num(j.hoursWorked),
           address: j.address, description: j.description || undefined, tasks: j.tasks, rooms: num(j.rooms), bathrooms: num(j.bathrooms),
           specialInstructions: j.specialInstructions || undefined, meetingPoint: j.meetingPoint || undefined,
         })),
@@ -223,20 +262,22 @@ export default function PasteImport() {
         </Alert>
       )}
 
-      <Card sx={{ mb: 2 }}>
+      <Card sx={{ mb: 2, outline: dragging ? '2px dashed' : 'none', outlineColor: 'primary.main', outlineOffset: -6 }} {...dropProps}>
         <CardContent>
+          {dragging && <Alert severity="info" sx={{ mb: 1.5 }}>Drop roster screenshots or photos here — several at once is fine</Alert>}
           <TextField multiline minRows={6} maxRows={18} placeholder="Paste your message here…" value={text} onChange={(e) => setText(e.target.value)} slotProps={{ htmlInput: { 'aria-label': 'Message to import', style: { fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontSize: 13 } } }} />
           <Stack direction="row" spacing={1} sx={{ mt: 1.5 }} flexWrap="wrap" useFlexGap>
             <Button variant="contained" startIcon={<AutoFixHighIcon />} onClick={analyse} disabled={!text.trim() || parsing}>{parsing ? 'Analysing…' : 'Analyse'}</Button>
-            <Button variant="outlined" startIcon={<AddPhotoAlternateOutlinedIcon />} onClick={() => fileRef.current?.click()} disabled={reading || parsing}>{reading ? 'Reading roster…' : 'Upload roster photo'}</Button>
-            <input ref={fileRef} type="file" hidden accept="image/*,.heic,.heif,application/pdf" aria-label="Roster screenshot or photo" onChange={(e) => { const f = e.target.files?.[0]; if (f) uploadRoster(f); }} />
+            <Button variant="outlined" startIcon={<AddPhotoAlternateOutlinedIcon />} onClick={() => fileRef.current?.click()} disabled={reading || parsing}>{reading ? 'Reading roster…' : 'Upload roster photos'}</Button>
+            <input ref={fileRef} type="file" hidden multiple accept="image/*,.heic,.heif,application/pdf" aria-label="Roster screenshots or photos" onChange={(e) => { const fs = Array.from(e.target.files ?? []); if (fs.length) uploadRosters(fs); }} />
             <CameraButton label="Photograph roster" onPhoto={uploadRoster} disabled={reading || parsing} />
             <Button startIcon={<ContentPasteIcon />} onClick={pasteFromClipboard}>Paste from clipboard</Button>
             <Button onClick={() => setText(EXAMPLE)} color="inherit">Try an example</Button>
             {text && <Button color="inherit" onClick={() => { setText(''); setResult(null); setJobs([]); setPayments([]); }}>Clear</Button>}
           </Stack>
           {(parsing || reading) && <LinearProgress sx={{ mt: 2 }} />}
-          {reading && <Typography variant="caption" color="text.secondary" component="div" sx={{ mt: 1 }}>Reading the text in your image. This can take up to half a minute.</Typography>}
+          {reading && <Typography variant="caption" color="text.secondary" component="div" sx={{ mt: 1 }}>{readingNote || 'Reading the text in your image.'} Each photo can take up to half a minute.</Typography>}
+          {!reading && !text && <Typography variant="caption" color="text.secondary" component="div" sx={{ mt: 1 }}>Tip: drag and drop one or more roster screenshots onto this box.</Typography>}
         </CardContent>
       </Card>
 

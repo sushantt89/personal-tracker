@@ -77,6 +77,7 @@ export interface CalendarEvent { id: string; type: 'task' | 'job' | 'bill' | 'in
 export interface List<T> { items: T[]; total: number }
 
 export interface ParsedJob {
+  /** fuel/travel allowance mentioned for the job */ fuelAllowance?: number;
   tempId: string; clientName: string; date?: string; startTime?: string; endTime?: string; hours?: number; amount?: number; address: Address; description?: string;
   tasks: string[]; rooms?: number; bathrooms?: number; specialInstructions?: string; meetingPoint?: string; sourceText: string; confidence: number; warnings: string[];
   duplicateOfJobId?: string | null;

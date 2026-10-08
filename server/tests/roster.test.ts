@@ -127,6 +127,45 @@ describe('single shift screen from a rostering app', () => {
   });
 });
 
+describe('shift screen with a map beside the title, a fuel allowance and an OCR-mangled dash', () => {
+  // Made-up client and address, laid out the way OCR reads such a screen
+  const CARD2 = `{                     Shift details                  2
+Jordan Sample (CC) -
+Monthly                                                   vw    B rid ae
+iL
+Ty
+Current shift status                                © Confirmed
+  Friday, Oct 09, 2026
+(YO 1:00 PM = 4:00 PM (3:00 hours)
+™ Job
+Cleaning (CC)
+®  12 Example Rd, Crafers SA 5152, Australia
+() Attachments
+3h + $20 fuel
+Job Details: Bedrooms: 3 Bedrooms
+Bathrooms: 2 Bathrooms
+Customer Notes: No need to clean the lounge room just
+the living room and the other areas.
+Previous complaint: please make sure this is focused on
+for the next clean.
+- The coffee tables were dusted rather than
+spray n wiped.
+a               Ca —`;
+  const r = parseShiftCard(CARD2, { today: '2026-10-08' })!;
+  it('finds the shift even though the screen mentions a dollar amount and the dash was read as "="', () => {
+    expect(r).not.toBeNull();
+    expect(r.jobs[0]).toMatchObject({ clientName: 'Jordan Sample', date: '2026-10-09', startTime: '13:00', endTime: '16:00', hours: 3, fuelAllowance: 20, rooms: 3, bathrooms: 2 });
+    expect(r.jobs[0].address.formatted).toBe('12 Example Rd, Crafers SA 5152');
+  });
+  it('keeps the notes readable, line by line, without the stray letters from icons and the map', () => {
+    const notes = r.jobs[0].specialInstructions!;
+    expect(notes).toContain('Customer Notes: No need to clean the lounge room just the living room and the other areas.');
+    expect(notes.split('\n')).toContain('- The coffee tables were dusted rather than spray n wiped.');
+    expect(notes).not.toMatch(/Ca —|vw|rid ae/);
+    expect(r.jobs[0].clientName).not.toMatch(/iL|Ty|vw/);
+  });
+});
+
 describe('roster import and pay added later', () => {
   let mongo: MongoMemoryServer;
   let app: Express;

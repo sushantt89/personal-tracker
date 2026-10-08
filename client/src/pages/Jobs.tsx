@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Box, Button, Link, Typography, Stack, Chip, Snackbar } from '@mui/material';
+import { Box, Button, Link, Typography, Stack, Chip, Snackbar, Dialog, DialogTitle, DialogContent, DialogActions, Autocomplete, TextField, Alert } from '@mui/material';
+import HandshakeOutlinedIcon from '@mui/icons-material/HandshakeOutlined';
 import CheckCircleOutlineIcon from '@mui/icons-material/CheckCircleOutline';
 import CancelOutlinedIcon from '@mui/icons-material/CancelOutlined';
 import PlaceOutlinedIcon from '@mui/icons-material/PlaceOutlined';
@@ -16,7 +17,7 @@ import { money, fmtDate, fmtTime, mapsUrl } from '../utils/format';
 import { patch, post } from '../api/client';
 import { useInvalidateFinance } from '../hooks/useInvalidate';
 import { useToast } from '../hooks/useToast';
-import { useLookupMaps, useJobDerive } from '../hooks/useLookups';
+import { useLookupMaps, useJobDerive, useClients } from '../hooks/useLookups';
 import { Grid } from '@mui/material';
 
 export default function Jobs() {
@@ -54,6 +55,32 @@ export default function Jobs() {
     const same = rows.length - r.updated - r.skipped.noPay - r.skipped.cancelled;
     toast(`${r.updated} job${r.updated === 1 ? '' : 's'} marked ${action}${same > 0 ? ` · ${same} already ${action}` : ''}${notes ? ` · ${notes}` : ''}`, notes && !r.updated ? 'error' : undefined);
   };
+  // Change the contractor on several jobs at once
+  const contractors = (useClients().data ?? []).filter((c) => c.type === 'contractor');
+  const OWN = '__own__';
+  const [setFor, setSetFor] = useState<{ rows: Job[]; done: (clear: boolean) => void } | null>(null);
+  const [pick, setPick] = useState<{ id?: string; name: string } | null>(null);
+  const [applying, setApplying] = useState(false);
+  const askContractor = (rows: Job[]) => new Promise<boolean>((done) => { setPick(null); setSetFor({ rows, done }); });
+  const closeContractor = (clear: boolean) => { setFor?.done(clear); setSetFor(null); };
+  const applyContractor = async () => {
+    if (!setFor || !pick) return;
+    const own = pick.id === OWN;
+    const body = own ? { workType: 'own', contractorId: null } : pick.id ? { workType: 'subcontract', contractorId: pick.id } : { workType: 'subcontract', contractorName: pick.name.trim() };
+    // Jobs already on an invoice keep their contractor: the invoice was made out to them
+    const todo = setFor.rows.filter((j) => !j.invoiceId), onInvoice = setFor.rows.length - todo.length;
+    setApplying(true);
+    let ok = 0; const failed: string[] = [];
+    for (const j of todo) {
+      try { await patch(`/jobs/${j.id}`, body); ok++; } catch (e) { failed.push(`${j.clientName ?? 'Job'}: ${(e as Error).message}`); }
+    }
+    setApplying(false);
+    await invalidate();
+    const who = own ? 'your own business' : pick.name;
+    toast([`${ok} job${ok === 1 ? '' : 's'} now under ${who}`, onInvoice ? `${onInvoice} on an invoice left as they were` : '', failed.length ? `${failed.length} failed` : ''].filter(Boolean).join(' · '), failed.length && !ok ? 'error' : undefined);
+    closeContractor(true);
+  };
+
   const config: ResourceConfig<Job> = {
     queryKey: 'jobs', endpoint: '/jobs', title: 'Jobs', singular: 'Job',
     subtitle: 'Own-business jobs are billed to the client; jobs under a contractor are billed to the contractor; employee shifts are paid as wages. If you don’t know the pay yet, set an expected amount now and record the real pay later.',
@@ -90,6 +117,7 @@ export default function Jobs() {
     bulkActions: [
       { label: 'Mark completed', icon: <CheckCircleOutlineIcon fontSize="small" />, onClick: (rows) => bulk(rows, 'completed'), variant: 'contained' },
       { label: 'Mark paid', icon: <PaidOutlinedIcon fontSize="small" />, onClick: (rows) => bulk(rows, 'paid') },
+      { label: 'Set contractor', icon: <HandshakeOutlinedIcon fontSize="small" />, onClick: (rows) => askContractor(rows) },
     ],
     deleteMessage: () => 'The linked income record is removed too (unless it is already paid).',
     summary: (items) => {
@@ -106,7 +134,25 @@ export default function Jobs() {
       );
     },
   };
+  const options = [{ id: OWN, name: 'No contractor — my own business' }, ...contractors.map((c) => ({ id: c.id, name: c.name }))];
   return <><ResourcePage config={config} />
+    <Dialog open={!!setFor} onClose={() => !applying && closeContractor(false)} maxWidth="xs" fullWidth>
+      <DialogTitle>Set contractor for {setFor?.rows.length} job{setFor?.rows.length === 1 ? '' : 's'}</DialogTitle>
+      <DialogContent>
+        <Stack spacing={2} sx={{ mt: 1 }}>
+          <Autocomplete freeSolo options={options} getOptionLabel={(o) => (typeof o === 'string' ? o : o.name)} value={pick}
+            onChange={(_, v) => setPick(v == null ? null : typeof v === 'string' ? { name: v } : v)}
+            onInputChange={(_, v, reason) => { if (reason === 'input') setPick(v.trim() ? { name: v } : null); }}
+            renderInput={(p) => <TextField {...p} autoFocus label="Contractor (who pays you)" helperText="Pick one, type a new name, or choose “my own business”" />} />
+          <Typography variant="body2" color="text.secondary">The jobs’ expected income moves to this contractor too. Income already marked paid isn’t changed.</Typography>
+          {!!setFor?.rows.some((j) => j.invoiceId) && <Alert severity="info">{setFor.rows.filter((j) => j.invoiceId).length} of these jobs are on an invoice and will keep their contractor.</Alert>}
+        </Stack>
+      </DialogContent>
+      <DialogActions sx={{ px: 3, pb: 2 }}>
+        <Button color="inherit" disabled={applying} onClick={() => closeContractor(false)}>Cancel</Button>
+        <Button variant="contained" disabled={!pick?.name.trim() || applying} onClick={applyContractor}>{applying ? 'Updating…' : 'Apply'}</Button>
+      </DialogActions>
+    </Dialog>
     <Snackbar open={!!undo} autoHideDuration={6000} onClose={(_, reason) => { if (reason !== 'clickaway') setUndo(null); }} message={undo ? `${undo.job.clientName ?? undo.job.title ?? 'Job'} marked completed` : ''} action={<Button color="inherit" size="small" onClick={undoComplete}>Undo</Button>} anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }} sx={{ mb: { xs: 9, md: 0 } }} />
     <RecordPayDialog open={!!payOpen} initialMode={payOpen || 'paid'} onClose={() => setPayOpen(false)} /></>;
 }

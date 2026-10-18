@@ -15,7 +15,7 @@ import { PageHeader, SectionCard, LoadingBlock, StatusChip, useConfirm } from '.
 import { EntityFormDialog } from '../components/EntityForm';
 import { taskFields, taskDefaults, jobFields, jobToForm, jobFromForm, addToGoogleField, taskInGoogle } from '../utils/forms';
 import { useIntegrations, useSettings, useJobDerive } from '../hooks/useLookups';
-import { addDays, fmtDay, fmtTime, money, localToday, directionsUrl, routeGroups, fmtDate } from '../utils/format';
+import { addDays, fmtDay, fmtTime, money, localToday, directionsUrl, routeGroups, fmtDate, jobTimeLabel } from '../utils/format';
 import { useInvalidateFinance } from '../hooks/useInvalidate';
 import { useToast } from '../hooks/useToast';
 import { useThemeMode } from '../theme/ThemeModeProvider';
@@ -53,15 +53,27 @@ export default function MyDay() {
 
   // Simple overlap layout: assign columns to overlapping events
   const layout = useMemo(() => {
-    const sorted = [...timed].sort((a, b) => toMin(a.startTime) - toMin(b.startTime));
+    // Night work: tomorrow's after-midnight start sits below midnight; an overnight job runs on past it
+    const span = (e: CalendarEvent) => {
+      const base = e.part === 'night-before' ? 24 * 60 : 0;
+      const s = base + toMin(e.startTime);
+      if (!e.endTime) return { s, en: s + 60 };
+      let en = base + toMin(e.endTime);
+      if (en <= s) en += 24 * 60; // finishes after midnight
+      return { s, en: Math.max(en, s + 30) };
+    };
+    const sorted = [...timed].sort((a, b) => span(a).s - span(b).s);
     const cols: number[] = [];
     return sorted.map((e) => {
-      const s = toMin(e.startTime), en = e.endTime ? (toMin(e.endTime) < s ? 24 * 60 : Math.max(toMin(e.endTime), s + 30)) : s + 60; // a finish time before the start runs past midnight
+      const { s, en } = span(e);
       let col = cols.findIndex((end) => end <= s);
       if (col === -1) { col = cols.length; cols.push(en); } else cols[col] = en;
       return { e, s, en, col };
     }).map((x, _, arr) => ({ ...x, cols: Math.max(1, ...arr.filter((y) => y.s < x.en && y.en > x.s).map((y) => y.col + 1)) }));
   }, [timed]);
+  // The grid grows to fit early starts and work that runs past midnight
+  const gridStart = Math.min(START_HOUR, ...layout.map((x) => Math.floor(x.s / 60)));
+  const gridEnd = Math.min(31, Math.max(END_HOUR, ...layout.map((x) => Math.ceil(x.en / 60) - 1)));
 
   const reschedule = async (ev: CalendarEvent, hour: number) => {
     const dur = ev.endTime ? toMin(ev.endTime) - toMin(ev.startTime) : 60;
@@ -98,7 +110,7 @@ export default function MyDay() {
         <Typography variant="body2" fontWeight={600} noWrap sx={{ textDecoration: ev.status === 'completed' ? 'line-through' : undefined }}>
           {ev.title}{ev.amount ? ` · ${money(ev.amount)}` : ''}
         </Typography>
-        {!compact && <Typography variant="caption" color="text.secondary" noWrap component="div">{ev.startTime ? `${fmtTime(ev.startTime)}${ev.endTime ? '–' + fmtTime(ev.endTime) : ''}` : ev.type === 'google' ? 'Google Calendar · all day' : ev.type}{ev.location ? ` · ${ev.location}` : ''}</Typography>}
+        {!compact && <Typography variant="caption" color="text.secondary" noWrap component="div">{ev.startTime ? (ev.type === 'job' ? jobTimeLabel(ev) : `${fmtTime(ev.startTime)}${ev.endTime ? '–' + fmtTime(ev.endTime) : ''}`) : ev.type === 'google' ? 'Google Calendar · all day' : ev.type}{ev.location ? ` · ${ev.location}` : ''}</Typography>}
       </Box>
       {ev.recurring && <RepeatIcon sx={{ fontSize: 14, color: 'text.secondary', mt: 0.5 }} />}
     </Stack>
@@ -123,25 +135,25 @@ export default function MyDay() {
         <Grid size={{ xs: 12, lg: 8 }}>
           <Card>
             {day.isLoading ? <Box sx={{ p: 2 }}><LoadingBlock rows={6} /></Box> : (
-              <Box sx={{ position: 'relative', height: (END_HOUR - START_HOUR + 1) * HOUR_PX, ml: 7, mr: 1, my: 1 }}>
-                {Array.from({ length: END_HOUR - START_HOUR + 1 }, (_, i) => START_HOUR + i).map((h) => (
+              <Box sx={{ position: 'relative', height: (gridEnd - gridStart + 1) * HOUR_PX, ml: 7, mr: 1, my: 1 }}>
+                {Array.from({ length: gridEnd - gridStart + 1 }, (_, i) => gridStart + i).map((h) => (
                   <Box key={h}
                     onDragOver={(e) => { e.preventDefault(); e.currentTarget.style.background = alpha(theme.palette.primary.main, 0.08); }}
                     onDragLeave={(e) => { e.currentTarget.style.background = ''; }}
-                    onDrop={(e) => { e.currentTarget.style.background = ''; const id = e.dataTransfer.getData('text/plain'); const ev = events.find((x) => x.id === id); if (ev) reschedule(ev, h); }}
-                    onDoubleClick={() => setEditingTask({ initial: { ...taskDefaults(date), startTime: fromMin(h * 60), endTime: fromMin(h * 60 + 60) } })}
-                    sx={{ position: 'absolute', left: 0, right: 0, top: (h - START_HOUR) * HOUR_PX, height: HOUR_PX, borderTop: 1, borderColor: 'divider' }}>
-                    <Typography variant="caption" color="text.secondary" sx={{ position: 'absolute', left: -52, top: -9, width: 46, textAlign: 'right' }}>{fmtTime(fromMin(h * 60)).replace(':00', '')}</Typography>
+                    onDrop={(e) => { e.currentTarget.style.background = ''; const id = e.dataTransfer.getData('text/plain'); const ev = events.find((x) => x.id === id); if (ev && h < 24) reschedule(ev, h); }}
+                    onDoubleClick={() => h < 24 && setEditingTask({ initial: { ...taskDefaults(date), startTime: fromMin(h * 60), endTime: fromMin(h * 60 + 60) } })}
+                    sx={{ position: 'absolute', left: 0, right: 0, top: (h - gridStart) * HOUR_PX, height: HOUR_PX, borderTop: 1, borderColor: 'divider', bgcolor: h >= 24 ? 'action.hover' : undefined }}>
+                    <Typography variant="caption" color="text.secondary" sx={{ position: 'absolute', left: -52, top: -9, width: 46, textAlign: 'right' }}>{fmtTime(fromMin((h % 24) * 60)).replace(':00', '')}</Typography>
                   </Box>
                 ))}
-                <Box sx={{ position: 'absolute', left: 0, right: 0, top: (END_HOUR - START_HOUR + 1) * HOUR_PX, borderTop: 1, borderColor: 'divider' }}>
-                  <Typography variant="caption" color="text.secondary" sx={{ position: 'absolute', left: -52, top: -9, width: 46, textAlign: 'right' }}>12 am</Typography>
+                <Box sx={{ position: 'absolute', left: 0, right: 0, top: (gridEnd - gridStart + 1) * HOUR_PX, borderTop: 1, borderColor: 'divider' }}>
+                  <Typography variant="caption" color="text.secondary" sx={{ position: 'absolute', left: -52, top: -9, width: 46, textAlign: 'right' }}>{fmtTime(fromMin(((gridEnd + 1) % 24) * 60)).replace(':00', '')}</Typography>
                 </Box>
-                {date === localToday() && (() => { const n = new Date(); const m = n.getHours() * 60 + n.getMinutes(); return m >= START_HOUR * 60 && m <= END_HOUR * 60 + 59 ? <Box sx={{ position: 'absolute', left: -6, right: 0, top: ((m - START_HOUR * 60) / 60) * HOUR_PX, height: 2, bgcolor: 'error.main', zIndex: 3, '&::before': { content: '""', position: 'absolute', left: 0, top: -4, width: 10, height: 10, borderRadius: '50%', bgcolor: 'error.main' } }} /> : null; })()}
+                {date === localToday() && (() => { const n = new Date(); const m = n.getHours() * 60 + n.getMinutes(); return m >= gridStart * 60 && m <= Math.min(23, gridEnd) * 60 + 59 ? <Box sx={{ position: 'absolute', left: -6, right: 0, top: ((m - gridStart * 60) / 60) * HOUR_PX, height: 2, bgcolor: 'error.main', zIndex: 3, '&::before': { content: '""', position: 'absolute', left: 0, top: -4, width: 10, height: 10, borderRadius: '50%', bgcolor: 'error.main' } }} /> : null; })()}
                 {layout.map(({ e, s, en, col, cols }) => {
-                  const top = Math.max(0, ((s - START_HOUR * 60) / 60) * HOUR_PX);
-                  const height = Math.max(28, ((en - s) / 60) * HOUR_PX - 3);
-                  const draggable = e.type === 'task' || e.type === 'job';
+                  const top = Math.max(0, ((s - gridStart * 60) / 60) * HOUR_PX);
+                  const height = Math.max(28, ((Math.min(en, (gridEnd + 1) * 60) - s) / 60) * HOUR_PX - 3);
+                  const draggable = (e.type === 'task' || e.type === 'job') && !e.ghost && !e.part;
                   return (
                     <Box key={e.id} draggable={draggable} onDragStart={(d) => d.dataTransfer.setData('text/plain', e.id)} onClick={() => open(e)}
                       sx={{ position: 'absolute', top, height, left: `calc(${(col / cols) * 100}% + 4px)`, width: `calc(${100 / cols}% - 8px)`, zIndex: 2, cursor: 'pointer',
@@ -173,10 +185,10 @@ export default function MyDay() {
               )}
             </SectionCard>
             {jobs.length > 0 && (
-              <SectionCard title="Work today" subtitle={`${jobs.length} job(s) · ${money(jobs.reduce((a, j) => a + (j.amount ?? 0), 0))}`}
+              <SectionCard title="Work today" subtitle={`${jobs.filter((j) => !j.ghost).length} job(s) · ${money(jobs.reduce((a, j) => a + (j.amount ?? 0), 0))}${jobs.some((j) => j.part === 'night-before') ? ' · plus tonight’s after-midnight work' : ''}`}
                 action={(() => {
                   // Jobs more than an hour apart get their own route
-                  const routes = routeGroups(jobs.map((j) => ({ startTime: j.startTime, endTime: j.endTime, address: j.location })));
+                  const routes = routeGroups(jobs.filter((j) => j.part !== 'until' && j.part !== 'from-night').map((j) => ({ startTime: j.sortTime || j.startTime, endTime: j.endTime, address: j.location })));
                   if (routes.length < 2 && (routes[0]?.stops.length ?? 0) < 2) return undefined;
                   return <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap" justifyContent="flex-end">{routes.map((r, i) => (
                     <Button key={i} size="small" startIcon={<DirectionsIcon />} href={r.url ?? '#'} target="_blank" rel="noreferrer">{routes.length > 1 ? `${r.startTime ? fmtTime(r.startTime) : `Route ${i + 1}`} (${r.stops.length})` : 'Route'}</Button>))}</Stack>;
@@ -201,12 +213,13 @@ export default function MyDay() {
                             <Box key={j.id}>
                               {leg && leg.km > 0 && <Leg km={leg.km} minutes={leg.minutes} />}
                               <Stack direction="row" spacing={1} alignItems="center" sx={{ py: 0.5 }}>
-                                <Typography variant="body2" sx={{ width: 64, color: 'text.secondary' }}>{fmtTime(j.startTime)}</Typography>
+                                <Typography variant="body2" sx={{ width: 64, color: 'text.secondary' }}>{j.part === 'until' ? `→ ${fmtTime(j.endTime)}` : fmtTime(j.startTime)}</Typography>
                                 <Box sx={{ flex: 1, minWidth: 0 }}>
                                   <Typography variant="body2" fontWeight={500} noWrap>{j.title}</Typography>
+                                  {j.part && <Typography variant="caption" color="primary" component="div" noWrap>{jobTimeLabel(j)}</Typography>}
                                   {j.location && <Link variant="caption" href={directionsUrl([j.location])} target="_blank" rel="noreferrer" color="text.secondary" underline="hover" noWrap component="a" sx={{ display: 'block' }}>{j.location}</Link>}
                                 </Box>
-                                <Typography variant="body2" fontWeight={600}>{money(j.amount)}</Typography>
+                                {!j.ghost && <Typography variant="body2" fontWeight={600}>{money(j.amount)}</Typography>}
                               </Stack>
                             </Box>
                           );
@@ -252,7 +265,7 @@ export default function MyDay() {
                           </Stack>
                         </Stack>
                         <Typography variant="caption" color="text.secondary" component="div" noWrap>
-                          {evs.length ? evs.map((e) => `${e.startTime ? fmtTime(e.startTime) + ' ' : ''}${e.title}`).join(' · ') : 'Free'}
+                          {evs.length ? evs.map((e) => `${e.part === 'night-before' ? 'tonight ' + fmtTime(e.startTime) + ' ' : e.part === 'until' ? 'until ' + fmtTime(e.endTime) + ' ' : e.startTime ? fmtTime(e.startTime) + ' ' : ''}${e.title}`).join(' · ') : 'Free'}
                         </Typography>
                       </Box>
                     );

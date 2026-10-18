@@ -49,7 +49,7 @@ export default function CalendarPage() {
 
   return (
     <Box>
-      <PageHeader title="Calendar" subtitle={`${monthEvents.filter((e) => e.type === 'job').length} jobs · ${money(monthEvents.filter((e) => e.type === 'bill').reduce((a, e) => a + (e.amount ?? 0), 0))} in bills this month`}
+      <PageHeader title="Calendar" subtitle={`${monthEvents.filter((e) => e.type === 'job' && !e.ghost).length} jobs · ${money(monthEvents.filter((e) => e.type === 'bill').reduce((a, e) => a + (e.amount ?? 0), 0))} in bills this month`}
         actions={<Stack direction="row" alignItems="center">
           <IconButton aria-label="Previous month" onClick={() => setMonth(month.subtract(1, 'month'))}><ChevronLeftIcon /></IconButton>
           <Typography variant="subtitle1" sx={{ minWidth: 150, textAlign: 'center' }}>{month.format('MMMM YYYY')}</Typography>
@@ -83,7 +83,7 @@ export default function CalendarPage() {
                     <Stack spacing={0.4} sx={{ mt: 0.5 }}>
                       {evs.slice(0, 4).map((e) => (
                         <Box key={e.id} title={`${e.title}${e.amount ? ' · ' + money(e.amount) : ''}`} sx={{ fontSize: 11.5, lineHeight: 1.35, px: 0.6, py: 0.15, borderRadius: 1, bgcolor: alpha(color[e.type], theme.palette.mode === 'dark' ? 0.25 : 0.14), borderLeft: 2, borderColor: color[e.type], whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', textDecoration: e.status === 'completed' || e.status === 'paid' ? 'line-through' : undefined, opacity: e.status === 'cancelled' ? 0.5 : 1 }}>
-                          {e.startTime ? fmtTime(e.startTime).replace(':00', '') + ' ' : ''}{e.title}
+                          {e.part === 'night-before' ? `🌙 ${fmtTime(e.startTime).replace(':00', '')} ` : e.part === 'until' ? `→${fmtTime(e.endTime).replace(':00', '')} ` : e.startTime ? fmtTime(e.startTime).replace(':00', '') + ' ' : ''}{e.title}
                         </Box>
                       ))}
                       {evs.length > 4 && <Typography variant="caption" color="text.secondary">+{evs.length - 4} more</Typography>}

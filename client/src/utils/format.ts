@@ -19,7 +19,8 @@ export const fmtShort = (s?: string | null) => (s ? dayjs(s).format('D MMM') : '
 export const fmtMonth = (key: string) => dayjs(key + '-01').format('MMM YY');
 export const fmtTime = (t?: string | null) => {
   if (!t) return '';
-  const [h, m] = t.split(':').map(Number);
+  const [hh, m] = t.split(':').map(Number);
+  const h = hh % 24; // "24:30" (after midnight, listed the evening before) reads as 12:30 am
   const h12 = h % 12 || 12;
   return `${h12}:${String(m).padStart(2, '0')} ${h < 12 ? 'am' : 'pm'}`;
 };
@@ -76,4 +77,40 @@ export function routeGroups(jobs: RouteStop[], gapMinutes = 60): RouteGroup[] {
     prev = j;
   }
   return groups.filter((g) => g.stops.length).map((g) => ({ ...g, url: directionsUrl(g.stops) }));
+}
+
+// ---------- Night work ----------
+/** Where a job shows on a given day: 'night-before' = it starts after midnight and is listed the evening before;
+ *  'until' = it began the night before and runs into this day; 'from-night' = its own day, started the night before;
+ *  'overnight' = starts this day and finishes the next. */
+export type NightPart = 'night-before' | 'until' | 'from-night' | 'overnight';
+const NIGHT_BEFORE = '04:00';
+const dayName = (d: string, n = 0) => dayjs(d).add(n, 'day').format('ddd');
+type JobLike = { date: string; startTime?: string | null; endTime?: string | null };
+export const crossesMidnight = (j: JobLike) => !!(j.startTime && j.endTime && j.endTime <= j.startTime && j.endTime !== j.startTime);
+export const startsAfterMidnight = (j: JobLike) => !!(j.startTime && j.startTime < NIGHT_BEFORE) && !crossesMidnight(j);
+
+/** Time label that reads the way night work is talked about: "12:00 am (Fri night) – 6:00 am Sat", "until 7:00 am · from Fri 11:00 pm". */
+export function jobTimeLabel(e: { date: string; startTime?: string | null; endTime?: string | null; part?: NightPart; fromTime?: string }): string {
+  const s = e.startTime ? fmtTime(e.startTime) : '', en = e.endTime ? fmtTime(e.endTime) : '';
+  switch (e.part) {
+    case 'night-before': return `${s} (${dayName(e.date)} night)${en ? ` – ${en} ${dayName(e.date, 1)}` : ''}`;
+    case 'until': return `until ${en} · from ${dayName(e.date, -1)} ${e.fromTime ? fmtTime(e.fromTime) : 'night'}`;
+    case 'from-night': return `${s}${en ? ` – ${en}` : ''} · started ${dayName(e.date, -1)} night`;
+    case 'overnight': return `${s} – ${en} ${dayName(e.date, 1)}`;
+    default: return s ? `${s}${en ? ` – ${en}` : ''}` : '';
+  }
+}
+
+/**
+ * One day's job list with night work placed where it belongs: tomorrow's after-midnight starts at the bottom (as tonight),
+ * and yesterday's overnight jobs at the top ("until …"). Added entries are `ghost`s — not counted in hours or pay.
+ */
+export function withNightWork<T extends JobLike>(date: string, today: T[], yesterday: T[], tomorrow: T[]) {
+  type E = T & { part?: NightPart; ghost?: boolean; fromTime?: string; sortTime: string; key: string };
+  const out: E[] = [];
+  for (const j of today) out.push({ ...j, part: crossesMidnight(j) ? 'overnight' : startsAfterMidnight(j) ? 'from-night' : undefined, sortTime: j.startTime ?? '99', key: String((j as any).id) }); // eslint-disable-line @typescript-eslint/no-explicit-any
+  for (const j of yesterday) if (crossesMidnight(j)) out.push({ ...j, date, part: 'until', ghost: true, fromTime: j.startTime!, startTime: '00:00', sortTime: '00:00', key: `${(j as any).id}-until` }); // eslint-disable-line @typescript-eslint/no-explicit-any
+  for (const j of tomorrow) if (startsAfterMidnight(j)) out.push({ ...j, date, part: 'night-before', ghost: true, sortTime: `${24 + Number(j.startTime!.slice(0, 2))}:${j.startTime!.slice(3)}`, key: `${(j as any).id}-night` }); // eslint-disable-line @typescript-eslint/no-explicit-any
+  return out.sort((a, b) => a.sortTime.localeCompare(b.sortTime));
 }

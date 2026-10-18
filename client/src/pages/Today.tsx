@@ -13,7 +13,7 @@ import type { BillDue, Job, TravelDay } from '../api/types';
 import { SectionCard, LoadingBlock, ErrorBlock, WeekChange } from '../components/common';
 import SwipeAction from '../components/SwipeAction';
 import { HoursBar, hrs, type WorkHoursData } from './WorkHours';
-import { money, fmtDay, fmtShort, fmtTime, fmtDate, mapsUrl, routeGroups, localToday, addDays } from '../utils/format';
+import { money, fmtDay, fmtShort, fmtTime, fmtDate, mapsUrl, routeGroups, localToday, addDays, withNightWork } from '../utils/format';
 import { useAuth } from '../hooks/useAuth';
 import { useToast } from '../hooks/useToast';
 import { useInvalidateFinance } from '../hooks/useInvalidate';
@@ -40,17 +40,23 @@ export default function Today() {
   const travel = useQuery({ queryKey: ['travel', 'day', today], queryFn: () => get<{ enabled: boolean; day: TravelDay | null }>('/travel/day', { date: today }) });
   const hours = useQuery({ queryKey: ['work-hours'], queryFn: () => get<WorkHoursData>('/work-hours') });
   const next = useQuery({ queryKey: ['jobs', 'tomorrow', tomorrow], queryFn: () => get<{ items: Job[] }>('/jobs', { from: tomorrow, to: tomorrow }) });
+  const yesterday = addDays(today, -1);
+  const prev = useQuery({ queryKey: ['jobs', 'yesterday', yesterday], queryFn: () => get<{ items: Job[] }>('/jobs', { from: yesterday, to: yesterday }) });
   const goals = useQuery({ queryKey: ['assistant', 'goals'], queryFn: () => get<{ goals: { id: string; name: string; status: string; thisWeek: { stillToPut: number } }[]; spare: { amount: number } }>('/assistant/goals') });
   const [undo, setUndo] = useState<{ text: string; run: () => Promise<unknown> } | null>(null);
 
   if (dash.isLoading) return <LoadingBlock rows={6} height={72} />;
   if (dash.error || !dash.data) return <ErrorBlock error={dash.error} onRetry={dash.refetch} />;
   const d = dash.data;
-  const jobs: Job[] = [...d.today.jobs].filter((j: Job) => j.status !== 'cancelled').sort((a: Job, b: Job) => (a.startTime ?? '99').localeCompare(b.startTime ?? '99'));
+  const live = (js: Job[] | undefined) => (js ?? []).filter((j) => j.status !== 'cancelled');
+  // Night work: last night's overnight job ("until 7 am") at the top, tonight's after-midnight start at the bottom
+  const all = withNightWork(today, live(d.today.jobs), live(prev.data?.items), live(next.data?.items));
+  const jobs = all.filter((j) => !j.ghost);
   const left = jobs.filter((j) => j.status !== 'completed');
+  const tonight = all.filter((j) => j.part === 'night-before' && j.status !== 'completed');
   // The route covers the jobs still to do, so it never sends you back to one that is finished
   // Jobs more than an hour apart get their own route (a morning run and an evening job aren't one trip)
-  const routes = routeGroups((left.length ? left : jobs).map((j) => ({ startTime: j.startTime, endTime: j.endTime, hours: j.hoursWorked, address: j.address?.formatted })));
+  const routes = routeGroups([...(left.length ? left : jobs).filter((j) => j.part !== 'from-night'), ...tonight].map((j) => ({ startTime: j.sortTime, endTime: j.endTime, hours: j.hoursWorked, address: j.address?.formatted })));
   const tasks: any[] = d.today.tasks.filter((t: any) => t.status !== 'cancelled');
   const billsToday: BillDue[] = d.today.billsDue.filter((b: BillDue) => !b.paid);
   const billsSoon: BillDue[] = d.bills.upcoming.filter((b: BillDue) => b.dueDate > today && b.dueDate <= addDays(today, 7));
@@ -84,26 +90,28 @@ export default function Today() {
         <Grid size={{ xs: 12, lg: 7 }}>
           <Stack spacing={2}>
           <Box><SectionCard
-            title={jobs.length ? `Today’s work · ${jobs.length} job${jobs.length === 1 ? '' : 's'}` : 'Today’s work'}
+            title={jobs.length ? `Today’s work · ${jobs.length} job${jobs.length === 1 ? '' : 's'}${tonight.length ? ` + ${tonight.length} tonight` : ''}` : tonight.length ? 'Today’s work · tonight' : 'Today’s work'}
             subtitle={jobs.length ? [`${hrs(jobs.reduce((a, j) => a + jobHours(j), 0))}`, jobs.some((j) => j.amount) ? money(jobs.reduce((a, j) => a + (j.amount ?? 0), 0)) : '', km > 0 ? `${Math.round(km * 10) / 10} km driving` : '', left.length ? `${left.length} to go` : 'all done'].filter(Boolean).join(' · ') : undefined}
             action={routes.length > 0 ? <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap" justifyContent="flex-end">{routes.map((r, i) => (
               <Button key={i} size="small" variant={i === 0 ? 'contained' : 'outlined'} startIcon={<DirectionsIcon />} href={r.url ?? '#'} target="_blank" rel="noreferrer">
                 {routes.length > 1 ? `${r.startTime ? fmtTime(r.startTime) : `Route ${i + 1}`} · ${r.stops.length} stop${r.stops.length === 1 ? '' : 's'}` : r.stops.length > 1 ? 'Start route' : 'Directions'}
               </Button>))}</Stack> : undefined}
-            noPad={jobs.length > 0}>
-            {!jobs.length ? (
+            noPad={all.length > 0}>
+            {!all.length ? (
               <Box>
                 <Typography variant="body1" sx={{ mb: 0.5 }}>No work scheduled today.</Typography>
                 <Typography variant="body2" color="text.secondary">{d.work.upcoming?.[0] ? `Next: ${d.work.upcoming[0].clientName ?? 'a job'} on ${fmtDate(d.work.upcoming[0].date, 'dddd D MMM')}${d.work.upcoming[0].startTime ? ` at ${fmtTime(d.work.upcoming[0].startTime)}` : ''}.` : 'Nothing is booked yet.'}</Typography>
                 <Button sx={{ mt: 1.5 }} onClick={() => nav('/import')}>Paste or upload a schedule</Button>
               </Box>
-            ) : jobs.map((j, i) => {
+            ) : all.map((j, i) => {
               const done = j.status === 'completed';
               const row = (
                 <Stack direction="row" spacing={1.5} alignItems="flex-start" sx={{ px: 2, py: 1.5, opacity: done ? 0.6 : 1 }}>
                   <Box sx={{ width: 68, flexShrink: 0 }}>
-                    <Typography variant="body2" fontWeight={700} sx={{ fontVariantNumeric: 'tabular-nums' }}>{j.startTime ? fmtTime(j.startTime) : 'Any time'}</Typography>
-                    {j.endTime && <Typography variant="caption" color="text.secondary">to {fmtTime(j.endTime)}</Typography>}
+                    <Typography variant="body2" fontWeight={700} sx={{ fontVariantNumeric: 'tabular-nums' }}>{j.part === 'until' ? `until ${fmtTime(j.endTime)}` : j.startTime ? fmtTime(j.startTime) : 'Any time'}</Typography>
+                    {j.part === 'night-before' ? <Typography variant="caption" color="primary">tonight · to {fmtTime(j.endTime)} {dayjs(tomorrow).format('ddd')}</Typography>
+                      : j.part === 'until' ? <Typography variant="caption" color="text.secondary">from {fmtTime(j.fromTime)} last night</Typography>
+                      : j.endTime && <Typography variant="caption" color="text.secondary">to {fmtTime(j.endTime)}{j.part === 'overnight' ? ` ${dayjs(tomorrow).format('ddd')}` : ''}</Typography>}
                   </Box>
                   <Box sx={{ flex: 1, minWidth: 0 }}>
                     <Typography variant="body1" fontWeight={600} sx={{ textDecoration: done ? 'line-through' : undefined, cursor: 'pointer' }} onClick={() => nav(`/jobs?focus=${j.id}`)}>{j.clientName ?? j.title ?? 'Job'}</Typography>
@@ -113,12 +121,12 @@ export default function Today() {
                     {!!j.distanceKm && <Typography variant="caption" color="text.secondary" component="div">{j.distanceKm.toFixed(1)} km · {j.travelMinutes ?? 0} min drive from the stop before</Typography>}
                   </Box>
                   <Stack alignItems="flex-end" spacing={0.25} sx={{ flexShrink: 0 }}>
-                    {j.amount ? <Typography variant="body2" fontWeight={700}>{money(j.amount)}{j.amountEstimated ? ' est.' : ''}</Typography> : null}
+                    {j.amount && !j.ghost ? <Typography variant="body2" fontWeight={700}>{money(j.amount)}{j.amountEstimated ? ' est.' : ''}</Typography> : null}
                     <Tooltip title={done ? 'Completed' : 'Mark completed'}><span><IconButton aria-label={done ? 'Completed' : `Mark ${j.clientName ?? 'job'} completed`} disabled={done} onClick={() => complete(j)} color={done ? 'success' : 'default'}>{done ? <CheckCircleIcon /> : <CheckCircleOutlineIcon />}</IconButton></span></Tooltip>
                   </Stack>
                 </Stack>
               );
-              return <Box key={j.id}>{i > 0 && <Divider />}{done ? row : <SwipeAction label="Completed" onAction={() => complete(j)}>{row}</SwipeAction>}</Box>;
+              return <Box key={j.key}>{i > 0 && <Divider />}{done ? row : <SwipeAction label="Completed" onAction={() => complete(j)}>{row}</SwipeAction>}</Box>;
             })}
           </SectionCard></Box>
 

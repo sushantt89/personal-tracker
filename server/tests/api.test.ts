@@ -558,6 +558,26 @@ describe('reset everything', () => {
     await a.delete(`/api/jobs/${job.id}`); await a.delete(`/api/jobs/${other.id}`);
   });
 
+  it('lists night work on the evening before and overnight jobs on both days', async () => {
+    const b = request.agent(app);
+    await b.post('/api/auth/register').send({ name: 'Night', email: 'night@example.com', password: 'password123' }).expect(201);
+    const q = { today: '2026-10-10' };
+    const early = (await b.post('/api/jobs').query(q).send({ date: '2026-10-17', startTime: '00:00', endTime: '06:00', clientName: 'Night Office', amount: 150 }).expect(201)).body; // Sat 12am–6am
+    const over = (await b.post('/api/jobs').query(q).send({ date: '2026-10-16', startTime: '23:00', endTime: '07:00', clientName: 'Warehouse', amount: 200 }).expect(201)).body; // Fri 11pm–Sat 7am
+    await b.post('/api/jobs').query(q).send({ date: '2026-10-16', startTime: '09:00', endTime: '11:00', clientName: 'Morning House', amount: 60 }).expect(201);
+    const day = async (d: string) => (await b.get('/api/calendar').query({ ...q, from: d, to: d }).expect(200)).body.items.filter((e: any) => e.type === 'job');
+    const fri = await day('2026-10-16');
+    // Friday: morning job, the overnight job from 11pm, then Saturday's 12am start at the very end — not counted twice
+    expect(fri.map((e: any) => [e.title, e.part ?? null, !!e.ghost])).toEqual([['Morning House', null, false], ['Warehouse', 'overnight', false], ['Night Office', 'night-before', true]]);
+    expect(fri[2]).toMatchObject({ refId: early.id, startTime: '00:00', endTime: '06:00' });
+    expect(fri[2].amount).toBeUndefined();
+    const sat = await day('2026-10-17');
+    // Saturday: the overnight job until 7am, and its own 12am job marked as started Friday night
+    expect(sat.map((e: any) => [e.title, e.part, !!e.ghost])).toEqual([['Warehouse', 'until', true], ['Night Office', 'from-night', false]]);
+    expect(sat[0]).toMatchObject({ refId: over.id, startTime: '00:00', endTime: '07:00', fromTime: '23:00' });
+    expect(sat[1].amount).toBe(150);
+  });
+
   it('sends the parking receipt saved on a job along with its invoice', async () => {
     const { setEmailOverride } = await import('../src/services/email.js');
     const sent: any[] = [];

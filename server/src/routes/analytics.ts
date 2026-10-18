@@ -7,7 +7,8 @@ import { alertInbox, markAlerts } from '../services/alerts.js';
 import { userCtx } from '../utils/userCtx.js';
 import { parseBody } from '../middleware/validate.js';
 import { zDate, zOptId } from '../utils/zod.js';
-import { monthEnd, monthStart, monthKey, weekStart } from '../utils/dates.js';
+import { monthEnd, monthStart, monthKey, weekStart, addDays } from '../utils/dates.js';
+import { dayEntries } from '../services/nightShifts.js';
 import { Income, Expense, Job, Category, IncomeSource, Invoice, Task, Client, RecurringBill, DocumentModel } from '../models/index.js';
 import { round2, sum } from '../utils/money.js';
 import { toCsv } from '../utils/csv.js';
@@ -60,7 +61,8 @@ r.get('/calendar', async (req, res) => {
   const [google, tasks, jobs, bills, invoices] = await Promise.all([
     listGoogleEvents(userId, q.from, q.to),
     Task.find({ userId: uid, date: { $lte: q.to }, $or: [{ date: { $gte: q.from } }, { 'recurrence.frequency': { $ne: 'none' } }] }).lean(),
-    Job.find({ userId: uid, date: { $gte: q.from, $lte: q.to } }).lean(),
+    // A day either side, so night shifts that spill into the range are shown too
+    Job.find({ userId: uid, date: { $gte: addDays(q.from, -1), $lte: addDays(q.to, 1) } }).lean(),
     billsDue(userId, q.from, q.to),
     Invoice.find({ userId: uid, status: { $in: ['sent', 'draft'] }, dueDate: { $gte: q.from, $lte: q.to } }).lean(),
   ]);
@@ -70,11 +72,15 @@ r.get('/calendar', async (req, res) => {
       events.push({ id: `task-${t._id}-${d}`, type: 'task', refId: String(t._id), date: d, startTime: t.startTime, endTime: t.endTime, title: t.title, category: t.category, priority: t.priority, status: (t.occurrenceStatus as any)?.[d] ?? t.status, location: t.location, recurring: t.recurrence?.frequency !== 'none' });
     }
   }
-  for (const j of jobs) events.push({ id: `job-${j._id}`, type: 'job', refId: String(j._id), date: j.date, startTime: j.startTime, endTime: j.endTime, title: j.clientName || j.title || 'Job', amount: j.amount, status: j.status, location: j.address?.formatted });
+  for (const e of dayEntries(jobs as any[], q.from, q.to)) {
+    const j: any = e.job;
+    events.push({ id: `job-${j._id}${e.ghost ? `-${e.part}` : ''}`, type: 'job', refId: String(j._id), date: e.date, startTime: e.startTime, endTime: e.endTime, title: j.clientName || j.title || 'Job',
+      amount: e.ghost ? undefined : j.amount, status: j.status, location: j.address?.formatted, part: e.part, ghost: e.ghost || undefined, fromTime: e.fromTime, sortTime: e.sortTime });
+  }
   for (const b of bills) events.push({ id: `bill-${b.billId}-${b.dueDate}`, type: 'bill', refId: b.billId, date: b.dueDate, title: b.name, amount: b.amount, status: b.paid ? 'paid' : 'due' });
   for (const i of invoices) events.push({ id: `inv-${i._id}`, type: 'invoice', refId: String(i._id), date: i.dueDate, title: `Invoice ${i.number} due`, amount: i.total, status: effectiveStatus(i, today) });
   if (google) events.push(...google.items);
-  events.sort((a, b) => (a.date + (a.startTime ?? '')).localeCompare(b.date + (b.startTime ?? '')));
+  events.sort((a, b) => (a.date + (a.sortTime ?? a.startTime ?? '')).localeCompare(b.date + (b.sortTime ?? b.startTime ?? '')));
   // google: null = not connected (or switched off); otherwise how many of Google's own events are included
   res.json({ items: events, google: google ? { shown: google.items.length, error: google.error ?? null } : null });
 });

@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { MongoMemoryServer } from 'mongodb-memory-server';
 import mongoose from 'mongoose';
 import request from 'supertest';
@@ -11,6 +11,9 @@ const fake = createFakeGoogle();
 let flush: () => Promise<void>;
 
 beforeAll(async () => {
+  // These tests use early-October 2026 dates; pin the clock so 'the last 7 days' always includes them
+  vi.useFakeTimers({ toFake: ['Date'], shouldAdvanceTime: true });
+  vi.setSystemTime(new Date('2026-10-04T01:00:00Z'));
   mongo = await MongoMemoryServer.create();
   Object.assign(process.env, {
     MONGODB_URI: mongo.getUri(), JWT_SECRET: 'test-secret-test-secret-test-secret', NODE_ENV: 'test', UPLOAD_DIR: './tmp-test-uploads-g',
@@ -31,6 +34,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
+  vi.useRealTimers();
   await mongoose.disconnect();
   await mongo.stop();
   const fs = await import('node:fs/promises');

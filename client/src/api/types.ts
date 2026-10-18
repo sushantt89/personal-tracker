@@ -73,7 +73,8 @@ export interface InboxAlert extends Alert { key: string; read: boolean; firstSee
 export interface AlertInbox { items: InboxAlert[]; unread: number }
 export interface Insight { id: string; kind: string; tone: 'neutral' | 'positive' | 'attention'; text: string; value?: number }
 /** type 'google' = an event from your own Google Calendar, shown read-only */
-export interface CalendarEvent { id: string; type: 'task' | 'job' | 'bill' | 'invoice' | 'google'; link?: string; allDay?: boolean; refId: string; date: string; startTime?: string; endTime?: string; title: string; amount?: number; status?: string; location?: string; category?: string; priority?: string; recurring?: boolean }
+export interface CalendarEvent { id: string; type: 'task' | 'job' | 'bill' | 'invoice' | 'google'; link?: string; allDay?: boolean; refId: string; date: string; startTime?: string; endTime?: string; title: string; amount?: number; status?: string; location?: string; category?: string; priority?: string; recurring?: boolean;
+  /** night work: see jobTimeLabel */ part?: 'night-before' | 'until' | 'from-night' | 'overnight'; /** an extra listing of a job that belongs to the next/previous day — not counted */ ghost?: boolean; fromTime?: string; sortTime?: string }
 export interface List<T> { items: T[]; total: number }
 
 export interface ParsedJob {

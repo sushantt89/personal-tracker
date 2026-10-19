@@ -95,14 +95,23 @@ interface Header {
   amount?: number;
   hours?: number;
   ambiguousTime: boolean;
+  /** written as roughly that time: "10+am", "~10am", "10ish" */
+  approxTime?: boolean;
 }
 
 /** Detects a job header line such as "Andrew Dana - 10am ($30)" or "10:00am Sonia $25". */
 export function parseHeader(line: string): Header | null {
   if (isStreetLine(line)) return null;
+  const approx = /\d\s*\+|\d\s*[ap]\.?m\.?\s*(?:\+|-?ish)|\d\s*-?ish\b|~\s*\d|\b(?:approx(?:imately)?|around|about|after|roughly|circa)\s+\d/i.test(line);
   let rest = line
     // "12 noon", "noon", "midday" → 12pm
     .replace(/\b(?:12\s*)?(?:noon|midday)\b/i, '12pm')
+    // "Start around then" markers: "10+am", "11am+", "10ish", "~10am", "approx 10am", "after 10am" → the time itself
+    .replace(/(\d)\s*\+\s*(?=[ap]\.?m\b)/gi, '$1')
+    .replace(/(\d\s*[ap]\.?m\.?)\s*(?:\+|-?ish\b)/gi, '$1')
+    .replace(/(\d)\s*-?ish\b/gi, '$1')
+    .replace(/(\d)\s*\+(?=\s|\(|\$|$)/g, '$1')
+    .replace(/(?:~|≈|\b(?:approx(?:imately)?|around|about|after|roughly|circa)\s+)(?=\d)/gi, '')
     // "9-11am", "11 to 1pm": the first time borrows am/pm from the second (flipped when it would otherwise run backwards)
     .replace(/\b(\d{1,2})((?:[:.]\d{2})?)(\s*(?:[-–—]|to|until|till)\s*)(\d{1,2})((?:[:.]?\d{2})?)\s*(am|pm)\b/i, (_m, h1, m1, sep, h2, m2, mer) => {
       const a = Number(h1) % 12, b = Number(h2) % 12, pm = /p/i.test(mer);
@@ -164,7 +173,7 @@ export function parseHeader(line: string): Header | null {
   if (name.split(' ').length > 8) return null;
 
   if (startTime && !endTime && hours) endTime = addMinutes(startTime, Math.round(hours * 60));
-  return { clientName: name, startTime, endTime, amount, hours, ambiguousTime: ambiguous };
+  return { clientName: name, startTime, endTime, amount, hours, ambiguousTime: ambiguous && !approx, approxTime: approx };
 }
 
 function normaliseTask(part: string): string {
@@ -345,7 +354,7 @@ export function parseMessage(input: string, opts: ParseOptions): ParseResult {
         tasks: [],
         sourceText: line,
         confidence: 1,
-        warnings: header.ambiguousTime ? ['Time had no am/pm — please check'] : [],
+        warnings: header.approxTime ? ['Start time was given as roughly (e.g. “10+am”) — please check'] : header.ambiguousTime ? ['Time had no am/pm — please check'] : [],
       };
       // A date written on the header line itself overrides the schedule date
       const inline = findDate(line, opts.today);

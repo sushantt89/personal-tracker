@@ -204,6 +204,14 @@ Jo H - 12:30pm ($25)
     expect(h('Alex Stone - 9 ($40)')).toEqual(['Alex Stone', '09:00', undefined, 40]);
     expect(h('Alex Stone - 930 $40')).toEqual(['Alex Stone', '09:30', undefined, 40]);
     expect(parseHeader('Alex Stone - 0900 ($40)')?.ambiguousTime).toBe(true);
+    // "Start around then" times
+    expect(h('Blondie -  10+am ($30)')).toEqual(['Blondie', '10:00', undefined, 30]);
+    expect(h('Emil - 11+am ($35)')).toEqual(['Emil', '11:00', undefined, 35]);
+    expect(h('Alex Stone - 10am+ ($30)')).toEqual(['Alex Stone', '10:00', undefined, 30]);
+    expect(h('Alex Stone - ~10:30am ($30)')).toEqual(['Alex Stone', '10:30', undefined, 30]);
+    expect(h('Alex Stone - 10ish ($30)')).toEqual(['Alex Stone', '10:00', undefined, 30]);
+    expect(h('Alex Stone - after 2pm ($30)')).toEqual(['Alex Stone', '14:00', undefined, 30]);
+    expect(parseHeader('Blondie - 10+am ($30)')?.approxTime).toBe(true);
     for (const notHeader of ['Vacuum 3 bedrooms', 'Kitchen. 3 bathroom. Toilet next to laundry.', 'They have 2 dogs. Friendly and will bark for 2 minutes', 'Team = Sam, Lee and Kim', '53 Example Hill Road, Stirling']) expect(parseHeader(notHeader)).toBeNull();
   });
 });

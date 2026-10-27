@@ -78,6 +78,8 @@ const settingsSchema = new Schema(
         /** Turn work events in Google Calendar (a price in the title, or created by a work organiser) into jobs */
         importJobs: { type: Boolean, default: false },
         jobOrganizers: { type: [String], default: [] },
+        /** Other calendars to read (shown in the app, checked for work): e.g. a boss's calendar shared with you — its ID is often their email */
+        extraCalendars: { type: [String], default: [] },
         /** Contractor these calendar jobs are done under (pays you, gets the invoice) */
         jobContractorId: { type: Schema.Types.ObjectId, ref: 'Client' },
         jobIncomeSourceId: { type: Schema.Types.ObjectId, ref: 'IncomeSource' },

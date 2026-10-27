@@ -8,10 +8,10 @@ import { badRequest, conflict, notFound } from '../utils/httpError.js';
 import { zDate, zOptId } from '../utils/zod.js';
 import { audit } from '../services/audit.js';
 import { assertOwnedRefs, escapeRegex } from '../services/crud.js';
-import { computeTotals, effectiveStatus, nextInvoiceNumber, releaseInvoiceNumber, renderInvoicePdf } from '../services/invoices.js';
+import { computeTotals, effectiveStatus, nextInvoiceNumber, allocateInvoiceNumber, releaseInvoiceNumber, renderInvoicePdf } from '../services/invoices.js';
 import { userCtx } from '../utils/userCtx.js';
 import { addDays } from '../utils/dates.js';
-import { uploadInvoice, queueInvoiceUpload, queueDriveDelete } from '../services/google/drive.js';
+import { uploadInvoice, queueInvoiceUpload, queueDriveDelete, CashInvoiceError } from '../services/google/drive.js';
 import { queueCalendarSync, queueCalendarDelete } from '../services/google/calendar.js';
 import { googleApis } from '../services/google/client.js';
 import { queueTravelDay } from '../services/travel/index.js';
@@ -78,7 +78,9 @@ r.get('/', async (req, res) => {
 r.get('/next-number', async (req, res) => {
   const { today } = await userCtx(req);
   const date = typeof req.query.date === 'string' ? parseBody(zDate, req.query.date) : today;
-  res.json({ number: await nextInvoiceNumber(req.userId!, date, false) });
+  const clientId = typeof req.query.clientId === 'string' && /^[a-f0-9]{24}$/.test(req.query.clientId) ? req.query.clientId : undefined;
+  const clientName = typeof req.query.clientName === 'string' ? req.query.clientName.slice(0, 120) : undefined;
+  res.json({ number: await nextInvoiceNumber(req.userId!, date, false, { clientId, clientName }) });
 });
 
 /** Completed (or all) jobs not yet invoiced, for custom date range invoice generation. */
@@ -114,7 +116,7 @@ r.post('/', async (req, res) => {
   const jobIds = await prepare(req.userId!, data);
   if (data.number) {
     if (await Invoice.exists({ userId: req.userId, number: data.number })) throw conflict(`Invoice number ${data.number} already exists`);
-  } else data.number = await nextInvoiceNumber(req.userId!, data.issueDate);
+  } else Object.assign(data, await allocateInvoiceNumber(req.userId!, data.issueDate, true, { clientId: data.clientId, clientName: data.clientName }));
   const inv = await Invoice.create({ ...data, userId: req.userId });
   await linkRecords(req.userId!, inv, jobIds);
   if (inv.status === 'paid') await settleInvoice(req.userId!, inv, today);
@@ -235,9 +237,9 @@ r.post('/:id/duplicate', async (req, res) => {
   const src = await Invoice.findOne({ _id: req.params.id, userId: req.userId }).lean();
   if (!src) throw notFound('Invoice not found');
   const settings = await Settings.findOne({ userId: req.userId }).lean();
-  const number = await nextInvoiceNumber(req.userId!, today);
+  const { number, clientSeq } = await allocateInvoiceNumber(req.userId!, today, true, { clientId: src.clientId, clientName: src.clientName });
   const copy = await Invoice.create({
-    userId: req.userId, number, issueDate: today, dueDate: src.dueDate ? addDays(today, settings?.invoice?.paymentTermsDays ?? 7) : undefined,
+    userId: req.userId, number, clientSeq, issueDate: today, dueDate: src.dueDate ? addDays(today, settings?.invoice?.paymentTermsDays ?? 7) : undefined,
     incomeSourceId: src.incomeSourceId, clientId: src.clientId, clientName: src.clientName, billToType: src.billToType, clientAddress: src.clientAddress, clientEmail: src.clientEmail,
     // Job links are not copied: a job can only be invoiced once
     items: src.items.map((i) => ({ date: i.date, description: i.description, quantity: i.quantity, rate: i.rate, amount: i.amount })),
@@ -370,6 +372,7 @@ r.post('/:id/drive', async (req, res) => {
     const result = await uploadInvoice(req.userId!, inv._id);
     res.json({ uploaded: true, ...result });
   } catch (e) {
+    if (e instanceof CashInvoiceError) return res.status(400).json({ error: e.message });
     res.status(502).json({ error: `Upload to Google Drive failed: ${(e as Error).message}` });
   }
 });

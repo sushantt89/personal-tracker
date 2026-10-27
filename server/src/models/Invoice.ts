@@ -42,6 +42,8 @@ const invoiceSchema = new Schema(
     /** Last time the invoice was emailed from the app, and to whom */
     sentAt: Date,
     sentTo: { type: String, maxlength: 200 },
+    /** Number within this client's/contractor's invoices for the year, when the number format uses {cseq} ("oct_ken_3") */
+    clientSeq: Number,
     periodFrom: dateOpt,
     periodTo: dateOpt,
     uploadedDocumentId: ref('Document'), // for invoices uploaded rather than generated

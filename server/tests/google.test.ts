@@ -179,7 +179,8 @@ describe('Google integration (fake Google APIs)', () => {
     const folderCount = fake.folders().length;
     await a().post('/api/integrations/google/drive/setup').send({}).expect(200);
     expect(fake.folders().length).toBe(folderCount);
-    expect(fake.folders()).toContain('Personal Finance/Invoices/2026/October');
+    expect(fake.folders()).toContain('Personal Finance/Invoices/2026');
+    expect(fake.folders().some((f: string) => /Invoices\/2026\/October/.test(f))).toBe(false);
     expect(fake.folders()).toContain('Personal Finance/Receipts/2026');
     expect(fake.folders()).toContain('Personal Finance/Financial Documents');
 
@@ -192,7 +193,7 @@ describe('Google integration (fake Google APIs)', () => {
     await flush();
     let up = fake.uploaded();
     expect(up).toHaveLength(1);
-    expect(up[0].path).toBe('Personal Finance/Invoices/2026/October/INV-2026-0001 - Sparkle Co.pdf');
+    expect(up[0].path).toBe('Personal Finance/Invoices/2026/Sparkle Co/INV-2026-0001.pdf');
     // Editing replaces the same file (new version), never a second copy
     await a().put(`/api/invoices/${inv.id}`).send({ issueDate: '2026-10-05', dueDate: '2026-10-12', clientName: 'Sparkle Co', items: [{ description: 'Cleaning', quantity: 2, rate: 100 }] }).expect(200);
     await flush();
@@ -225,6 +226,30 @@ describe('Google integration (fake Google APIs)', () => {
     expect(gone.body.error).toContain('no longer stored');
   });
 
+  it('names invoices per client (oct_ken_1…) and keeps cash work out of Drive', async () => {
+    await a().patch('/api/settings').send({ invoice: { numberFormat: '{mon}_{client}_{cseq}' }, integrations: { googleDrive: { enabled: true } } }).expect(200);
+    const mk = async (clientName: string, issueDate: string, extra: any = {}) => (await a().post('/api/invoices').send({ issueDate, clientName, status: 'sent', items: [{ description: 'Work', quantity: 1, rate: 50 }], ...extra }).expect(201)).body;
+    const k1 = await mk('Kenji Lane', '2026-10-05'), k2 = await mk('Kenji Lane', '2026-10-20'), s1 = await mk('Sunny Cleaning Co', '2026-10-06'), k3 = await mk('Kenji Lane', '2026-11-02');
+    expect([k1.number, k2.number, s1.number, k3.number]).toEqual(['oct_kenji_1', 'oct_kenji_2', 'oct_sunny_1', 'nov_kenji_3']);
+    expect((await a().get('/api/invoices/next-number').query({ date: '2026-11-10', clientName: 'Kenji Lane' })).body.number).toBe('nov_kenji_4');
+    // A deleted one's number is used again
+    await a().delete(`/api/invoices/${k2.id}`).expect(200);
+    expect((await mk('Kenji Lane', '2026-11-12')).number).toBe('nov_kenji_2');
+    await flush();
+    // Drive: Invoices/<year>/<client>/<number>.pdf
+    expect(fake.uploaded().some((f: any) => f.path === 'Personal Finance/Invoices/2026/Kenji Lane/oct_kenji_1.pdf')).toBe(true);
+    expect(fake.uploaded().some((f: any) => f.path === 'Personal Finance/Invoices/2026/Sunny Cleaning Co/oct_sunny_1.pdf')).toBe(true);
+
+    // Cash work (jobs left out of Work hours) isn't saved to Drive, automatically or by the button
+    const job = (await a().post('/api/jobs').send({ date: '2026-10-07', clientName: 'Cash Corner', amount: 40, status: 'completed', excludeFromHours: true }).expect(201)).body;
+    const before = fake.uploaded().length;
+    const cash = await mk('Cash Corner', '2026-10-08', { items: [{ description: 'Cleaning', quantity: 1, rate: 40, jobId: job.id }] });
+    await flush();
+    expect(fake.uploaded().length).toBe(before);
+    expect((await a().post(`/api/invoices/${cash.id}/drive`).send({}).expect(400)).body.error).toMatch(/cash work/);
+    await a().patch('/api/settings').send({ invoice: { numberFormat: 'INV-{YYYY}-{SEQ}' } }).expect(200);
+  });
+
   it('removes the Drive copy when an invoice or receipt is deleted', async () => {
     await a().patch('/api/settings').send({ integrations: { googleDrive: { enabled: true } } }).expect(200);
     const before = fake.uploaded().length;
@@ -238,7 +263,7 @@ describe('Google integration (fake Google APIs)', () => {
     await a().delete(`/api/documents/${doc.id}`).expect(200);
     await flush();
     expect(fake.uploaded().length).toBe(before);
-    expect(fake.trashed()).toEqual(expect.arrayContaining(['bin-receipt.pdf', expect.stringContaining('Bin Test Co')]));
+    expect(fake.trashed()).toEqual(expect.arrayContaining(['bin-receipt.pdf', `${inv.number}.pdf`]));
     // A copy already removed from Drive by hand doesn't stop the delete or raise an error
     const inv2 = (await a().post('/api/invoices').send({ issueDate: '2026-10-06', clientName: 'Gone Co', items: [{ description: 'Work', quantity: 1, rate: 50 }] })).body;
     const { Invoice } = await import('../src/models/index.js');
@@ -404,6 +429,26 @@ describe('Google integration (fake Google APIs)', () => {
     await a().post('/api/integrations/google/calendar/import-jobs').send({});
     expect(await Job.countDocuments({ clientName: 'Site induction' })).toBe(0);
     await a().patch('/api/settings').send({ integrations: { googleCalendar: { importJobs: false } } }).expect(200);
+  });
+
+  it('reads a boss\'s calendar shared with you: shows its events and turns its work into jobs', async () => {
+    const { clearGoogleEventCache } = await import('../src/services/google/calendar.js');
+    const { Job } = await import('../src/models/index.js');
+    // The roster lives in the organiser's own calendar (shared with you), not in your main one; another listed calendar isn't shared at all
+    await a().patch('/api/settings').send({ integrations: { googleCalendar: { importJobs: false, showGoogleEvents: true, jobOrganizers: ['roster@example.com'], extraCalendars: ['not-shared@example.com'] } } }).expect(200);
+    fake.userCreates({ calendarId: 'roster@example.com', summary: 'Shared Office ($30)', organizer: { email: 'roster@example.com' }, location: '3 Example St, Unley SA 5061', start: { dateTime: '2026-10-19T23:30:00Z' }, end: { dateTime: '2026-10-20T00:30:00Z' } }); // Tue 20 Oct 10–11am
+    clearGoogleEventCache();
+    const cal = (await a().get('/api/calendar').query({ from: '2026-10-20', to: '2026-10-20' })).body;
+    expect(cal.items.filter((e: any) => e.type === 'google').map((e: any) => e.title)).toContain('Shared Office ($30)');
+    expect(cal.google.error).toBeNull();
+    // With importing on it becomes a job — and then shows once, as that job
+    await a().patch('/api/settings').send({ integrations: { googleCalendar: { importJobs: true } } }).expect(200);
+    expect((await a().post('/api/integrations/google/calendar/import-jobs').send({})).body.counts.created).toBe(1);
+    expect(await Job.findOne({ clientName: 'Shared Office' }).lean<any>()).toMatchObject({ date: '2026-10-20', startTime: '10:00', amount: 30 });
+    clearGoogleEventCache();
+    const cal2 = (await a().get('/api/calendar').query({ from: '2026-10-20', to: '2026-10-20' })).body.items;
+    expect(cal2.filter((e: any) => /Shared Office/.test(e.title)).map((e: any) => e.type)).toEqual(['job']);
+    await a().patch('/api/settings').send({ integrations: { googleCalendar: { importJobs: false, jobOrganizers: [], extraCalendars: [] } } }).expect(200);
   });
 
   it('sends email from the connected Google account once permission is given', async () => {

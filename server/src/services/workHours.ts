@@ -31,6 +31,13 @@ export interface HoursWindow { from: string; to: string; worked: number; schedul
 
 const employerOf = (j: any) => (j.workType === 'own' || !j.workType ? 'Own business' : j.contractorName || j.clientName || (j.workType === 'employee' ? 'Employer' : 'Contractor'));
 
+/** Work the user has marked as cash / not counted: a single job, or everything for an employer they've left out. */
+export async function cashJobTest(userId: string): Promise<(j: any) => boolean> {
+  const s = await workHoursSettings(userId);
+  const skipNames = new Set(s.excludeEmployers.map((x) => x.toLowerCase()));
+  return (j: any) => Boolean(j.excludeFromHours) || skipNames.has(employerOf(j).toLowerCase());
+}
+
 export async function workHours(userId: string, today: string, opts: { weeksBack?: number; weeksAhead?: number } = {}) {
   const s = await workHoursSettings(userId);
   const ws = weekStart(today);

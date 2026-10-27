@@ -231,6 +231,17 @@ export function eventToLocal(event: Event, tz: string): { date?: string; startTi
   return { date: s.date, startTime: s.time, endTime: e && e.date === s.date ? e.time : undefined };
 }
 
+/**
+ * Calendars to read: the main one, any listed in Settings, and the work organisers' own calendars (a boss who keeps the
+ * roster in their calendar and shares it with you). A calendar you can't open is skipped quietly.
+ */
+export function calendarsToRead(cal: any): string[] {
+  const main = cal?.calendarId || 'primary';
+  return [...new Set([main, ...(cal?.extraCalendars ?? []), ...(cal?.jobOrganizers ?? [])].map((c: string) => String(c).trim()).filter(Boolean))];
+}
+/** Errors that mean "you don't have this calendar" rather than "Google is down" */
+export const isNoAccess = (e: any) => [403, 404].includes(Number(e?.code ?? e?.status ?? e?.response?.status));
+
 export interface GoogleCalendarItem { id: string; type: 'google'; refId: string; date: string; startTime?: string; endTime?: string; title: string; location?: string; link?: string; allDay?: boolean }
 const googleCache = new Map<string, { at: number; items: GoogleCalendarItem[] }>();
 const addDay = (d: string, n: number) => { const x = new Date(`${d}T00:00:00Z`); x.setUTCDate(x.getUTCDate() + n); return x.toISOString().slice(0, 10); };
@@ -249,11 +260,22 @@ export async function listGoogleEvents(userId: string, from: string, to: string)
     const items: GoogleCalendarItem[] = [];
     let pageToken: string | undefined;
     const load = async () => {
+      const seen = new Set<string>();
+      for (const calendarId of calendarsToRead(c.cal)) {
+      pageToken = undefined;
       for (let page = 0; page < 4; page++) {
         // A day either side covers every timezone; the exact days are picked below in the user's own timezone
-        const r = await c.apis!.calendar.events.list({ calendarId: c.calendarId, timeMin: `${addDay(from, -1)}T00:00:00Z`, timeMax: `${addDay(to, 2)}T00:00:00Z`, singleEvents: true, orderBy: 'startTime', maxResults: 250, pageToken });
+        let r;
+        try {
+          r = await c.apis!.calendar.events.list({ calendarId, timeMin: `${addDay(from, -1)}T00:00:00Z`, timeMax: `${addDay(to, 2)}T00:00:00Z`, singleEvents: true, orderBy: 'startTime', maxResults: 250, pageToken });
+        } catch (e) {
+          if (calendarId !== (c.calendarId || 'primary') && isNoAccess(e)) break; // not shared with you: skip it
+          throw e;
+        }
         for (const ev of r.data.items ?? []) {
           if (!ev.id || ev.status === 'cancelled' || ev.extendedProperties?.private?.ptRef) continue; // ours are already on the calendar as jobs, tasks and bills
+          if (seen.has(ev.id)) continue; // the same event in two calendars (e.g. an invite and the organiser's copy)
+          seen.add(ev.id);
           const base = { type: 'google' as const, refId: ev.id, title: ev.summary || '(No title)', location: ev.location ?? undefined, link: ev.htmlLink ?? undefined };
           if (ev.start?.date) {
             // All-day, possibly several days: one entry per day (the end date is exclusive)
@@ -266,6 +288,7 @@ export async function listGoogleEvents(userId: string, from: string, to: string)
         }
         pageToken = r.data.nextPageToken ?? undefined;
         if (!pageToken) break;
+      }
       }
     };
     let timer: NodeJS.Timeout | undefined;

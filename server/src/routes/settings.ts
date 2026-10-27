@@ -20,7 +20,7 @@ const settingsPatch = z.object({
   invoice: z.object({
     businessName: z.string().max(200), abn: z.string().max(30), address: z.string().max(500), email: z.string().max(200), phone: z.string().max(40),
     paymentDetails: z.string().max(2000),
-    numberFormat: z.string().max(60).refine((f) => f.includes('{SEQ'), 'Format must include {SEQ}'),
+    numberFormat: z.string().max(60).refine((f) => f.includes('{SEQ') || /\{cseq\}/i.test(f), 'Format must include {SEQ} (one running number) or {cseq} (a number per client)'),
     nextSequence: z.coerce.number().int().min(1).max(1_000_000), paymentTermsDays: z.coerce.number().int().min(0).max(365),
     defaultNotes: z.string().max(2000), gstRegistered: z.boolean(), gstRate: z.coerce.number().min(0).max(100),
     logoDataUrl: z.string().max(400_000).refine((s) => s === '' || /^data:image\/(png|jpe?g);base64,/.test(s), 'Logo must be a PNG or JPEG'),
@@ -39,7 +39,7 @@ const settingsPatch = z.object({
   integrations: z.object({
     googleDrive: z.object({ enabled: z.boolean(), rootFolderName: z.string().trim().min(1).max(120), autoUploadInvoices: z.boolean(), autoUploadDocuments: z.boolean() }).partial(),
     googleCalendar: z.object({ enabled: z.boolean(), calendarId: z.string().max(200), syncTypes: z.array(z.enum(['job', 'appointment', 'bill', 'task', 'event', 'invoice'])), twoWay: z.boolean(), showGoogleEvents: z.boolean(),
-      importJobs: z.boolean(), jobOrganizers: z.array(z.string().trim().toLowerCase().email('Enter a valid email address')).max(10), jobContractorId: zOptId, jobIncomeSourceId: zOptId }).partial(),
+      importJobs: z.boolean(), jobOrganizers: z.array(z.string().trim().toLowerCase().email('Enter a valid email address')).max(10), jobContractorId: zOptId, jobIncomeSourceId: zOptId, extraCalendars: z.array(z.string().trim().min(3).max(200)).max(10) }).partial(),
   }).partial().optional(),
 });
 
@@ -87,7 +87,7 @@ r.patch('/settings', async (req, res) => {
 r.get('/settings/invoice-number-preview', async (req, res) => {
   const format = typeof req.query.format === 'string' ? req.query.format : 'INV-{YYYY}-{SEQ}';
   const seq = Number(req.query.seq) || 1;
-  res.json({ preview: formatInvoiceNumber(format, seq, new Date().toISOString().slice(0, 10)) });
+  res.json({ preview: formatInvoiceNumber(format, seq, new Date().toISOString().slice(0, 10), { client: typeof req.query.client === 'string' ? req.query.client : 'Ken', cseq: 1 }) });
 });
 
 const budgetSchema = z.object({

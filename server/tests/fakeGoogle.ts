@@ -16,12 +16,15 @@ export function createFakeGoogle() {
       insert: async ({ requestBody }: any) => { maybeFail(); const e = { ...requestBody, id: id('evt'), status: 'confirmed', updated: new Date().toISOString() }; events.set(e.id, e); return { data: e }; },
       update: async ({ eventId, requestBody }: any) => { maybeFail(); if (!events.has(eventId)) throw notFound(); const e = { ...requestBody, id: eventId, status: 'confirmed', updated: new Date().toISOString() }; events.set(eventId, e); return { data: e }; },
       delete: async ({ eventId }: any) => { maybeFail(); if (!events.delete(eventId)) throw notFound(); return { data: {} }; },
-      list: async ({ privateExtendedProperty, updatedMin, showDeleted, timeMin, timeMax }: any) => {
+      list: async ({ calendarId, privateExtendedProperty, updatedMin, showDeleted, timeMin, timeMax }: any) => {
         maybeFail();
         if (!privateExtendedProperty) {
           // Plain listing of a time window, as used to show the person's own Google events
           const at = (e: any, k: 'start' | 'end') => e[k]?.dateTime ?? `${e[k]?.date}T00:00:00Z`;
-          const inWindow = [...events.values()].filter((e) => (!timeMax || at(e, 'start') < timeMax) && (!timeMin || at(e, 'end') > timeMin));
+          // Each event lives in one calendar ('primary' unless the test says otherwise); a calendar nobody shared → 404
+          const cal = calendarId ?? 'primary';
+          if (cal !== 'primary' && ![...events.values()].some((e) => e.calendarId === cal)) throw notFound();
+          const inWindow = [...events.values()].filter((e) => (e.calendarId ?? 'primary') === cal && (!timeMax || at(e, 'start') < timeMax) && (!timeMin || at(e, 'end') > timeMin));
           return { data: { items: inWindow.sort((a, b) => at(a, 'start').localeCompare(at(b, 'start'))) } };
         }
         const [k, v] = String(privateExtendedProperty?.[0] ?? '').split('=');

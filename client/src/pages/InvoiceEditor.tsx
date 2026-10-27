@@ -52,8 +52,10 @@ export default function InvoiceEditor() {
   const [uploading, setUploading] = useState(false);
   const sources = useIncomeSources();
   const existing = useQuery({ queryKey: ['invoices', 'one', id], queryFn: () => get<Invoice>(`/invoices/${id}`), enabled: !!id });
-  const nextNumber = useQuery({ queryKey: ['invoices', 'next-number'], queryFn: () => get<{ number: string }>('/invoices/next-number'), enabled: !id });
   const [form, setForm] = useState<Form | null>(null);
+  // The next number can depend on the client and month ("oct_ken_3")
+  const nnKey = { date: form?.issueDate || undefined, clientId: form?.clientId || undefined, clientName: form?.clientName || undefined };
+  const nextNumber = useQuery({ queryKey: ['invoices', 'next-number', nnKey], queryFn: () => get<{ number: string }>('/invoices/next-number', nnKey), enabled: !id });
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [preview, setPreview] = useState(false);

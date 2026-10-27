@@ -1,6 +1,7 @@
 import { Readable } from 'node:stream';
 import crypto from 'node:crypto';
-import { GoogleAccount, Settings, Invoice, DocumentModel, User } from '../../models/index.js';
+import { GoogleAccount, Settings, Invoice, DocumentModel, User, Job } from '../../models/index.js';
+import { cashJobTest } from '../workHours.js';
 import { googleApis, isNotFound, recordGoogleError, type GoogleApis } from './client.js';
 import { renderInvoicePdf } from '../invoices.js';
 import { storage } from '../storage.js';
@@ -64,6 +65,13 @@ export async function uploadOrUpdate(userId: string, apis: GoogleApis, input: Up
   if (input.existingFileId) {
     try {
       const r = await apis.drive.files.update({ fileId: input.existingFileId, requestBody: { name: input.name, appProperties: { sha256, ptApp: 'personal-tracker' } }, media: media(), fields: 'id, webViewLink' });
+      // Saved before in another folder (e.g. the old month folders): move it to where it belongs now
+      try {
+        const folderId = await ensureFolderPath(userId, apis, input.folder);
+        const meta = await apis.drive.files.get({ fileId: input.existingFileId, fields: 'parents' });
+        const parents: string[] = (meta.data as any).parents ?? [];
+        if (parents.length && !parents.includes(folderId)) await apis.drive.files.update({ fileId: input.existingFileId, addParents: folderId, removeParents: parents.join(','), fields: 'id' } as any);
+      } catch { /* the file is still saved; it just stays where it was */ }
       return { fileId: r.data.id!, link: r.data.webViewLink ?? `https://drive.google.com/file/d/${r.data.id}/view` };
     } catch (e) {
       if (!isNotFound(e)) throw e;
@@ -82,17 +90,34 @@ const yearMonth = (date?: string | null) => {
   return { year: d.slice(0, 4), month: MONTHS[Number(d.slice(5, 7)) - 1] };
 };
 
+/** An invoice whose jobs are all cash work (left out of Work hours) — not saved to Google Drive. */
+export async function isCashInvoice(userId: string, inv: any): Promise<boolean> {
+  const ids = [...new Set((inv.items ?? []).map((i: any) => i.jobId && String(i.jobId)).filter(Boolean))];
+  if (!ids.length) return false;
+  const jobs = await Job.find({ userId, _id: { $in: ids } }).select('excludeFromHours workType clientName contractorName').lean();
+  if (!jobs.length) return false;
+  const cash = await cashJobTest(userId);
+  return jobs.every(cash);
+}
+
+/** Drive folder for an invoice's client or contractor, e.g. "Ken Leong" (characters Drive dislikes removed). */
+const folderName = (s?: string | null) => (s ?? '').replace(/[\\/:*?"<>|]/g, '-').replace(/\s+/g, ' ').trim().slice(0, 100) || 'Other';
+
+export class CashInvoiceError extends Error {}
+
 export async function uploadInvoice(userId: string, invoiceId: unknown) {
   const apis = await googleApis(userId);
   if (!apis) throw new Error('Google Drive is not connected');
   const inv = await Invoice.findOne({ _id: invoiceId, userId }).lean<any>();
   if (!inv) throw new Error('Invoice not found');
+  if (await isCashInvoice(userId, inv)) throw new CashInvoiceError('This invoice is for cash work, so it isn’t saved to Google Drive.');
   const [settings, user] = await Promise.all([Settings.findOne({ userId }).lean(), User.findById(userId).lean()]);
   const pdf = await renderInvoicePdf(inv, settings, user?.currency ?? 'AUD');
-  const { year, month } = yearMonth(inv.issueDate);
+  const { year } = yearMonth(inv.issueDate);
   try {
+    // Invoices/<year>/<client or contractor>/<number>.pdf
     const r = await uploadOrUpdate(userId, apis, {
-      folder: ['Invoices', year, month], name: `${inv.number} - ${inv.clientName}.pdf`.replace(/[\\/:*?"<>|]/g, '-'), mimeType: 'application/pdf', data: pdf, existingFileId: inv.sync?.googleDriveFileId,
+      folder: ['Invoices', year, folderName(inv.clientName)], name: `${inv.number}.pdf`.replace(/[\\/:*?"<>|]/g, '-'), mimeType: 'application/pdf', data: pdf, existingFileId: inv.sync?.googleDriveFileId,
     });
     await Invoice.updateOne({ _id: inv._id }, { $set: { 'sync.googleDriveFileId': r.fileId, 'sync.googleDriveLink': r.link, 'sync.syncedAt': new Date() }, $unset: { 'sync.syncError': 1 } });
     return r;
@@ -111,7 +136,7 @@ export async function uploadDocument(userId: string, docId: unknown) {
   if (doc.sync?.googleDriveFileId) return { fileId: doc.sync.googleDriveFileId, link: doc.sync.googleDriveLink };
   const data = await storage.read(doc.storageKey);
   const { year, month } = yearMonth(doc.date);
-  const folder = doc.kind === 'receipt' ? ['Receipts', year] : doc.kind === 'invoice' ? ['Invoices', year, month] : ['Financial Documents'];
+  const folder = doc.kind === 'receipt' ? ['Receipts', year] : doc.kind === 'invoice' ? ['Invoices', year, 'Uploaded'] : ['Financial Documents'];
   try {
     const r = await uploadOrUpdate(userId, apis, { folder, name: doc.originalName || doc.title, mimeType: doc.mimeType || 'application/octet-stream', data });
     await DocumentModel.updateOne({ _id: doc._id }, { $set: { 'sync.googleDriveFileId': r.fileId, 'sync.googleDriveLink': r.link, 'sync.syncedAt': new Date() }, $unset: { 'sync.syncError': 1 } });
@@ -153,7 +178,7 @@ export async function setupDriveFolders(userId: string) {
   const apis = await googleApis(userId);
   if (!apis) throw new Error('Google Drive is not connected');
   const year = new Date().getFullYear().toString();
-  for (const m of MONTHS) await ensureFolderPath(userId, apis, ['Invoices', year, m]);
+  await ensureFolderPath(userId, apis, ['Invoices', year]); // a folder per client/contractor is added inside as invoices are saved
   await ensureFolderPath(userId, apis, ['Receipts', year]);
   await ensureFolderPath(userId, apis, ['Financial Documents']);
   const rootId = await ensureFolderPath(userId, apis, []);
@@ -174,6 +199,8 @@ export function queueInvoiceUpload(userId: string, invoiceId: unknown) {
     const inv = await Invoice.findOne({ _id: invoiceId, userId }).select('status').lean();
     if (!inv || !['sent', 'paid'].includes(inv.status)) return;
     if (!(await googleApis(userId))) return;
+    const full = await Invoice.findOne({ _id: invoiceId, userId }).lean();
+    if (full && (await isCashInvoice(userId, full))) return; // cash work stays out of Drive
     await uploadInvoice(userId, invoiceId);
   });
 }

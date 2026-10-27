@@ -340,8 +340,13 @@ function InvoiceTab({ settings }: { settings: Settings }) {
       <Grid size={{ xs: 12, md: 6 }}>
         <SectionCard title="Numbering & defaults">
           <Stack spacing={2}>
-            {t('numberFormat', 'Invoice number format', { helperText: `Tokens: {YYYY} {YY} {MM} {SEQ} {SEQ:3}. Next: ${preview || '…'}` })}
-            <TextField type="number" label="Next sequence number" value={f.nextSequence} onChange={(e) => setF({ ...f, nextSequence: Number(e.target.value) })} />
+            {t('numberFormat', 'Invoice number format', { helperText: `One running number: {YYYY} {YY} {MM} {SEQ} {SEQ:3}. Per client: {mon} (oct) {client} (first word of the name) {cseq} (1, 2, 3… for each client, from 1 each year). Next: ${preview || '…'}` })}
+            <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+              <Typography variant="caption" color="text.secondary" sx={{ alignSelf: 'center' }}>Quick pick:</Typography>
+              <Button size="small" variant={f.numberFormat === '{mon}_{client}_{cseq}' ? 'contained' : 'outlined'} onClick={() => setF({ ...f, numberFormat: '{mon}_{client}_{cseq}' })}>oct_ken_1 (per client)</Button>
+              <Button size="small" variant={f.numberFormat === 'INV-{YYYY}-{SEQ}' ? 'contained' : 'outlined'} onClick={() => setF({ ...f, numberFormat: 'INV-{YYYY}-{SEQ}' })}>INV-2026-0001</Button>
+            </Stack>
+            {!/\{cseq\}/i.test(f.numberFormat) && <TextField type="number" label="Next sequence number" value={f.nextSequence} onChange={(e) => setF({ ...f, nextSequence: Number(e.target.value) })} />}
             <TextField type="number" label="Default payment terms (days)" value={f.paymentTermsDays} onChange={(e) => setF({ ...f, paymentTermsDays: Number(e.target.value) })} />
             {t('defaultNotes', 'Default invoice notes', { multiline: true })}
             <FormControlLabel control={<Switch checked={f.gstRegistered} onChange={(e) => setF({ ...f, gstRegistered: e.target.checked })} />} label="Registered for GST" />
@@ -367,6 +372,8 @@ function IntegrationsTab({ settings }: { settings: Settings }) {
   const confirm = useConfirm();
   const [cal, setCal] = useState(settings.integrations.googleCalendar);
   const [organisers, setOrganisers] = useState((settings.integrations.googleCalendar.jobOrganizers ?? []).join(', '));
+  const [extraCals, setExtraCals] = useState((settings.integrations.googleCalendar.extraCalendars ?? []).join(', '));
+  const list = (v: string) => v.split(/[,;\s]+/).map((x) => x.trim()).filter(Boolean);
   const contractors = (useClients().data ?? []).filter((c) => c.type === 'contractor');
   const sources = useIncomeSources().data ?? [];
   const [drive, setDrive] = useState(settings.integrations.googleDrive);
@@ -473,6 +480,11 @@ function IntegrationsTab({ settings }: { settings: Settings }) {
                 </Stack>
               )}
             </Box>
+            <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} alignItems={{ sm: 'flex-start' }}>
+              <TextField sx={{ flex: 1, maxWidth: 520 }} label="Other calendars to read" value={extraCals} onChange={(e) => setExtraCals(e.target.value)} placeholder="boss@example.com"
+                helperText="If your boss keeps jobs in their own calendar shared with you, add it here (its ID is usually their email; Google Calendar → the calendar’s Settings → Integrate calendar). The work organisers’ calendars below are read automatically. Separate with commas." />
+              <Button variant="outlined" sx={{ mt: { sm: 1 } }} disabled={busy === 'cals'} onClick={() => run('cals', async () => { const next = { ...cal, extraCalendars: list(extraCals) }; await patch('/settings', { integrations: { googleCalendar: next } }); setCal(next); return 'Saved — those calendars’ events now show in the app'; })}>Save</Button>
+            </Stack>
             <TextField label="Calendar ID" value={cal.calendarId} onChange={(e) => setCal({ ...cal, calendarId: e.target.value })} helperText="'primary' is your main calendar. To use a separate calendar, paste its ID from Google Calendar → Settings → Integrate calendar." sx={{ maxWidth: 520 }} />
             <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
               <Button variant="outlined" onClick={() => saveCal()}>Save calendar settings</Button>

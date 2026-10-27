@@ -2,21 +2,63 @@ import PDFDocument from 'pdfkit';
 import { Invoice, Settings } from '../models/index.js';
 import { round2 } from '../utils/money.js';
 
-export function formatInvoiceNumber(format: string, seq: number, date: string): string {
+const MONTHS = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
+/** "Ken Leong" → "ken", "Sparkle Cleaning Co" → "sparkle": the short name used in per-client invoice numbers. */
+export const clientShortName = (name?: string | null) => (name ?? '').trim().split(/\s+/)[0]?.toLowerCase().replace(/[^a-z0-9]/g, '') || 'client';
+export const usesClientSeq = (format: string) => /\{cseq\}/i.test(format);
+
+/**
+ * Tokens: {YYYY} {YY} {MM} {SEQ} {SEQ:3} (one running number) — or {mon}/{MON}/{Mon} (oct/OCT/Oct), {client}/{Client}
+ * (first word of the client's name) and {cseq} (1, 2, 3… for each client or contractor, starting again each year).
+ */
+export function formatInvoiceNumber(format: string, seq: number, date: string, extra: { client?: string | null; cseq?: number } = {}): string {
+  const mon = MONTHS[Number(date.slice(5, 7)) - 1] ?? 'jan';
+  const short = clientShortName(extra.client);
   return format
     .replace(/\{YYYY\}/g, date.slice(0, 4))
     .replace(/\{YY\}/g, date.slice(2, 4))
     .replace(/\{MM\}/g, date.slice(5, 7))
+    .replace(/\{mon\}/g, mon).replace(/\{MON\}/g, mon.toUpperCase()).replace(/\{Mon\}/g, mon[0].toUpperCase() + mon.slice(1))
+    .replace(/\{client\}/g, short).replace(/\{CLIENT\}/g, short.toUpperCase()).replace(/\{Client\}/g, short[0].toUpperCase() + short.slice(1))
+    .replace(/\{cseq\}/gi, String(extra.cseq ?? 1))
     .replace(/\{SEQ(?::(\d))?\}/g, (_, w) => String(seq).padStart(w ? Number(w) : 4, '0'));
+}
+
+/** The lowest unused number (1, 2, 3…) among this client's invoices for the year — a deleted invoice's number is used again. */
+export async function nextClientSeq(userId: string, year: string, client: { clientId?: any; clientName?: string | null }): Promise<number> {
+  const who = client.clientId ? { clientId: client.clientId } : { clientName: new RegExp(`^${(client.clientName ?? '').trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') };
+  const used = new Set((await Invoice.find({ userId, ...who, issueDate: { $regex: `^${year}-` }, clientSeq: { $gte: 1 } }).select('clientSeq').lean()).map((i: any) => i.clientSeq));
+  let n = 1;
+  while (used.has(n)) n++;
+  return n;
 }
 
 /**
  * Reserves the next invoice number for a user. Numbers freed by deleting an invoice are reused first (lowest first),
  * then the counter carries on. Atomic, and never returns a number an existing invoice already has.
  */
-export async function nextInvoiceNumber(userId: string, issueDate: string, reserve = true): Promise<string> {
-  const fmt = (s: any, seq: number) => formatInvoiceNumber(s?.invoice?.numberFormat || 'INV-{YYYY}-{SEQ}', seq, issueDate); // eslint-disable-line @typescript-eslint/no-explicit-any
+export async function nextInvoiceNumber(userId: string, issueDate: string, reserve = true, client: { clientId?: any; clientName?: string | null } = {}): Promise<string> {
+  return (await allocateInvoiceNumber(userId, issueDate, reserve, client)).number;
+}
+
+/** Like nextInvoiceNumber, also returning the per-client counter when the format uses {cseq}. */
+export async function allocateInvoiceNumber(userId: string, issueDate: string, reserve = true, client: { clientId?: any; clientName?: string | null } = {}): Promise<{ number: string; clientSeq?: number }> {
   const first = await Settings.findOne({ userId }).lean();
+  const format = first?.invoice?.numberFormat || 'INV-{YYYY}-{SEQ}';
+  if (usesClientSeq(format)) {
+    // Per client / contractor: oct_ken_1, oct_ken_2, nov_ken_3 … starting again at 1 each year
+    let n = await nextClientSeq(userId, issueDate.slice(0, 4), client);
+    for (let i = 0; i < 50; i++, n++) {
+      const number = formatInvoiceNumber(format, 0, issueDate, { client: client.clientName, cseq: n });
+      if (!(await Invoice.exists({ userId, number }))) return { number, clientSeq: n };
+    }
+    throw new Error('Could not allocate an invoice number');
+  }
+  return { number: await nextSequenceNumber(userId, issueDate, reserve, first) };
+}
+
+async function nextSequenceNumber(userId: string, issueDate: string, reserve: boolean, first: any): Promise<string> { // eslint-disable-line @typescript-eslint/no-explicit-any
+  const fmt = (s: any, seq: number) => formatInvoiceNumber(s?.invoice?.numberFormat || 'INV-{YYYY}-{SEQ}', seq, issueDate); // eslint-disable-line @typescript-eslint/no-explicit-any
   const freed = [...new Set<number>(first?.freedInvoiceSequences ?? [])].filter((n) => n < (first?.invoice?.nextSequence ?? 1)).sort((x, y) => x - y);
   for (const seq of freed) {
     const number = fmt(first, seq);
@@ -42,6 +84,7 @@ export async function releaseInvoiceNumber(userId: string, number: string, issue
   const s = await Settings.findOne({ userId }).lean();
   const next = s?.invoice?.nextSequence ?? 1;
   const format = s?.invoice?.numberFormat || 'INV-{YYYY}-{SEQ}';
+  if (usesClientSeq(format)) return; // per-client numbers reuse gaps by themselves
   // Work out which sequence number this was (hand-typed numbers that don't fit the format are simply not tracked)
   for (let seq = next - 1; seq >= Math.max(1, next - 2000); seq--) {
     if (formatInvoiceNumber(format, seq, issueDate) !== number) continue;

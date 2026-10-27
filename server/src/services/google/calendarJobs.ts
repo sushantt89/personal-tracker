@@ -1,7 +1,7 @@
 import type { calendar_v3 } from '@googleapis/calendar';
 import { Job, Settings, User, Client } from '../../models/index.js';
 import { googleApis, recordGoogleError } from './client.js';
-import { eventToLocal } from './calendar.js';
+import { eventToLocal, calendarsToRead, isNoAccess } from './calendar.js';
 import { analyseJobText, splitTitlePrice, parseAddress, formatAddress, isStreetLine, isInstructionLine } from '../parser/index.js';
 import { resolveClient, applyWorkArrangement } from '../clients.js';
 import { createIncomeForJob, syncJobIncome } from '../../routes/resources.js';
@@ -86,12 +86,21 @@ export async function importCalendarJobs(userId: string, opts: { force?: boolean
   const contractor = cal.jobContractorId ? await Client.findOne({ _id: cal.jobContractorId, userId }).lean() : null;
   const { queueTravelDay } = await import('../travel/index.js');
 
+  const seen = new Set<string>();
   try {
+    for (const calendarId of calendarsToRead(cal)) {
     let pageToken: string | undefined;
     for (let page = 0; page < 8; page++) {
-      const r = await apis.calendar.events.list({ calendarId: cal.calendarId || 'primary', timeMin: `${addDays(from, -1)}T00:00:00Z`, timeMax: `${addDays(to, 1)}T00:00:00Z`, singleEvents: true, showDeleted: true, maxResults: 250, pageToken });
+      let r;
+      try {
+        r = await apis.calendar.events.list({ calendarId, timeMin: `${addDays(from, -1)}T00:00:00Z`, timeMax: `${addDays(to, 1)}T00:00:00Z`, singleEvents: true, showDeleted: true, maxResults: 250, pageToken });
+      } catch (e) {
+        if (calendarId !== (cal.calendarId || 'primary') && isNoAccess(e)) break; // a calendar that isn't shared with you
+        throw e;
+      }
       for (const ev of r.data.items ?? []) {
-        if (!ev.id || ignored.has(ev.id)) continue;
+        if (!ev.id || ignored.has(ev.id) || seen.has(ev.id)) continue;
+        seen.add(ev.id);
         const existing = await Job.findOne({ userId, 'importedFrom.eventId': ev.id });
         if (ev.status === 'cancelled') {
           if (existing && !['completed', 'cancelled'].includes(existing.status)) {
@@ -153,6 +162,7 @@ export async function importCalendarJobs(userId: string, opts: { force?: boolean
       }
       pageToken = r.data.nextPageToken ?? undefined;
       if (!pageToken) break;
+    }
     }
   } catch (e) {
     await recordGoogleError(userId, e, 'Importing jobs from Google Calendar');

@@ -134,6 +134,12 @@ r.post('/calendar/sync', requireAuth, async (req, res) => {
   }
 });
 
+/** Turn work events in Google Calendar into jobs now (it also happens on its own every few minutes). */
+r.post('/calendar/import-jobs', requireAuth, async (req, res) => {
+  const { importCalendarJobs } = await import('../services/google/calendarJobs.js');
+  res.json({ counts: await importCalendarJobs(req.userId!, { force: true }) });
+});
+
 r.post('/drive/setup', requireAuth, async (req, res) => {
   try {
     res.json(await setupDriveFolders(req.userId!));

@@ -65,7 +65,7 @@ export interface Settings {
   work?: WorkSettings;
   notifications: { billReminders: boolean; billReminderDays: number; invoiceReminders: boolean; jobReminders: boolean; budgetAlerts: boolean; taskReminders: boolean; emailEnabled: boolean; emailHour: number; pushEnabled: boolean; inAppPopups?: boolean };
   invoice: { businessName: string; abn: string; address: string; email: string; phone: string; paymentDetails: string; numberFormat: string; nextSequence: number; paymentTermsDays: number; defaultNotes: string; gstRegistered: boolean; gstRate: number; logoDataUrl: string };
-  integrations: { googleDrive: { enabled: boolean; rootFolderName: string; rootFolderId?: string; autoUploadInvoices: boolean; autoUploadDocuments: boolean }; googleCalendar: { enabled: boolean; calendarId: string; syncTypes: string[]; twoWay?: boolean; showGoogleEvents?: boolean } };
+  integrations: { googleDrive: { enabled: boolean; rootFolderName: string; rootFolderId?: string; autoUploadInvoices: boolean; autoUploadDocuments: boolean }; googleCalendar: { enabled: boolean; calendarId: string; syncTypes: string[]; twoWay?: boolean; showGoogleEvents?: boolean; importJobs?: boolean; jobOrganizers?: string[]; jobContractorId?: string | null; jobIncomeSourceId?: string | null } };
 }
 
 export interface Alert { id: string; type: string; severity: 'info' | 'warning' | 'error'; title: string; message: string; date?: string; link?: string }

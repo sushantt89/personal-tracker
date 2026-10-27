@@ -75,6 +75,14 @@ const settingsSchema = new Schema(
         twoWay: { type: Boolean, default: true },
         /** Show the events already in your Google Calendar on the app's calendar and My Day (read-only) */
         showGoogleEvents: { type: Boolean, default: true },
+        /** Turn work events in Google Calendar (a price in the title, or created by a work organiser) into jobs */
+        importJobs: { type: Boolean, default: false },
+        jobOrganizers: { type: [String], default: [] },
+        /** Contractor these calendar jobs are done under (pays you, gets the invoice) */
+        jobContractorId: { type: Schema.Types.ObjectId, ref: 'Client' },
+        jobIncomeSourceId: { type: Schema.Types.ObjectId, ref: 'IncomeSource' },
+        /** Calendar jobs deleted in the app: never imported again */
+        ignoredEventIds: { type: [String], default: [] },
       },
     },
   },

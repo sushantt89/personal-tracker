@@ -32,7 +32,7 @@ const SEPARATOR_RE = /^(?:[*\-_=~.•\s]{3,}|[\s\u2B07\u2B06\u27A1\u2B05\uFE0F\u
 const CHECK_RE = /^(?:[\u2705\u2611\u2714\u{1F5F8}\u25AA\u25CF\u2022]\uFE0F?|[-*]\s)\s*(.+)$/u;
 /** Key / lock symbols mark how to get in */
 const ACCESS_EMOJI_RE = /[\u{1F511}\u{1F510}\u{1F512}\u{1F513}\u{1F5DD}]/u;
-const SPECIAL_RE = /\b(please|don'?t|do not|note|key|lockbox|lock|passcode|pin|code|under the mat|careful|pet|dog|cat|park|parking|gate|alarm|avoid|allerg|shoes|call|text|ring|knock|access)\b/i;
+const SPECIAL_RE = /\b(no need|not needed|please|don'?t|do not|note|key|lockbox|lock|passcode|pin|code|under the mat|careful|pet|dog|cat|park|parking|gate|alarm|avoid|allerg|shoes|call|text|ring|knock|access)\b/i;
 const NUM_WORDS: Record<string, number> = { one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10 };
 
 let counter = 0;
@@ -436,3 +436,20 @@ export function parseMessage(input: string, opts: ParseOptions): ParseResult {
 export function normaliseForHash(text: string): string {
   return text.toLowerCase().replace(/\s+/g, ' ').trim();
 }
+
+/** Reads free text about one job (lines of a calendar event, a note): address, tasks, access instructions, room counts. */
+export function analyseJobText(lines: string[]): Pick<ParsedJob, 'address' | 'tasks' | 'description' | 'specialInstructions' | 'rooms' | 'bathrooms'> {
+  const job = { tempId: 'x', clientName: '', address: {}, tasks: [], confidence: 1, warnings: [] } as unknown as ParsedJob;
+  analyseBlock(job, lines);
+  return { address: job.address, tasks: job.tasks, description: job.description, specialInstructions: job.specialInstructions, rooms: job.rooms, bathrooms: job.bathrooms };
+}
+
+/** "Office Co ($25)", "Sample house - $40", "$30 Jo T" → the name and the price. */
+export function splitTitlePrice(title: string): { name: string; amount?: number } {
+  const amount = parseAmount(title);
+  const name = title.replace(AMOUNT_RE, ' ').replace(/[()[\]]/g, ' ').replace(/\s[-–—:|]\s*$|^\s*[-–—:|]\s/g, ' ').replace(/\s+/g, ' ').trim().replace(/[-–—:|,]+$/, '').trim();
+  return { name, amount };
+}
+
+/** A line that is an instruction or warning ("No need to…", "Key under the mat") rather than a task. */
+export const isInstructionLine = (l: string) => SPECIAL_RE.test(l) || ACCESS_EMOJI_RE.test(l);

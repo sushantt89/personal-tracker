@@ -6,7 +6,7 @@ import { parseBody } from '../middleware/validate.js';
 import { badRequest } from '../utils/httpError.js';
 import { googleStatus, ocrService } from '../services/integrations/index.js';
 import { formatInvoiceNumber } from '../services/invoices.js';
-import { zId } from '../utils/zod.js';
+import { zId, zOptId } from '../utils/zod.js';
 
 const r = Router();
 
@@ -38,7 +38,8 @@ const settingsPatch = z.object({
   }).partial().optional(),
   integrations: z.object({
     googleDrive: z.object({ enabled: z.boolean(), rootFolderName: z.string().trim().min(1).max(120), autoUploadInvoices: z.boolean(), autoUploadDocuments: z.boolean() }).partial(),
-    googleCalendar: z.object({ enabled: z.boolean(), calendarId: z.string().max(200), syncTypes: z.array(z.enum(['job', 'appointment', 'bill', 'task', 'event', 'invoice'])), twoWay: z.boolean(), showGoogleEvents: z.boolean() }).partial(),
+    googleCalendar: z.object({ enabled: z.boolean(), calendarId: z.string().max(200), syncTypes: z.array(z.enum(['job', 'appointment', 'bill', 'task', 'event', 'invoice'])), twoWay: z.boolean(), showGoogleEvents: z.boolean(),
+      importJobs: z.boolean(), jobOrganizers: z.array(z.string().trim().toLowerCase().email('Enter a valid email address')).max(10), jobContractorId: zOptId, jobIncomeSourceId: zOptId }).partial(),
   }).partial().optional(),
 });
 

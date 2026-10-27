@@ -18,6 +18,7 @@ export async function schedulerTick(now = new Date()) {
       const step = async (label: string, fn: () => Promise<unknown>) => { try { await fn(); } catch (e) { console.error(`[scheduler] ${label}`, (e as Error).message); } };
       await step('recurring income', () => materialiseRecurringIncome(id, todayIn(u.timezone || 'Australia/Adelaide', now)));
       if (connected.has(id)) await step('calendar pull', () => pullCalendarChanges(id));
+      if (connected.has(id)) await step('calendar jobs', async () => (await import('./google/calendarJobs.js')).importCalendarJobs(id));
       await step('notifications', () => runNotifications(id, now));
     }
   } finally {

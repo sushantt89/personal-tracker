@@ -120,6 +120,8 @@ export function syncTypeOf(kind: SyncKind, doc: any): string {
 
 export function shouldSync(kind: SyncKind, doc: any, cal: { enabled?: boolean; syncTypes?: string[] } | null | undefined): boolean {
   if (!doc || doc.sync?.calendarOptOut) return false;
+  // A job imported from someone's Google Calendar event is already in the calendar
+  if (kind === 'job' && doc.importedFrom?.eventId) return false;
   // Asked for explicitly on this record ("Add to Google Calendar"): only needs a Google connection
   if (doc.sync?.calendarInclude && (kind === 'job' || kind === 'task')) return doc.status !== 'cancelled';
   if (!cal?.enabled) return false;
@@ -272,6 +274,11 @@ export async function listGoogleEvents(userId: string, from: string, to: string)
     } finally {
       clearTimeout(timer);
     }
+    // Events already turned into jobs are shown as those jobs, not twice
+    if (items.length) {
+      const imported = new Set((await Job.find({ userId, 'importedFrom.eventId': { $in: items.map((i) => i.refId) } }).select('importedFrom.eventId').lean()).map((j: any) => j.importedFrom.eventId));
+      for (let i = items.length - 1; i >= 0; i--) if (imported.has(items[i].refId)) items.splice(i, 1);
+    }
     googleCache.set(key, { at: Date.now(), items });
     if (googleCache.size > 200) for (const [k, v] of googleCache) if (Date.now() - v.at > 45_000) googleCache.delete(k);
     return { items };
@@ -375,6 +382,7 @@ export function queueCalendarPull(userId: string, minIntervalMs = 3 * 60000) {
     if (!acc || acc.needsReconnect) return;
     if (acc.lastCalendarPullAt && Date.now() - acc.lastCalendarPullAt.getTime() < minIntervalMs) return;
     await pullCalendarChanges(userId);
+    await (await import('./calendarJobs.js')).importCalendarJobs(userId);
   });
 }
 

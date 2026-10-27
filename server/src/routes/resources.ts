@@ -70,7 +70,7 @@ const INCOME_SYNC_FIELDS = ['amount', 'date', 'clientId', 'clientName', 'incomeS
 export const jobIncomeDescription = (job: any) =>
   job.title || `Job – ${job.clientName ?? ''}${job.workType === 'subcontract' && job.contractorName ? ` (via ${job.contractorName})` : ''}`.trim();
 
-async function createIncomeForJob(userId: string, job: any) {
+export async function createIncomeForJob(userId: string, job: any) {
   if (!job.amount || job.amount <= 0) return null;
   const hours = jobHours(job) || undefined;
   const income = await Income.create({
@@ -79,6 +79,28 @@ async function createIncomeForJob(userId: string, job: any) {
   });
   await audit(userId, 'Income', income._id, 'create', undefined, income.toJSON(), `Created from job ${job._id}`);
   return income;
+}
+
+/** After a job changes: its linked income follows it until paid (cancelled with it, moved with it). Creates one if missing. */
+export async function syncJobIncome(userId: string, job: any, before: any, opts: { create?: boolean } = {}) {
+  const income = await Income.findOne({ userId, jobId: job._id });
+  if (!income) {
+    if (job.status !== 'cancelled' && job.amount && opts.create !== false) await createIncomeForJob(userId, job);
+    return;
+  }
+  const changed = INCOME_SYNC_FIELDS.some((f) => JSON.stringify((before as any)[f] ?? null) !== JSON.stringify(job[f] ?? null));
+  const prev = income.toJSON();
+  if (job.status === 'cancelled' && income.status !== 'paid') {
+    income.status = 'cancelled';
+  } else if (changed && income.status !== 'paid') {
+    // Linked income mirrors the job until it is paid; paid income is never changed automatically.
+    income.set({ amount: job.amount ?? income.amount, date: job.date, ...payerOf(job), description: jobIncomeDescription(job), incomeSourceId: job.incomeSourceId, hoursWorked: jobHours(job) || undefined });
+    if (before.status === 'cancelled' && income.status === 'cancelled') income.status = 'expected';
+  } else if (before.status === 'cancelled' && job.status !== 'cancelled' && income.status === 'cancelled') {
+    income.status = 'expected';
+  } else return;
+  await income.save();
+  await audit(userId, 'Income', income._id, 'update', prev, income.toJSON(), `Synced from job ${job._id}`);
 }
 
 const jobsCrud = crudRouter({
@@ -118,30 +140,15 @@ const jobsCrud = crudRouter({
     afterUpdate: async (req, job, before) => {
       const routeChanged = ['date', 'startTime', 'status', 'address'].some((f) => JSON.stringify((before as any)[f] ?? null) !== JSON.stringify(job.toJSON()[f] ?? null));
       if (routeChanged) queueTravelDay(req.userId!, before.date, job.date);
-      const income = await Income.findOne({ userId: req.userId, jobId: job._id });
-      if (!income) {
-        if (job.status !== 'cancelled' && job.amount && req.body?.createIncome !== false) await createIncomeForJob(req.userId!, job);
-        return;
-      }
-      const changed = INCOME_SYNC_FIELDS.some((f) => JSON.stringify((before as any)[f] ?? null) !== JSON.stringify(job[f] ?? null));
-      const prev = income.toJSON();
-      if (job.status === 'cancelled' && income.status !== 'paid') {
-        income.status = 'cancelled';
-      } else if (changed && income.status !== 'paid') {
-        // Linked income mirrors the job until it is paid; paid income is never changed automatically.
-        income.set({ amount: job.amount ?? income.amount, date: job.date, ...payerOf(job), description: jobIncomeDescription(job), incomeSourceId: job.incomeSourceId, hoursWorked: jobHours(job) || undefined });
-        if (before.status === 'cancelled' && income.status === 'cancelled') income.status = 'expected';
-      } else if (before.status === 'cancelled' && job.status !== 'cancelled' && income.status === 'cancelled') {
-        income.status = 'expected';
-      } else return;
-      await income.save();
-      await audit(req.userId!, 'Income', income._id, 'update', prev, income.toJSON(), `Synced from job ${job._id}`);
+      await syncJobIncome(req.userId!, job, before, { create: req.body?.createIncome !== false });
     },
     beforeDelete: async (_req, job) => {
       if (job.invoiceId) throw conflict('This job is on an invoice. Remove it from the invoice (or delete the invoice) first.');
     },
     afterDelete: async (req, job) => {
       queueTravelDay(req.userId!, job.date);
+      // A job that came from Google Calendar stays deleted: its event is not imported again
+      if ((job as any).importedFrom?.eventId) await (await import('../services/google/calendarJobs.js')).ignoreCalendarEvent(req.userId!, (job as any).importedFrom.eventId);
       const income = await Income.findOne({ userId: req.userId, jobId: job._id });
       if (!income) return;
       if (income.status === 'paid') {

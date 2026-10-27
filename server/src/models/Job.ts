@@ -49,10 +49,13 @@ const jobSchema = new Schema(
     distanceKm: { type: Number, min: 0 },
     travelMinutes: { type: Number, min: 0 },
     sync: externalSyncSchema,
+    /** Created from an event someone put in the user's Google Calendar (e.g. the boss's roster) */
+    importedFrom: { eventId: String, recurringEventId: String, updated: String, organizer: String },
   },
   baseOptions,
 );
 jobSchema.index({ userId: 1, date: 1 });
+jobSchema.index({ userId: 1, 'importedFrom.eventId': 1 }, { sparse: true });
 jobSchema.index({ userId: 1, contractorId: 1, date: 1 });
 jobSchema.index({ userId: 1, clientName: 'text', description: 'text', title: 'text' });
 

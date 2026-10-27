@@ -347,6 +347,65 @@ describe('Google integration (fake Google APIs)', () => {
     expect((await a().get(`/api/tasks/${made.id}`)).body.title).toBe('Housewarming');
   });
 
+  it('turns work events someone put in Google Calendar into jobs, and follows their changes', async () => {
+    const { clearGoogleEventCache } = await import('../src/services/google/calendar.js');
+    const { Job } = await import('../src/models/index.js');
+    const contractor = (await a().post('/api/clients').send({ name: 'Sample Cleaning Agency', type: 'contractor' })).body;
+    // Off by default: nothing happens
+    expect((await a().post('/api/integrations/google/calendar/import-jobs').send({})).body.counts.created).toBe(0);
+    await a().patch('/api/settings').send({ integrations: { googleCalendar: { importJobs: true, jobOrganizers: ['Boss@Example.com'], jobContractorId: contractor.id } } }).expect(200);
+
+    // A fortnightly job from the boss (two occurrences in view), a meeting from the boss with no price, and a private dinner
+    const desc = '21 Example Rd<br>21 Example Rd, Keswick SA 5035, Australia<br>M &amp; F toilets, office kitchen<br>Front reception and office.<br>empty bins<br><br>No need to clean the workshop and warehouse storage area<br>Team SAM + LEE';
+    const base = { summary: 'Office Co ($25)', location: '21 Example Rd, Keswick SA 5035, Australia', description: desc, recurringEventId: 'rec1', organizer: { email: 'boss@example.com' }, creator: { email: 'boss@example.com' } };
+    const first = fake.userCreates({ ...base, start: { dateTime: '2026-10-11T22:00:00Z' }, end: { dateTime: '2026-10-11T23:00:00Z' } }); // Mon 12 Oct 8:30–9:30 Adelaide
+    fake.userCreates({ ...base, start: { dateTime: '2026-10-25T22:00:00Z' }, end: { dateTime: '2026-10-25T23:00:00Z' } });
+    fake.userCreates({ summary: 'Site induction', organizer: { email: 'boss@example.com' }, start: { dateTime: '2026-10-13T23:30:00Z' }, end: { dateTime: '2026-10-14T00:30:00Z' } });
+    fake.userCreates({ summary: 'Dinner with friends', organizer: { email: 'friend@example.com' }, start: { dateTime: '2026-10-14T08:30:00Z' }, end: { dateTime: '2026-10-14T10:30:00Z' } });
+    const eventsBefore = fake.events.size;
+
+    const c = (await a().post('/api/integrations/google/calendar/import-jobs').send({})).body.counts;
+    expect(c.created).toBe(3);
+    const jobs = await Job.find({ 'importedFrom.eventId': { $exists: true } }).sort({ date: 1 }).lean<any[]>();
+    expect(jobs.map((j) => [j.clientName, j.date, j.startTime, j.endTime, j.amount ?? null])).toEqual([
+      ['Office Co', '2026-10-12', '08:30', '09:30', 25], ['Site induction', '2026-10-14', '10:00', '11:00', null], ['Office Co', '2026-10-26', '08:30', '09:30', 25],
+    ]);
+    const j = jobs[0];
+    expect(j).toMatchObject({ workType: 'subcontract', contractorName: 'Sample Cleaning Agency', hoursWorked: 1 });
+    expect(j.address.formatted).toBe('21 Example Rd, Keswick SA 5035');
+    expect(j.tasks).toEqual(['M & F toilets, office kitchen', 'Front reception and office', 'Empty bins']);
+    expect(j.specialInstructions).toContain('No need to clean the workshop');
+    expect(j.notes).toBe('Team SAM + LEE');
+    // Expected income goes to the contractor; nothing new is written to Google for these jobs
+    expect((await a().get(`/api/income?jobId=${j._id}`)).body.items[0]).toMatchObject({ amount: 25, clientName: 'Sample Cleaning Agency', status: 'expected' });
+    await flush();
+    expect(fake.events.size).toBe(eventsBefore);
+    // Shown once, as a job — not again as a Google event
+    clearGoogleEventCache();
+    const cal = (await a().get('/api/calendar').query({ from: '2026-10-12', to: '2026-10-12' })).body.items;
+    expect(cal.filter((e: any) => /Office Co/.test(e.title)).map((e: any) => e.type)).toEqual(['job']);
+
+    // Running again changes nothing
+    const again = (await a().post('/api/integrations/google/calendar/import-jobs').send({})).body.counts;
+    expect(again.created).toBe(0);
+    expect(await Job.countDocuments({ 'importedFrom.eventId': { $exists: true } })).toBe(3);
+
+    // Moved in Google → the job follows; one occurrence cancelled → that job is cancelled
+    fake.userEdits(first, { start: { dateTime: '2026-10-12T00:30:00Z' }, end: { dateTime: '2026-10-12T01:30:00Z' } });
+    const second = jobs[2].importedFrom.eventId;
+    fake.userEdits(second, { status: 'cancelled' });
+    const moved = (await a().post('/api/integrations/google/calendar/import-jobs').send({})).body.counts;
+    expect(moved).toMatchObject({ updated: 1, cancelled: 1 });
+    expect((await Job.findById(j._id).lean<any>())).toMatchObject({ date: '2026-10-12', startTime: '11:00', endTime: '12:00' });
+    expect((await Job.findById(jobs[2]._id).lean<any>()).status).toBe('cancelled');
+
+    // Deleted in the app → never imported again
+    await a().delete(`/api/jobs/${jobs[1]._id}`).expect(200);
+    await a().post('/api/integrations/google/calendar/import-jobs').send({});
+    expect(await Job.countDocuments({ clientName: 'Site induction' })).toBe(0);
+    await a().patch('/api/settings').send({ integrations: { googleCalendar: { importJobs: false } } }).expect(200);
+  });
+
   it('sends email from the connected Google account once permission is given', async () => {
     const { GoogleAccount, User } = await import('../src/models/index.js');
     const me = await User.findById(userId).lean();

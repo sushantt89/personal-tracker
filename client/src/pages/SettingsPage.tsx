@@ -366,6 +366,9 @@ function IntegrationsTab({ settings }: { settings: Settings }) {
   const toast = useToast();
   const confirm = useConfirm();
   const [cal, setCal] = useState(settings.integrations.googleCalendar);
+  const [organisers, setOrganisers] = useState((settings.integrations.googleCalendar.jobOrganizers ?? []).join(', '));
+  const contractors = (useClients().data ?? []).filter((c) => c.type === 'contractor');
+  const sources = useIncomeSources().data ?? [];
   const [drive, setDrive] = useState(settings.integrations.googleDrive);
   const [busy, setBusy] = useState<string | null>(null);
   const g = status.data?.googleCalendar;
@@ -435,6 +438,41 @@ function IntegrationsTab({ settings }: { settings: Settings }) {
             </Box>
             <FormControlLabel control={<Switch checked={cal.twoWay !== false} onChange={(e) => { const next = { ...cal, twoWay: e.target.checked }; setCal(next); saveCal(next); }} />} label="Two-way: when I move or retime a job or appointment in Google Calendar, update it here too" />
             <FormControlLabel control={<Switch checked={cal.showGoogleEvents !== false} onChange={(e) => { const next = { ...cal, showGoogleEvents: e.target.checked }; setCal(next); saveCal(next); }} />} label="Show my Google Calendar events in the app’s Calendar and My Day" />
+            <Box sx={{ p: 1.5, border: 1, borderColor: 'divider', borderRadius: 2 }}>
+              <FormControlLabel control={<Switch checked={!!cal.importJobs} onChange={(e) => { const next = { ...cal, importJobs: e.target.checked }; setCal(next); saveCal(next); }} />} label="Turn work events in my Google Calendar into jobs" />
+              <Typography variant="caption" color="text.secondary" component="div" sx={{ mb: 1 }}>
+                An event counts as a job when its title has a price, like “Office Co ($25)”, or it was created by one of the emails below. The title becomes the client, the event’s place the address, and its notes the tasks and instructions. Each repeat of a repeating event becomes its own job, looking 6 weeks ahead. Jobs follow later changes to the event, are cancelled when it is, and a job you delete here isn’t brought back.
+              </Typography>
+              {cal.importJobs && (
+                <Stack spacing={1.5}>
+                  <TextField label="Work organisers (emails)" value={organisers} onChange={(e) => setOrganisers(e.target.value)} placeholder="boss@example.com, roster@example.com" helperText="Events they create become jobs even without a price. Separate with commas." />
+                  <TextField select label="Done under contractor (who pays you)" value={cal.jobContractorId ?? ''} onChange={(e) => setCal({ ...cal, jobContractorId: e.target.value || null })} helperText={contractors.length ? 'Their income and invoices go to this contractor' : 'Add the contractor in Clients & contractors first'}>
+                    <MenuItem value="">None — my own business</MenuItem>
+                    {contractors.map((c) => <MenuItem key={c.id} value={c.id}>{c.name}</MenuItem>)}
+                  </TextField>
+                  <TextField select label="Income source" value={cal.jobIncomeSourceId ?? ''} onChange={(e) => setCal({ ...cal, jobIncomeSourceId: e.target.value || null })}>
+                    <MenuItem value="">Contractor’s default</MenuItem>
+                    {sources.map((s) => <MenuItem key={s.id} value={s.id}>{s.name}</MenuItem>)}
+                  </TextField>
+                  <Stack direction="row" spacing={1}>
+                    <Button variant="outlined" disabled={busy === 'jobs'} onClick={() => run('jobs', async () => {
+                      const emails = organisers.split(/[,;\s]+/).map((x) => x.trim()).filter(Boolean);
+                      const next = { ...cal, jobOrganizers: emails };
+                      await patch('/settings', { integrations: { googleCalendar: next } }); setCal(next);
+                      return 'Saved';
+                    })}>Save</Button>
+                    <Button variant="contained" disabled={!g?.connected || busy === 'import'} onClick={() => run('import', async () => {
+                      const emails = organisers.split(/[,;\s]+/).map((x) => x.trim()).filter(Boolean);
+                      const next = { ...cal, jobOrganizers: emails };
+                      await patch('/settings', { integrations: { googleCalendar: next } }); setCal(next);
+                      const { counts } = await post<{ counts: { created: number; updated: number; cancelled: number } }>('/integrations/google/calendar/import-jobs');
+                      return `From Google Calendar: ${counts.created} new job(s), ${counts.updated} updated, ${counts.cancelled} cancelled`;
+                    })}>{busy === 'import' ? 'Checking…' : 'Check calendar now'}</Button>
+                  </Stack>
+                  <Typography variant="caption" color="text.secondary">It also checks by itself every few minutes, and when you open My Day or the Calendar.</Typography>
+                </Stack>
+              )}
+            </Box>
             <TextField label="Calendar ID" value={cal.calendarId} onChange={(e) => setCal({ ...cal, calendarId: e.target.value })} helperText="'primary' is your main calendar. To use a separate calendar, paste its ID from Google Calendar → Settings → Integrate calendar." sx={{ maxWidth: 520 }} />
             <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
               <Button variant="outlined" onClick={() => saveCal()}>Save calendar settings</Button>

@@ -233,6 +233,20 @@ Exampleton SA 5046, Australia
     expect(r.jobs[0].description).toBe('Repeats every 2 weeks · Team SAM + LEE');
     expect(JSON.stringify(r)).not.toContain('someone@example.com');
   });
+  it('reads a screenshot where the key line wraps and an icon is read as a digit', () => {
+    const ocr = `® ALEXT ($30) # code
+000000 tick
+Thursday 26 Nov - 10 = 11am
+Repeats every 2 weeks
+® 12 Example St
+Parkside SA 5063, Australia
+2 Created by someone@example.com
+[5] Team SAM + LEE`;
+    const j = parseCalendarCard(ocr, { today: '2026-11-01' })!.jobs[0];
+    expect(j).toMatchObject({ date: '2026-11-26', startTime: '10:00', endTime: '11:00', amount: 30, specialInstructions: '🔑 code 000000 tick', tasks: [] });
+    expect(j.address.formatted).toBe('12 Example St, Parkside SA 5063');
+    expect(JSON.stringify(j)).not.toContain('@');
+  });
   it('reads an event copied out of Google Calendar, with notes as tasks and instructions', () => {
     const pasted = `OFFICE CO ($25)
 Monday, October 26⋅8:30 – 9:30am

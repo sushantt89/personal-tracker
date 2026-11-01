@@ -25,7 +25,7 @@ const RANGE_RE = new RegExp(`${TIME}\\s*(?:[-–—~=⋅·]+|to|until)\\s*${TIME
 const SINGLE_RE = new RegExp(`\\b${TIME}`, 'i');
 
 /** Icons beside each line come out of OCR as stray characters: "®", "2,", "[5]", "(YO". */
-const stripIcon = (s: string) => s.replace(/^\s*(?:\[\w{1,2}\]|\d,|\(\w{1,2}|[®©™]|[A-Za-z]{1,2}[\])}|,.:])\s+(?=\S)/, '').replace(/^[^A-Za-z0-9($]+/, '').trim();
+const stripIcon = (s: string) => s.replace(/^\s*(?:\[\w{1,2}\]|\d,|\(\w{1,2}|[®©™]|[A-Za-z]{1,2}[\])}|,.:]|\d(?=\s+[A-Z][a-z]))\s+(?=\S)/, '').replace(/^[^A-Za-z0-9($]+/, '').trim();
 
 function hhmm(h: number, m: number, mer?: string): string | undefined {
   let hour = h;
@@ -89,6 +89,8 @@ export function parseCalendarCard(input: string, opts: CalendarCardOptions): Par
   const after = lines.slice(dIdx + 1);
   for (let k = 0; k < after.length; k++) {
     const l = after[k];
+    // "Created by …" (wherever OCR put the icon) and any line with an email address are the calendar's, not the job's
+    if (/\b(created by|organi[sz]ed by|invitation from)\b|[\w.+-]+@[\w-]+\.[\w.]+/i.test(l)) continue;
     if (/^(created by|organi[sz]er|invitation from|going\?|notifications?|\d+\s*(minutes?|hours?|days?)\s+before|guests?)/i.test(l) || /^(yes|no|maybe)(\s+(yes|no|maybe))*$/i.test(l)) continue; // RSVP buttons, not notes
     if (/^(repeats|does not repeat|every (?:day|week|\d+|other|month|fortnight|year))\b/i.test(l)) { notes.push(l); continue; }
     if (/^(team|with|crew)\b/i.test(l)) { notes.push(l); continue; }

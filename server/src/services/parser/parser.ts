@@ -1,5 +1,5 @@
 import { findDate } from './dates.js';
-import { isLocalityLine, isStreetLine, parseAddress } from './address.js';
+import { isLocalityLine, isStreetLine, parseAddress, findStreet } from './address.js';
 import type { ParsedJob, ParsedPayment, ParseResult } from './types.js';
 
 /**
@@ -227,8 +227,9 @@ function analyseBlock(job: ParsedJob, lines: string[]) {
   for (const raw of lines) {
     const line = raw.trim();
     if (!line || SEPARATOR_RE.test(line)) continue;
-    if (!addressDone && isStreetLine(line)) {
-      addressLines.push(line);
+    const street = addressDone ? undefined : findStreet(line);
+    if (street) {
+      addressLines.push(street);
       continue;
     }
     if (!addressDone && addressLines.length === 1 && isLocalityLine(line)) {

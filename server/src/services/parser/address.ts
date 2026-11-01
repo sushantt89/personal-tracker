@@ -28,6 +28,26 @@ export function isStreetLine(line: string): boolean {
   return STREET_RE.test(line);
 }
 
+/**
+ * The street part of a line that may have something in front of it: a map-pin icon read as "Q", "9" or "@"
+ * ("Q 29 Example St"), or a place name followed by a comma ("Example Library, 29 Example St, Sampleton SA").
+ * Text before the number is only skipped when it is 1-2 characters of junk, ends in a comma, or the rest of the line
+ * has a suburb/state/postcode — so a task such as "Mop 3 rooms then walk" isn't taken for an address.
+ */
+export function findStreet(line: string): string | undefined {
+  const t = line.trim();
+  if (isStreetLine(t)) return t;
+  const re = /(?:^|[\s,(])((?:unit|u|apt|flat|shop)\s*\d|\d)/gi;
+  for (let m = re.exec(t); m; m = re.exec(t)) {
+    const at = m.index + m[0].length - m[1].length;
+    if (at === 0) continue;
+    const rest = t.slice(at), before = t.slice(0, at).trim();
+    if (!isStreetLine(rest)) continue;
+    if (before.replace(/[^A-Za-z0-9]/g, '').length <= 2 || /,$/.test(before) || hasLocality(rest)) return rest;
+  }
+  return undefined;
+}
+
 const POSTCODE_RE = /\b(\d{4})\b/;
 const STATE_RE = new RegExp(`\\b(${Object.keys(STATES).sort((a, b) => b.length - a.length).join('|')})\\b`, 'i');
 
@@ -38,6 +58,9 @@ export function isLocalityLine(line: string): boolean {
   if (/\d{1,2}(:\d{2})?\s*(am|pm)/i.test(t)) return false;
   return STATE_RE.test(t) || /\baustralia\b/i.test(t) || /^[a-z' .-]+,?\s+\d{4}$/i.test(t);
 }
+
+/** Whether text carries a state or a 4-digit postcode after a street ("29 Example St, Sampleton SA 5000"). */
+const hasLocality = (text: string) => STATE_RE.test(text) || /\b\d{4}\b/.test(text.replace(/^\s*\S+/, ''));
 
 export function stateFromPostcode(pc: string): string | undefined {
   const n = Number(pc);

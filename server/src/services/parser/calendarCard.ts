@@ -1,5 +1,5 @@
 import { findDate } from './dates.js';
-import { parseAddress, isStreetLine, isLocalityLine } from './address.js';
+import { parseAddress, isStreetLine, isLocalityLine, findStreet, formatAddress } from './address.js';
 import { analyseJobText, splitTitlePrice, isInstructionLine } from './parser.js';
 import type { ParsedJob, ParseResult } from './types.js';
 
@@ -32,6 +32,12 @@ const stripIcon = (s: string) => (isStreetLine(s.trim()) ? s.trim() : s.replace(
  * A line is chrome when it has no word of 3+ letters and no run of 3+ digits (a wrapped key code like "020678" is kept).
  */
 const isChrome = (s: string) => !/[A-Za-z]{3}|\d{3}/.test(s) || /^\d{1,2}[:.]\d{2}\b(?!\s*(?:[-–—~=⋅·]|to\b|am|pm))/i.test(s) && !/[A-Za-z]{4}/.test(s.replace(/\b(?:LTE|VoLTE|Wi-?Fi)\b/gi, ''));
+/** A street with no usual suffix ("29 The Strand", "Q 7 Kingsway") counts when a suburb line follows it. */
+function plainStreet(line: string, next?: string): string | undefined {
+  const t = line.replace(/^\S{1,2}\s+(?=\d)/, '').trim();
+  if (!/^\d+[a-z]?(?:\s*\/\s*\d+[a-z]?)?\s+[A-Za-z][A-Za-z' .-]{2,40}$/.test(t) || !next) return undefined;
+  return isLocalityLine(next) && !isStreetLine(next) && /\b\d{4}\b|\baustralia\b/i.test(next) ? t : undefined;
+}
 const REMINDER_RE = /\b\d+\s*(?:minutes?|mins?|hours?|hrs?|days?|weeks?)\s+before\b/i;
 
 function hhmm(h: number, m: number, mer?: string): string | undefined {
@@ -119,13 +125,21 @@ export function parseCalendarCard(input: string, opts: CalendarCardOptions): Par
     if (/^(created by|organi[sz]er|invitation from|going\?|notifications?|\d+\s*(minutes?|hours?|days?)\s+before|guests?)/i.test(l) || /^(yes|no|maybe)(\s+(yes|no|maybe))*$/i.test(l)) continue; // RSVP buttons, not notes
     if (/^(repeats|does not repeat|every (?:day|week|\d+|other|month|fortnight|year))\b/i.test(l)) { notes.push(l); continue; }
     if (/^(team|with|crew)\b/i.test(l)) { notes.push(l); continue; }
-    if (!address.line1 && isStreetLine(l)) {
-      // "21 Example Rd" then the same street with its suburb on the next line: take the fuller one
-      if (after[k + 1] && after[k + 1].toLowerCase().startsWith(l.toLowerCase())) continue;
+    const street = address.line1 ? undefined : findStreet(l) ?? plainStreet(l, after[k + 1]);
+    if (street) {
       const next = after[k + 1];
-      const two = next && isLocalityLine(next) && !isStreetLine(next) ? [l, next.replace(/,\s*australia$/i, '')] : [l];
+      // "21 Example Rd" then the same street with its suburb on the next line: take the fuller one
+      const nextStreet = next ? findStreet(next) : undefined;
+      if (nextStreet && nextStreet.toLowerCase().startsWith(street.toLowerCase())) continue;
+      const two = next && !nextStreet && isLocalityLine(next) ? [street, next] : [street];
       address = parseAddress(two.map((x) => x.replace(/,\s*australia$/i, '')));
+      if (!address.line1) { address = { ...parseAddress(two.slice(1).map((x) => x.replace(/,\s*australia$/i, ''))), line1: street }; address.formatted = formatAddress(address); }
       if (two.length === 2) k++;
+      continue;
+    }
+    // A suburb line ("Sampleton SA 5000, Australia") is part of the address, never a task
+    if (isLocalityLine(l) && /\b\d{4}\b|\baustralia\b|\b(SA|NSW|VIC|QLD|WA|TAS|NT|ACT)\b/.test(l) && l.split(/\s+/).length <= 6) {
+      if (!address.suburb) address = parseAddress([address.line1, l.replace(/,\s*australia$/i, '')].filter(Boolean) as string[]);
       continue;
     }
     rest.push(l);

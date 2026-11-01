@@ -241,6 +241,20 @@ Going?     Yes     IN[e]     Maybe`;
     expect(job.tasks).toEqual([]);
   });
 
+  it('never takes the address for a task, however OCR reads the map-pin icon', () => {
+    const head = 'SAMPLE K ($30) # code 111222\nThursday 26 Nov - 10 — 11am\nRepeats every 2 weeks\n';
+    const read = (t: string) => parseCalendarCard(head + t, { today: '2026-11-01' })!.jobs[0];
+    for (const t of ['Q 29 Example St\nSampleton SA 5000, Australia', '9 29 Example St\nSampleton SA 5000, Australia', 'Q 29 Example St, Sampleton SA 5000, Australia', 'Sample Library, 29 Example St, Sampleton SA 5000', '29 Example St\n29 Example St, Sampleton SA 5000, Australia']) {
+      const job = read(t);
+      expect(job.address.formatted).toBe('29 Example St, Sampleton SA 5000');
+      expect(job.tasks).toEqual([]);
+    }
+    expect(read('Q 29 The Strand\nSampleton SA 5000, Australia').address.formatted).toBe('29 The Strand, Sampleton SA 5000');
+    expect(read('Q 3/29 Example Cres\nSampleton SA 5000').address.line1).toBe('3/29 Example Cres');
+    // A task that happens to end in a street word stays a task
+    expect(read('29 Example St\nSampleton SA 5000\nMop 3 rooms then walk').tasks).toEqual(['Mop 3 rooms then walk']);
+  });
+
   it('passes over a date in the status bar and reads a time that wrapped onto its own line', () => {
     const ocr = `Sat 1 Nov 9:41   87%
 X     :

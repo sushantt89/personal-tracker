@@ -24,8 +24,15 @@ const TIME = String.raw`(\d{1,2})(?:[:.](\d{2}))?\s*(am|pm|a\.m\.|p\.m\.)?`;
 const RANGE_RE = new RegExp(`${TIME}\\s*(?:[-–—~=⋅·]+|to|until)\\s*${TIME}`, 'i');
 const SINGLE_RE = new RegExp(`\\b${TIME}`, 'i');
 
-/** Icons beside each line come out of OCR as stray characters: "®", "2,", "[5]", "(YO". */
-const stripIcon = (s: string) => s.replace(/^\s*(?:\[\w{1,2}\]|\d,|\(\w{1,2}|[®©™]|[A-Za-z]{1,2}[\])}|,.:]|\d(?=\s+[A-Z][a-z]))\s+(?=\S)/, '').replace(/^[^A-Za-z0-9($]+/, '').trim();
+/** Icons beside each line come out of OCR as stray characters: "®", "2,", "[5]", "(YO", "9?". */
+const stripIcon = (s: string) => (isStreetLine(s.trim()) ? s.trim() : s.replace(/^\s*(?:\[\w{1,2}\]|\d[,?!;'"]|\(\w{1,2}|[®©™]|[A-Za-z]{1,2}[\])}|,.:]|\d(?=\s+[A-Z][a-z]))\s+(?=\S)/, '').replace(/^[^A-Za-z0-9($]+/, '').trim());
+
+/**
+ * Phone chrome around the event: the status bar ("9:41  5G 87%"), toolbar icons read as "X" or "N Tc:".
+ * A line is chrome when it has no word of 3+ letters and no run of 3+ digits (a wrapped key code like "020678" is kept).
+ */
+const isChrome = (s: string) => !/[A-Za-z]{3}|\d{3}/.test(s) || /^\d{1,2}[:.]\d{2}\b(?!\s*(?:[-–—~=⋅·]|to\b|am|pm))/i.test(s) && !/[A-Za-z]{4}/.test(s.replace(/\b(?:LTE|VoLTE|Wi-?Fi)\b/gi, ''));
+const REMINDER_RE = /\b\d+\s*(?:minutes?|mins?|hours?|hrs?|days?|weeks?)\s+before\b/i;
 
 function hhmm(h: number, m: number, mer?: string): string | undefined {
   let hour = h;
@@ -58,15 +65,32 @@ export function parseCalendarCard(input: string, opts: CalendarCardOptions): Par
   const raw = input.split(/\r?\n/).map((l) => l.replace(/\s+/g, ' ').trim()).filter(Boolean);
   if (raw.length < 2 || raw.length > 60) return null;
   const lines = raw.map(stripIcon);
-  // The date-and-time line: exactly one line with a date that also carries a time
-  // (a weekday on its own, as in "Every 2 weeks on Monday", isn't the event's date)
-  const dated = lines.map((l, i) => ({ i, d: findDate(l, opts.today) }))
-    .filter((x) => x.d && /\d/.test(lines[x.i].slice(x.d.index, x.d.index + x.d.length)) && !/^(repeats|every|does not repeat)\b/i.test(lines[x.i]));
-  if (dated.length !== 1) return null;
-  const { i: dIdx, d } = dated[0];
-  const when = parseTimeRange(lines[dIdx].slice(d!.index + d!.length));
-  if (dIdx < 1 || dIdx > 3) return null; // the title sits just above the date
-  const title = lines.slice(0, dIdx).join(' ');
+  const chrome = raw.map(isChrome);
+  // The date-and-time line: a line with a date that also carries a day number (a weekday on its own, as in
+  // "Every 2 weeks on Monday", isn't the event's date). A date in the phone's status bar is passed over by preferring
+  // the line that has a time, then the one nearest a price.
+  const dated = lines.map((l, i) => ({ i, d: chrome[i] ? null : findDate(l, opts.today) }))
+    .filter((x) => x.d && /\d/.test(lines[x.i].slice(x.d.index, x.d.index + x.d.length)) && !/^(repeats|every|does not repeat)\b/i.test(lines[x.i]) && !REMINDER_RE.test(lines[x.i]));
+  if (!dated.length || dated.length > 3) return null;
+  const timeOf = (x: (typeof dated)[number]) => {
+    const own = parseTimeRange(lines[x.i].slice(x.d!.index + x.d!.length));
+    // OCR sometimes puts the time on its own line under the date
+    return own.start || !lines[x.i + 1] ? own : RANGE_RE.test(lines[x.i + 1]) && !findDate(lines[x.i + 1], opts.today) ? parseTimeRange(lines[x.i + 1]) : own;
+  };
+  const priceAbove = (i: number) => lines.slice(Math.max(0, i - 3), i).some((l) => /\(?\s*(?:AUD\s*|A?\$\s*)\d/i.test(l));
+  const ranked = dated.map((x) => ({ ...x, when: timeOf(x) })).sort((a, b) => Number(!!b.when.start) - Number(!!a.when.start) || Number(priceAbove(b.i)) - Number(priceAbove(a.i)) || a.i - b.i);
+  if (dated.length > 1 && !ranked[0].when.start) return null;
+  const { i: dIdx, d, when } = ranked[0];
+  // The title is the line(s) just above the date — up to 3, stopping at phone chrome; it starts at the price line if there is one
+  let top = dIdx;
+  while (top > 0 && dIdx - top < 3 && !chrome[top - 1] && !dated.some((x) => x.i === top - 1)) top--;
+  const titleLines = lines.slice(top, dIdx);
+  const pIdx = titleLines.findIndex((l) => /\(?\s*(?:AUD\s*|A?\$\s*)\d/i.test(l));
+  if (pIdx > 0 && /[A-Za-z]{2}.*\(?\s*(?:AUD\s*|A?\$\s*)\d/i.test(titleLines[pIdx])) titleLines.splice(0, pIdx);
+  if (!titleLines.length) return null;
+  // An icon before the title read as a digit: "8 SAMPLE K ($30)"
+  titleLines[0] = titleLines[0].replace(/^\d\s+(?=[A-Z]{2})/, '');
+  const title = titleLines.join(' ');
   const { name, amount } = splitTitlePrice(title.replace(/[#*]+\s*$/, ''));
   // Needs something that says "calendar event": a price in the title, or the app's own words (Repeats, Created by, …)
   if (amount === undefined && !raw.some((l) => MARKER_RE.test(l))) return null;
@@ -80,17 +104,18 @@ export function parseCalendarCard(input: string, opts: CalendarCardOptions): Par
   const priceAt = title.search(/\(?\s*(?:AUD\s*|A?\$\s*)\d/i);
   if (priceAt > 0) {
     clientName = title.slice(0, priceAt).replace(/[-–—:|,\s]+$/, '').trim();
-    extraTitle = title.slice(priceAt).replace(/^\(?\s*(?:AUD\s*|A?\$\s*)\d+(?:\.\d{1,2})?\s*\)?/i, '').replace(/^[^A-Za-z0-9]+/, '').trim();
+    extraTitle = title.slice(priceAt).replace(/^\(?\s*(?:AUD\s*|A?\$\s*)\d+(?:\.\d{1,2})?\s*\)?/i, '').replace(/^\s*(?:[^A-Za-z0-9\s]+\d?\s+)+/, '').replace(/^[^A-Za-z0-9]+/, '').trim();
   }
 
   const special: string[] = [], notes: string[] = [], rest: string[] = [];
   if (extraTitle) (/\b(box|key|code|lock|pin|gate)\b|\d{3,}/i.test(extraTitle) ? special : notes).push(/\b(box|key|code|lock|pin)\b/i.test(extraTitle) ? `🔑 ${extraTitle}` : extraTitle);
   let address = {} as ReturnType<typeof parseAddress>;
-  const after = lines.slice(dIdx + 1);
+  const after = lines.slice(dIdx + 1).filter((l, k) => !chrome[dIdx + 1 + k] && !(k === 0 && when.start && RANGE_RE.test(l) && !/[A-Za-z]{3}/.test(l.replace(/\b(am|pm)\b/gi, ''))));
   for (let k = 0; k < after.length; k++) {
     const l = after[k];
     // "Created by …" (wherever OCR put the icon) and any line with an email address are the calendar's, not the job's
     if (/\b(created by|organi[sz]ed by|invitation from)\b|[\w.+-]+@[\w-]+\.[\w.]+/i.test(l)) continue;
+    if (REMINDER_RE.test(l) || /\bgoing\?/i.test(l)) continue;
     if (/^(created by|organi[sz]er|invitation from|going\?|notifications?|\d+\s*(minutes?|hours?|days?)\s+before|guests?)/i.test(l) || /^(yes|no|maybe)(\s+(yes|no|maybe))*$/i.test(l)) continue; // RSVP buttons, not notes
     if (/^(repeats|does not repeat|every (?:day|week|\d+|other|month|fortnight|year))\b/i.test(l)) { notes.push(l); continue; }
     if (/^(team|with|crew)\b/i.test(l)) { notes.push(l); continue; }

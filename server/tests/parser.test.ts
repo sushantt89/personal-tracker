@@ -217,6 +217,43 @@ Jo H - 12:30pm ($25)
 });
 
 describe('one calendar event (screenshot or copied text)', () => {
+  it('reads a full phone screenshot with the status bar, toolbar icons, reminder and RSVP row', () => {
+    const ocr = `9:41                                      5G A 87%
+X                                              N Tc:
+8 SAMPLE K ($30) ® code
+
+111222 tick
+
+Thursday 26 Nov - 10 — 11am
+
+Repeats every 2 weeks
+9? 12 Example St
+
+Sampleton SA 5000, Australia
+A 30 minutes before
+® Created by someone@example.com
+   Team ALEX + SAM
+Going?     Yes     IN[e]     Maybe`;
+    const job = parseCalendarCard(ocr, { today: '2026-11-01' })!.jobs[0];
+    expect(job).toMatchObject({ clientName: 'SAMPLE K', amount: 30, date: '2026-11-26', startTime: '10:00', endTime: '11:00', specialInstructions: '🔑 code 111222 tick' });
+    expect(job.address.formatted).toBe('12 Example St, Sampleton SA 5000');
+    expect(job.description).toBe('Repeats every 2 weeks · Team ALEX + SAM');
+    expect(job.tasks).toEqual([]);
+  });
+
+  it('passes over a date in the status bar and reads a time that wrapped onto its own line', () => {
+    const ocr = `Sat 1 Nov 9:41   87%
+X     :
+SAMPLE CO ($45)
+Friday 4 Dec
+9 – 11:30am
+Does not repeat
+5 Example Rd, Sampleton SA 5000`;
+    const job = parseCalendarCard(ocr, { today: '2026-11-01' })!.jobs[0];
+    expect(job).toMatchObject({ clientName: 'SAMPLE CO', amount: 45, date: '2026-12-04', startTime: '09:00', endTime: '11:30', hours: 2.5 });
+    expect(job.tasks).toEqual([]);
+  });
+
   it('reads a calendar screenshot: client, price, key-box code, date, time, address, team', () => {
     // As OCR reads a phone screenshot of the event (made-up client and address); icons come out as stray characters
     const ocr = `® JORDAN & BEA ($30) #

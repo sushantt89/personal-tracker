@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { describe, it, expect } from 'vitest';
-import { parseMessage, parseAddress, findDate, parseHeader } from '../src/services/parser/index.js';
+import { parseMessage, parseAddress, findDate, parseHeader, parseCalendarCard } from '../src/services/parser/index.js';
 
 const SAMPLE = `Hi SUSHANT
 Your schedule for Friday 2 OCT.
@@ -213,5 +213,45 @@ Jo H - 12:30pm ($25)
     expect(h('Alex Stone - after 2pm ($30)')).toEqual(['Alex Stone', '14:00', undefined, 30]);
     expect(parseHeader('Blondie - 10+am ($30)')?.approxTime).toBe(true);
     for (const notHeader of ['Vacuum 3 bedrooms', 'Kitchen. 3 bathroom. Toilet next to laundry.', 'They have 2 dogs. Friendly and will bark for 2 minutes', 'Team = Sam, Lee and Kim', '53 Example Hill Road, Stirling']) expect(parseHeader(notHeader)).toBeNull();
+  });
+});
+
+describe('one calendar event (screenshot or copied text)', () => {
+  it('reads a calendar screenshot: client, price, key-box code, date, time, address, team', () => {
+    // As OCR reads a phone screenshot of the event (made-up client and address); icons come out as stray characters
+    const ocr = `® JORDAN & BEA ($30) #
+box 1234
+Thursday 26 Nov - 12 - 1pm
+Repeats every 2 weeks
+® 1 Sample Ave
+Exampleton SA 5046, Australia
+2, Created by someone@example.com
+[5] Team SAM + LEE`;
+    const r = parseCalendarCard(ocr, { today: '2026-11-01' })!;
+    expect(r.jobs[0]).toMatchObject({ clientName: 'JORDAN & BEA', date: '2026-11-26', startTime: '12:00', endTime: '13:00', amount: 30, hours: 1, specialInstructions: '🔑 box 1234' });
+    expect(r.jobs[0].address.formatted).toBe('1 Sample Ave, Exampleton SA 5046');
+    expect(r.jobs[0].description).toBe('Repeats every 2 weeks · Team SAM + LEE');
+    expect(JSON.stringify(r)).not.toContain('someone@example.com');
+  });
+  it('reads an event copied out of Google Calendar, with notes as tasks and instructions', () => {
+    const pasted = `OFFICE CO ($25)
+Monday, October 26⋅8:30 – 9:30am
+Every 2 weeks on Monday
+21 Example Rd
+21 Example Rd, Keswick SA 5035, Australia
+M & F toilets, office kitchen
+Front reception and office.
+empty bins
+
+No need to clean the workshop
+Team SAM + LEE
+Created by: someone@example.com`;
+    const j = parseCalendarCard(pasted, { today: '2026-10-20' })!.jobs[0];
+    expect(j).toMatchObject({ clientName: 'OFFICE CO', date: '2026-10-26', startTime: '08:30', endTime: '09:30', amount: 25, tasks: ['M & F toilets, office kitchen', 'Front reception and office', 'Empty bins'], specialInstructions: 'No need to clean the workshop' });
+    expect(j.address.formatted).toBe('21 Example Rd, Keswick SA 5035');
+  });
+  it('leaves team schedule messages to the message reader', () => {
+    expect(parseCalendarCard('Hi Sam,\nYour schedule for TUE 20 OCT\nJo - 9am ($30)\n5 Sample st Hawthorn\nPat - 11am ($35)\n8 Sample Ave, Fullarton', { today: '2026-10-19' })).toBeNull();
+    expect(parseCalendarCard('Schedule for Thu 8 OCT\nAlex - 9am ($40)\n53 Example Hill Road, Stirling', { today: '2026-10-07' })).toBeNull();
   });
 });

@@ -2,7 +2,7 @@ import { Router } from 'express';
 import crypto from 'node:crypto';
 import { z } from 'zod';
 import multer from 'multer';
-import { parseMessage, parseRoster, parseShiftCard, normaliseForHash, formatAddress, type ParseResult } from '../services/parser/index.js';
+import { parseMessage, parseRoster, parseShiftCard, parseCalendarCard, normaliseForHash, formatAddress, type ParseResult } from '../services/parser/index.js';
 import { extractText, isHeic, OCR_IMAGE_TYPES } from '../services/ocr/engine.js';
 import { env } from '../config/env.js';
 import { ImportBatch, Job, Income, IncomeSource, Invoice, Settings, Client } from '../models/index.js';
@@ -101,6 +101,9 @@ function analyse(text: string, today: string, employer?: string): { result: Pars
   // A single "shift details" screen from a rostering app: one job at a client's place, published by an agency
   const card = parseShiftCard(text, { today });
   if (card) return { result: card, format: 'message' };
+  // One event from a calendar app (screenshot or copied text): "Client ($30)", "Thursday 26 Nov · 12 – 1pm", address…
+  const event = parseCalendarCard(text, { today });
+  if (event) return { result: event, format: 'message' };
   const roster = parseRoster(text, { today, employer });
   return roster ? { result: roster, format: 'roster' } : { result: parseMessage(text, { today }), format: 'message' };
 }

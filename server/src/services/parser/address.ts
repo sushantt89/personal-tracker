@@ -18,7 +18,7 @@ const streetRe = (minWords: number) => new RegExp(
   `^\\s*((?:(?:unit|u|apt|apartment|flat|shop)\\s*\\d+[a-z]?\\s*[/,]?\\s*|\\d+[a-z]?\\s*/\\s*)?\\d+[a-z]?(?:\\s*-\\s*\\d+[a-z]?)?(?:\\s*,\\s*|\\s+)(?:[a-z'.-]+\\s+){${minWords},4}?(?:${SUFFIX_RE})\\b\\.?)(.*)$`,
   'i',
 );
-/** A street line: optional unit, number (a comma after it is tolerated: "29, Porter Street"), 0-4 words, a street suffix. */
+/** A street line: optional unit, number (a comma after it is tolerated: "29, Example Street"), 0-4 words, a street suffix. */
 const STREET_RE = streetRe(0);
 /** The same, but with a street name before the suffix. Tried first, so "11 Vista Terrace" isn't cut short at "Vista" (itself a suffix). */
 const NAMED_STREET_RE = streetRe(1);
@@ -89,7 +89,7 @@ export function parseAddress(lines: string[]): ParsedAddress {
   if (!joined) return out;
   const m = matchStreet(joined);
   if (m) {
-    // "29, Porter Street" → "29 Porter Street" (maps and routing don't find it with the comma)
+    // "29, Example Street" → "29 Example Street" (maps and routing don't find it with the comma)
     out.line1 = m[1].replace(/(\d[a-z]?)\s*,\s*(?=[a-z])/i, '$1 ').replace(/\s+/g, ' ').replace(/\.$/, '').trim();
     parseLocality(m[2].replace(/^[\s,]+/, ''), out);
   } else {

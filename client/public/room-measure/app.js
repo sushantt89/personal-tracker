@@ -24,9 +24,10 @@ const normType = t => !t ? '' : /brick/i.test(t) ? 'Brick' : 'Gyprock';
 const STATUS = {existing:'Existing', new:'New (to install)', remove:'Remove', relocate:'Relocate to…'};
 const DEDUCT = {door:1, window:1, sliding:1};
 const UNITF = {mm:1, cm:10, m:1000};
-const LS_KEY = 'roommeasure.v1', LS_CUR = 'roommeasure.current', LS_DEL = 'roommeasure.deleted';
+const LS_KEY = 'roommeasure.v1', LS_CUR = 'roommeasure.current', LS_DEL = 'roommeasure.deleted', LS_NAV = 'roommeasure.nav';
 
 /* ---------- state ---------- */
+let screen = 'houses', curHouse = null;
 let rooms = [], cur = null, selWall = 0, selItem = null, mode = 'select', tab = 'plan', tombstones = [];
 let store = null, dl = null;
 const dirty = new Set(), writing = new Set();
@@ -62,9 +63,11 @@ function mkItem(kind, wall, centreAt, r) {
   if (kind === 'column' && r) it.h = wallH(r, wall);
   return it;
 }
-function newRoom(name) {
-  const r = {id: uid('r'), name: name || ('Room ' + (rooms.length + 1)), site: '', units: 'mm', ceiling: 2400,
-    floorType: 'Carpet', wallType: 'Gyprock', shape: 'rect', open: false, startHeading: 0,
+function newRoom(name, house) {
+  const prev = house ? houseRooms(house.id).sort((a, b) => (b.updated || 0) - (a.updated || 0))[0] : null;
+  const r = {id: uid('r'), name: name || ('Room ' + ((house ? houseRooms(house.id).length : rooms.length) + 1)), site: house ? house.address : '',
+    houseId: house ? house.id : uid('h'), houseAddress: house ? house.address : '', units: prev ? prev.units : 'm', ceiling: prev ? prev.ceiling : 2400,
+    floorType: prev ? prev.floorType : 'Carpet', wallType: prev ? prev.wallType : 'Gyprock', shape: 'rect', open: false, startHeading: 0,
     walls: [], created: Date.now(), updated: Date.now(), pristine: true};
   applyShape(r, 'rect', {w: 4000, d: 3500});
   return r;
@@ -143,7 +146,7 @@ function planPt(seg, g, L, x) { const t = g.cw ? x : L - x; return {x: seg.x1 + 
 /* ---------- storage ---------- */
 let localOK = true;
 function saveLocal() {
-  try { localStorage.setItem(LS_KEY, JSON.stringify(rooms)); localStorage.setItem(LS_CUR, cur || ''); localStorage.setItem(LS_DEL, JSON.stringify(tombstones)); localOK = true; }
+  try { localStorage.setItem(LS_KEY, JSON.stringify(rooms)); localStorage.setItem(LS_CUR, cur || ''); localStorage.setItem(LS_NAV, JSON.stringify({screen, house: curHouse, tab})); localStorage.setItem(LS_DEL, JSON.stringify(tombstones)); localOK = true; }
   catch (e) { localOK = false; }
   return localOK;
 }
@@ -153,10 +156,27 @@ function loadLocal() {
   if (!Array.isArray(rooms)) rooms = [];
   rooms.forEach(migrate);
 }
-function migrate(r) { if (!r) return; r.wallType = normType(r.wallType) || 'Gyprock'; (r.walls || []).forEach(w => w.type = normType(w.type)); }
+function houseRooms(hid) { return rooms.filter(r => r.houseId === hid); }
+function houseList() {
+  const m = new Map();
+  rooms.forEach(r => {
+    const h = m.get(r.houseId) || {id: r.houseId, address: '', rooms: [], updated: 0};
+    h.rooms.push(r); h.updated = Math.max(h.updated, r.updated || 0); if (r.houseAddress) h.address = r.houseAddress;
+    m.set(r.houseId, h);
+  });
+  return [...m.values()].sort((a, b) => b.updated - a.updated);
+}
+function house(hid = curHouse) { return houseList().find(h => h.id === hid); }
+function migrate(r) {
+  if (!r) return;
+  if (!r.houseId) { const a = String(r.site || '').trim(); r.houseAddress = a || 'Unsorted rooms'; r.houseId = 'h-' + (a.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40) || 'unsorted'); }
+  r.site = r.houseAddress;
+  migrate2(r);
+}
+function migrate2(r) { if (!r) return; r.wallType = normType(r.wallType) || 'Gyprock'; (r.walls || []).forEach(w => w.type = normType(w.type)); }
 let saveTimer = null;
-function touch() {
-  const r = room(); if (!r) return;
+function touch(r = room()) {
+  if (!r) return;
   r.updated = Date.now(); delete r.pristine;
   dirty.add(r.id); const ok = saveLocal();
   if (store) setStatus('saving');
@@ -249,8 +269,8 @@ async function initCloud() {
     // drop an untouched starter room if the account already has rooms
     if (remote.length) { const before = rooms.length; rooms = rooms.filter(x => !(x.pristine && !ids.has(x.id))); if (rooms.length !== before) changed = true; }
     rooms.forEach(x => { if (!x.pristine && (!ids.has(x.id) || (remote.find(q => q.id === x.id)?.updated || 0) < (x.updated || 0))) dirty.add(x.id); });
-    if (!room()) cur = rooms[0]?.id;
-    if (!rooms.length) { const r = newRoom(); rooms.push(r); cur = r.id; }
+    if (!room()) { cur = null; if (screen === 'room') screen = curHouse && house() ? 'house' : 'houses'; }
+    if (screen === 'house' && !house()) screen = 'houses';
     saveLocal(); setStatus('cloud', 'Synced with ' + st.name);
     if (changed) { selWall = 0; selItem = null; renderAll(); }
     flushRemote();
@@ -457,7 +477,39 @@ function elevSVG(r, wi, opt = {}) {
 
 /* ---------- render ---------- */
 function renderRoomSel() {
-  $('#roomSel').innerHTML = rooms.map(r => `<option value="${r.id}" ${r.id === cur ? 'selected' : ''}>${esc(r.name || 'Untitled')}${r.site ? ' — ' + esc(r.site) : ''}</option>`).join('');
+  const h = house(), sep = '<span class="sep">›</span>';
+  let c = `<a data-go="houses">Houses</a>`;
+  if (screen !== 'houses' && h) c += sep + `<a data-go="house" title="${esc(h.address)}">${esc(h.address || 'House')}</a>`;
+  if (screen === 'room' && h) c += sep + `<select id="roomSel" aria-label="Room">${h.rooms.map(r => `<option value="${r.id}" ${r.id === cur ? 'selected' : ''}>${esc(r.name || 'Untitled')}</option>`).join('')}<option value="__new">+ Add room…</option></select>`;
+  $('#crumbs').innerHTML = c;
+}
+const ICON_HOUSE = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M3 11l9-7 9 7"/><path d="M5 10v10h14V10"/><path d="M10 20v-5h4v5"/></svg>';
+const ICON_ROOM = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="4" width="16" height="16" rx="1"/><path d="M4 12h6M14 4v6"/></svg>';
+const ago = t => { if (!t) return ''; const d = new Date(t); return d.toLocaleDateString([], {day: 'numeric', month: 'short'}) + ' ' + d.toLocaleTimeString([], {hour: 'numeric', minute: '2-digit'}); };
+function renderHouses() {
+  const hs = houseList();
+  $('#houseList').innerHTML = hs.length ? hs.map(h => `<div class="li" data-house="${esc(h.id)}"><div class="ic">${ICON_HOUSE}</div><div class="grow"><div class="t">${esc(h.address || 'No address')}</div><div class="s">${h.rooms.length} room${h.rooms.length === 1 ? '' : 's'} · ${esc(h.rooms.map(r => r.name).slice(0, 4).join(', '))}${h.rooms.length > 4 ? '…' : ''}</div></div><div class="s">${ago(h.updated)}</div></div>`).join('')
+    : '<div class="empty">No houses yet — enter an address above to start.</div>';
+}
+function renderHouse() {
+  const h = house(); if (!h) { screen = 'houses'; return renderAll(); }
+  const ai = $('#houseAddr'); if (document.activeElement !== ai) ai.value = h.address;
+  const area = h.rooms.reduce((a, r) => a + (r.open ? 0 : geom(r).area), 0);
+  $('#houseStats').innerHTML = `<span>Rooms <b>${h.rooms.length}</b></span><span>Measured floor area <b>${(area / 1e6).toFixed(2)} m²</b></span><span>Last change <b>${ago(h.updated)}</b></span>`;
+  $('#roomList').innerHTML = h.rooms.slice().sort((a, b) => (a.created || 0) - (b.created || 0)).map(r => {
+    const rs = roomSize(r), n = r.walls.reduce((a, w) => a + w.items.length, 0);
+    return `<div class="li" data-openroom="${r.id}"><div class="ic">${ICON_ROOM}</div><div class="grow"><div class="t">${esc(r.name || 'Untitled')}</div><div class="s">${fmt(rs.x, r)} × ${fmt(rs.y, r)} ${r.units} · ${r.walls.length} walls · ${n} item${n === 1 ? '' : 's'} · ceiling ${fmtU(r.ceiling, r)}</div></div><button class="btn sm danger" data-delroom="${r.id}" title="Delete room">✕</button></div>`;
+  }).join('');
+}
+function openRoom(id, t = 'setup') { cur = id; const r = room(); if (!r) return; curHouse = r.houseId; screen = 'room'; tab = t; selWall = 0; selItem = null; saveLocal(); renderAll(); window.scrollTo(0, 0); }
+function goHouse(hid) { curHouse = hid; screen = house(hid) ? 'house' : 'houses'; saveLocal(); renderAll(); window.scrollTo(0, 0); }
+async function removeRoom(r) {
+  const last = houseRooms(r.houseId).length === 1;
+  if (!(await ask(`Delete “${r.name}” and all its measurements?${last ? ' It is the only room, so the house will be removed too.' : ''}`, 'Delete'))) return false;
+  rooms = rooms.filter(x => x.id !== r.id); dirty.delete(r.id);
+  if (store) store.del(r.id).catch(() => { tombstones.push(r.id); saveLocal(); }); else tombstones.push(r.id);
+  if (cur === r.id) cur = null;
+  saveLocal(); return true;
 }
 const SHAPES = {
   square: {name: 'Square', svg: '<rect x="12" y="6" width="32" height="32"/>'},
@@ -640,9 +692,17 @@ function renderTabs() {
   $$('.view').forEach(v => v.classList.toggle('on', v.id === 'v-' + tab));
 }
 function renderAll() {
-  if (!room()) return;
+  if (screen === 'room' && !room()) screen = house() ? 'house' : 'houses';
+  if (screen === 'house' && !house()) screen = 'houses';
+  renderRoomSel();
+  $('nav.tabs').style.display = screen === 'room' ? '' : 'none';
+  if (screen !== 'room') {
+    $$('.view').forEach(v => v.classList.toggle('on', v.id === (screen === 'houses' ? 'v-houses' : 'v-house')));
+    if (screen === 'houses') renderHouses(); else renderHouse();
+    return;
+  }
   const r = room(); if (selWall >= r.walls.length) selWall = Math.max(0, r.walls.length - 1);
-  renderRoomSel(); renderTabs(); renderTools();
+  renderTabs(); renderTools();
   if (tab === 'setup') renderSetup();
   if (tab === 'plan') { renderWallPanel(); }
   if (tab === 'report') renderReport();
@@ -651,18 +711,45 @@ function renderAll() {
 
 /* ---------- events ---------- */
 $('nav.tabs').addEventListener('click', e => { const b = e.target.closest('[data-tab]'); if (!b) return; tab = b.dataset.tab; shapePick = null; renderAll(); try { location.hash = tab; } catch (x) {} });
-$('#roomSel').addEventListener('change', e => { cur = e.target.value; selWall = 0; selItem = null; saveLocal(); renderAll(); });
-$('#newRoom').addEventListener('click', () => { const r = newRoom(); delete r.pristine; rooms.push(r); cur = r.id; selWall = 0; selItem = null; tab = 'setup'; touch(); renderAll(); $('[data-room=name]').select(); });
+$('#crumbs').addEventListener('click', e => { const a = e.target.closest('[data-go]'); if (!a) return; if (a.dataset.go === 'houses') { screen = 'houses'; saveLocal(); renderAll(); } else goHouse(curHouse); });
+$('#crumbs').addEventListener('change', e => {
+  if (e.target.id !== 'roomSel') return;
+  if (e.target.value === '__new') { goHouse(curHouse); setTimeout(() => $('#nrName').focus(), 50); return; }
+  openRoom(e.target.value, tab);
+});
+function addRoom(h, name) { const r = newRoom(name.trim(), h); delete r.pristine; rooms.push(r); touch(r); openRoom(r.id, 'setup'); toast(`“${r.name}” added — choose its shape`); }
+$('#newHouseForm').addEventListener('submit', e => {
+  e.preventDefault();
+  const addr = $('#nhAddr').value.trim(); if (!addr) { $('#nhAddr').focus(); return; }
+  addRoom({id: uid('h'), address: addr}, $('#nhRoom').value || 'Room 1');
+  $('#nhAddr').value = ''; $('#nhRoom').value = '';
+});
+$('#houseList').addEventListener('click', e => { const li = e.target.closest('[data-house]'); if (li) goHouse(li.dataset.house); });
+$('#newRoomForm').addEventListener('submit', e => { e.preventDefault(); const h = house(); if (!h) return; addRoom(h, $('#nrName').value); $('#nrName').value = ''; });
+$('#roomList').addEventListener('click', async e => {
+  const d = e.target.closest('[data-delroom]');
+  if (d) { const r = rooms.find(x => x.id === d.dataset.delroom); if (r && await removeRoom(r)) renderAll(); return; }
+  const li = e.target.closest('[data-openroom]'); if (li) openRoom(li.dataset.openroom, 'plan');
+});
+let addrTimer;
+$('#houseAddr').addEventListener('input', e => {
+  const v = e.target.value, hid = curHouse;
+  clearTimeout(addrTimer);
+  addrTimer = setTimeout(() => { if (!v.trim()) return; houseRooms(hid).forEach(r => { r.houseAddress = v.trim(); r.site = r.houseAddress; touch(r); }); renderRoomSel(); }, 500);
+});
+$('#delHouse').addEventListener('click', async () => {
+  const h = house(); if (!h) return;
+  if (!(await ask(`Delete ${h.address} and all ${h.rooms.length} room(s) in it? This can't be undone.`, 'Delete house'))) return;
+  h.rooms.forEach(r => { dirty.delete(r.id); if (store) store.del(r.id).catch(() => { tombstones.push(r.id); saveLocal(); }); else tombstones.push(r.id); });
+  rooms = rooms.filter(r => r.houseId !== h.id); cur = null; screen = 'houses'; saveLocal(); renderAll(); toast('House deleted');
+});
 $('#dupRoom').addEventListener('click', () => {
   const r = JSON.parse(JSON.stringify(room())); r.id = uid('r'); r.name += ' (copy)'; r.walls.forEach(w => { w.id = uid('w'); w.items.forEach(i => i.id = uid('i')); });
-  rooms.push(r); cur = r.id; touch(); renderAll(); toast('Room duplicated');
+  r.created = Date.now(); rooms.push(r); cur = r.id; touch(); renderAll(); toast('Room duplicated');
 });
 $('#delRoom').addEventListener('click', async () => {
-  const r = room(); if (!(await ask(`Delete “${r.name}” and all its measurements?`, 'Delete'))) return;
-  rooms = rooms.filter(x => x.id !== r.id); dirty.delete(r.id);
-  if (store) store.del(r.id).catch(() => { tombstones.push(r.id); saveLocal(); }); else tombstones.push(r.id);
-  if (!rooms.length) rooms.push(newRoom());
-  cur = rooms[0].id; selWall = 0; saveLocal(); renderAll();
+  const r = room(); if (!r) return;
+  if (await removeRoom(r)) { screen = house() ? 'house' : 'houses'; saveLocal(); renderAll(); }
 });
 
 // room fields
@@ -903,17 +990,17 @@ async function saveFile(filename, data, mime) {
   } catch (e) { toast('Could not download the file'); }
 }
 function csvRows(r) {
-  const rows = [['Room', 'Wall', 'Wall length', 'Wall height', 'Wall type', 'Item', 'Label', 'Status', 'Width / diameter', 'Height', 'Depth', 'Floor to bottom/centre', 'From left wall', 'From right wall', 'New: from left wall', 'New: from right wall', 'New: from floor', 'Notes']];
+  const rows = [['House', 'Room', 'Wall', 'Wall length', 'Wall height', 'Wall type', 'Item', 'Label', 'Status', 'Width / diameter', 'Height', 'Depth', 'Floor to bottom/centre', 'From left wall', 'From right wall', 'New: from left wall', 'New: from right wall', 'New: from floor', 'Notes']];
   r.walls.forEach((w, i) => {
-    if (!w.items.length) rows.push([r.name, letter(i), fmt(w.length, r), fmt(wallH(r, w), r), w.type || r.wallType, '', '', '', '', '', '', '', '', '', '', '', '', w.note]);
+    if (!w.items.length) rows.push([r.houseAddress || '', r.name, letter(i), fmt(w.length, r), fmt(wallH(r, w), r), w.type || r.wallType, '', '', '', '', '', '', '', '', '', '', '', '', w.note]);
     w.items.forEach(it => { const sd = sides(it, w), st = it.status || 'existing', t = st === 'relocate' && it.to ? targetSides(it, w) : null;
-      rows.push([r.name, letter(i), fmt(w.length, r), fmt(wallH(r, w), r), w.type || r.wallType, KINDS[it.kind].name, it.label, STATUS[st].replace('…', ''), isPoint(it) ? '' : fmt(it.w, r), isPoint(it) || KINDS[it.kind].cls === 'round' ? '' : fmt(it.h, r), it.depth ? fmt(it.depth, r) : '', fmt(it.floor, r), fmt(sd.left, r), fmt(sd.right, r), t ? fmt(t.left, r) : '', t ? fmt(t.right, r) : '', t ? fmt(it.to.floor, r) : '', it.note]); });
+      rows.push([r.houseAddress || '', r.name, letter(i), fmt(w.length, r), fmt(wallH(r, w), r), w.type || r.wallType, KINDS[it.kind].name, it.label, STATUS[st].replace('…', ''), isPoint(it) ? '' : fmt(it.w, r), isPoint(it) || KINDS[it.kind].cls === 'round' ? '' : fmt(it.h, r), it.depth ? fmt(it.depth, r) : '', fmt(it.floor, r), fmt(sd.left, r), fmt(sd.right, r), t ? fmt(t.left, r) : '', t ? fmt(t.right, r) : '', t ? fmt(it.to.floor, r) : '', it.note]); });
   });
   return rows;
 }
 $('#dlCsv').addEventListener('click', () => {
   const r = room(), q = v => `"${String(v ?? '').replace(/"/g, '""')}"`;
-  saveFile(safeName(r.name) + '-measurements.csv', '﻿' + csvRows(r).map(rw => rw.map(q).join(',')).join('\r\n'), 'text/csv');
+  saveFile(safeName((r.houseAddress ? r.houseAddress + ' ' : '') + r.name) + '-measurements.csv', '﻿' + csvRows(r).map(rw => rw.map(q).join(',')).join('\r\n'), 'text/csv');
 });
 
 let jsPDFp = null;
@@ -968,7 +1055,7 @@ async function buildPDF(r) {
   };
   // header
   y += 4; text(r.name || 'Room', M, 18, 'bold'); y += 6;
-  if (r.site) { text(r.site, M, 10, 'normal', [107, 115, 128]); y += 5; }
+  if (r.houseAddress) { text(r.houseAddress, M, 10, 'normal', [107, 115, 128]); y += 5; }
   text(`Measured ${new Date(r.updated || Date.now()).toLocaleDateString()}  ·  all measurements in ${u}`, M, 8.5, 'normal', [107, 115, 128]); y += 6;
   const facts = [['Room size (W × L)', `${fmt(rs.x, r)} × ${fmt(rs.y, r)} ${u}`], ['Ceiling height', fmtU(r.ceiling, r)], ['Floor type', r.floorType || '—'], ['Wall type', r.wallType || '—'],
     ['Floor area', r.open ? '— (open)' : (g.area / 1e6).toFixed(2) + ' m2'], ['Walls', String(r.walls.length) + (r.open ? ' (open side)' : '')]];
@@ -1019,16 +1106,16 @@ async function buildPDF(r) {
 }
 $('#dlPdf').addEventListener('click', async e => {
   const btn = e.currentTarget, r = room(); btn.disabled = true; const old = btn.textContent; btn.textContent = 'Making PDF…';
-  try { const blob = await buildPDF(r); await saveFile(safeName(r.name) + '-measurements.pdf', blob, 'application/pdf'); }
+  try { const blob = await buildPDF(r); await saveFile(safeName((r.houseAddress ? r.houseAddress + ' ' : '') + r.name) + '-measurements.pdf', blob, 'application/pdf'); }
   catch (err) { toast('Could not make the PDF'); console.error(err); }
   finally { btn.disabled = false; btn.textContent = old; }
 });
 
 /* ---------- boot ---------- */
 loadLocal();
-if (!rooms.length) rooms.push(newRoom());
-if (!room()) cur = rooms[0].id;
-try { const h = location.hash.slice(1); if (['setup', 'plan', 'report'].includes(h)) tab = h; } catch (e) {}
-window.addEventListener('hashchange', () => { const h = location.hash.slice(1); if (['setup', 'plan', 'report'].includes(h) && h !== tab) { tab = h; renderAll(); } });
+rooms = rooms.filter(r => !r.pristine);
+try { const n = JSON.parse(localStorage.getItem(LS_NAV) || 'null'); if (n) { screen = n.screen || 'houses'; curHouse = n.house || null; if (['setup', 'plan', 'report'].includes(n.tab)) tab = n.tab; } } catch (e) {}
+if (room()) curHouse = curHouse || room().houseId; else if (screen === 'room') screen = 'houses';
+window.addEventListener('hashchange', () => { const h = location.hash.slice(1); if (screen === 'room' && ['setup', 'plan', 'report'].includes(h) && h !== tab) { tab = h; renderAll(); } });
 renderAll();
 initCloud();

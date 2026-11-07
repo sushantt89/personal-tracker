@@ -102,6 +102,19 @@ table.rt th{background:#f6f7f9}
 .toast{position:fixed;bottom:16px;left:50%;transform:translateX(-50%);background:var(--ink);color:#fff;padding:8px 14px;border-radius:8px;font-size:13px;opacity:0;transition:opacity .2s;pointer-events:none;z-index:60}
 .toast.on{opacity:1}
 .hint{font-size:12px;color:var(--muted);margin-top:6px}
+.crumbs{display:flex;align-items:center;gap:6px;flex-wrap:wrap;min-width:0;font-size:14px}
+.crumbs a{color:var(--accent);text-decoration:none;cursor:pointer;font-weight:600;max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.crumbs .sep{color:var(--muted)}
+.crumbs select{max-width:200px;font-weight:600}
+.list{display:grid;gap:8px}
+.li{display:flex;align-items:center;gap:12px;border:1px solid var(--line);border-radius:10px;padding:12px;background:#fff;cursor:pointer}
+.li:hover{border-color:#c9ced6}
+.li .ic{width:38px;height:38px;border-radius:10px;background:var(--accent-soft);display:grid;place-items:center;flex:none;color:var(--accent)}
+.li .ic svg{width:22px;height:22px}
+.li .t{font-weight:700}
+.li .s{font-size:12px;color:var(--muted)}
+.li .grow{min-width:0}
+.li .t,.li .s{overflow:hidden;text-overflow:ellipsis}
 /* inside Personal Tracker */
 .embed header{position:sticky}
 .embed .brand{display:none}
@@ -114,8 +127,7 @@ svg text{font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
 <body>
 <header>
   <div class="brand"><svg viewBox="0 0 24 24" fill="none" stroke="#1f6feb" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h4M3 15h4M9 3v4M15 3v4"/></svg>Room Measure</div>
-  <select id="roomSel" aria-label="Room" style="max-width:220px"></select>
-  <button class="btn" id="newRoom">+ New room</button>
+  <nav class="crumbs" id="crumbs" aria-label="Where you are"></nav>
   <div class="grow"></div>
   <span class="status" id="status"><i></i><span>Saved on this device</span></span>
 </header>
@@ -127,13 +139,47 @@ svg text{font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
 </nav>
 
 <main>
+  <!-- HOUSES -->
+  <section class="view" id="v-houses">
+    <div class="card" style="margin-top:12px">
+      <h2>New house</h2>
+      <form id="newHouseForm" class="fields" style="grid-template-columns:repeat(auto-fill,minmax(220px,1fr));align-items:end">
+        <label class="f">House address<input id="nhAddr" type="text" placeholder="e.g. 12 Smith St, Adelaide" autocomplete="street-address" required></label>
+        <label class="f">First room<input id="nhRoom" type="text" placeholder="e.g. Kitchen"></label>
+        <button class="btn primary" type="submit" style="height:38px">Create house</button>
+      </form>
+    </div>
+    <div class="card" style="margin-top:12px">
+      <h2>Houses</h2>
+      <div class="list" id="houseList"></div>
+    </div>
+  </section>
+
+  <!-- ONE HOUSE -->
+  <section class="view" id="v-house">
+    <div class="card" style="margin-top:12px">
+      <div class="fields" style="grid-template-columns:minmax(0,1fr) auto;align-items:end">
+        <label class="f">House address<input id="houseAddr" type="text" autocomplete="street-address"></label>
+        <button class="btn danger" id="delHouse" style="height:38px">Delete house</button>
+      </div>
+      <div class="stats" id="houseStats"></div>
+    </div>
+    <div class="card" style="margin-top:12px">
+      <h2>Rooms</h2>
+      <div class="list" id="roomList"></div>
+      <form id="newRoomForm" class="row" style="margin-top:12px">
+        <input id="nrName" type="text" placeholder="Room name, e.g. Bedroom 2" style="flex:1;min-width:160px">
+        <button class="btn primary" type="submit">+ Add room</button>
+      </form>
+    </div>
+  </section>
+
   <!-- SETUP -->
   <section class="view" id="v-setup">
     <div class="card">
       <h2>Room details</h2>
       <div class="fields">
         <label class="f">Room name<input data-room="name" type="text"></label>
-        <label class="f">Job / address<input data-room="site" type="text" placeholder="optional"></label>
         <label class="f">Units<select data-room="units"><option value="mm">mm</option><option value="cm">cm</option><option value="m">m</option></select></label>
         <label class="f">Ceiling height<div class="unit-in"><input data-room="ceiling" type="number" inputmode="decimal" step="any"><span class="u"></span></div></label>
         <label class="f">Floor type<input data-room="floorType" list="floorTypes" type="text"></label>

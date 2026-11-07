@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Room Measure</title>
+<style>
+:root{
+  --bg:#f4f5f7; --card:#fff; --ink:#1c2430; --muted:#6b7380; --line:#e2e5ea;
+  --accent:#1f6feb; --accent-soft:#e8f0fe; --warn:#b42318; --warn-soft:#fdecea; --ok:#127a43;
+  --r:10px;
+}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+button,input,select,textarea{font:inherit;color:inherit}
+header{position:sticky;top:0;z-index:20;background:#fff;border-bottom:1px solid var(--line);display:flex;gap:8px;align-items:center;padding:8px 12px;flex-wrap:wrap}
+.brand{font-weight:700;letter-spacing:-.01em;margin-right:4px;display:flex;align-items:center;gap:6px}
+.brand svg{width:22px;height:22px}
+.grow{flex:1}
+select,input[type=text],input[type=number],input:not([type]),textarea{border:1px solid var(--line);border-radius:8px;padding:7px 9px;background:#fff;min-width:0}
+input:focus,select:focus,textarea:focus{outline:2px solid var(--accent-soft);border-color:var(--accent)}
+.btn{border:1px solid var(--line);background:#fff;border-radius:8px;padding:7px 11px;cursor:pointer;white-space:nowrap}
+.btn:hover{border-color:#c9ced6}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+.btn.primary.danger-btn{background:var(--warn);border-color:var(--warn)}
+.btn.danger{color:var(--warn)}
+.btn.sm{padding:4px 8px;font-size:13px}
+.btn.on{background:var(--accent-soft);border-color:var(--accent);color:var(--accent)}
+nav.tabs{display:flex;gap:4px;padding:8px 12px 0;max-width:1400px;margin:0 auto}
+nav.tabs button{border:0;background:none;padding:8px 14px;border-radius:8px 8px 0 0;cursor:pointer;color:var(--muted);font-weight:600}
+nav.tabs button.on{background:#fff;color:var(--ink);box-shadow:0 -1px 0 var(--line) inset}
+main{max-width:1400px;margin:0 auto;padding:0 12px 40px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:var(--r);padding:14px}
+.card h2{font-size:15px;margin:0 0 10px;display:flex;align-items:center;gap:8px}
+.card h3{font-size:13px;margin:14px 0 8px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
+.view{display:none}
+.view.on{display:block}
+.grid2{display:grid;gap:12px;grid-template-columns:1fr}
+@media(min-width:1000px){.grid2{grid-template-columns:minmax(0,1fr) minmax(0,1.1fr)}}
+.fields{display:grid;gap:10px;grid-template-columns:repeat(auto-fill,minmax(150px,1fr))}
+label.f{display:flex;flex-direction:column;gap:4px;font-size:12px;color:var(--muted);font-weight:600}
+label.f input,label.f select{font-size:14px;color:var(--ink);font-weight:400}
+.unit-in{display:flex;align-items:center;gap:4px}
+.unit-in input{flex:1;width:100%}
+.unit-in span{font-size:12px;color:var(--muted);min-width:18px}
+.shapes{display:grid;gap:8px;grid-template-columns:repeat(auto-fill,minmax(110px,1fr))}
+.shape{border:1.5px solid var(--line);border-radius:10px;padding:10px 8px;text-align:center;cursor:pointer;background:#fff}
+.shape.on{border-color:var(--accent);background:var(--accent-soft)}
+.shape svg{width:56px;height:44px;display:block;margin:0 auto 4px}
+.shape div{font-size:12px;font-weight:600}
+table.walls{width:100%;border-collapse:collapse;margin-top:6px}
+table.walls th{font-size:12px;color:var(--muted);text-align:left;font-weight:600;padding:4px 6px;border-bottom:1px solid var(--line)}
+table.walls td{padding:4px 6px;border-bottom:1px solid var(--line);vertical-align:middle}
+table.walls input,table.walls select{width:100%}
+.lbl{display:inline-grid;place-items:center;min-width:26px;height:26px;border-radius:50%;background:var(--ink);color:#fff;font-weight:700;font-size:13px;padding:0 6px}
+.note{font-size:12px;color:var(--muted)}
+.warn{background:var(--warn-soft);color:var(--warn);border-radius:8px;padding:8px 10px;font-size:13px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:8px}
+.toolbar{display:flex;gap:6px 14px;flex-wrap:wrap;margin-bottom:8px}
+.tool{display:flex;align-items:center;gap:6px}
+.dot{width:10px;height:10px;border-radius:3px;display:inline-block;flex:none}
+.svgbox{border:1px solid var(--line);border-radius:8px;background:#fbfcfd;touch-action:none;overflow:hidden}
+.svgbox svg{display:block;width:100%;height:auto;max-height:62vh}
+.chips{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px}
+.chip{border:1.5px solid var(--line);background:#fff;border-radius:999px;padding:4px 12px;cursor:pointer;font-weight:700}
+.chip.on{background:var(--ink);color:#fff;border-color:var(--ink)}
+.stats{display:flex;gap:16px;flex-wrap:wrap;font-size:13px;margin-top:8px;color:var(--muted)}
+.stats b{color:var(--ink)}
+.items{display:grid;gap:8px;margin-top:8px}
+.item{border:1px solid var(--line);border-left:4px solid var(--c,#999);border-radius:8px;padding:10px;background:#fff}
+.item.sel{box-shadow:0 0 0 2px var(--accent)}
+.item-h{display:flex;gap:6px;align-items:center;margin-bottom:8px;flex-wrap:wrap}
+.item-h select{flex:0 0 auto}
+.item-h input{flex:1;min-width:90px}
+.item .fields{grid-template-columns:repeat(auto-fill,minmax(120px,1fr))}
+.item .fields .wide{grid-column:span 2}
+.item .fields .wide input{min-width:70px}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden}
+.seg button{border:0;background:#fff;padding:6px 9px;cursor:pointer;font-size:12px}
+.seg button.on{background:var(--ink);color:#fff}
+.nearest{font-size:12px;color:var(--muted);margin-top:6px}
+.reloc{margin-top:10px;padding:8px 10px;border:1px dashed var(--c);border-radius:8px;background:#fafbfc;font-size:13px}
+.status-sel.s-new{background:#eaf6ee;border-color:#9fd5b3}
+.status-sel.s-remove{background:var(--warn-soft);border-color:#f2b8b5}
+.status-sel.s-relocate{background:#fff6e5;border-color:#f3cf8a}
+.tool-group{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+.tool-group small{font-size:11px;color:var(--muted);font-weight:700;text-transform:uppercase;letter-spacing:.04em;margin-right:2px}
+.status{font-size:12px;color:var(--muted);display:flex;align-items:center;gap:6px}
+.status i{width:8px;height:8px;border-radius:50%;background:#c5cad2;display:inline-block}
+.status.cloud i{background:var(--ok)}
+.status.err i{background:var(--warn)}
+.empty{color:var(--muted);text-align:center;padding:24px 8px}
+.report-wall{break-inside:avoid;margin-top:14px}
+table.rt{width:100%;border-collapse:collapse;font-size:13px;margin-top:6px}
+table.rt th,table.rt td{border:1px solid var(--line);padding:4px 6px;text-align:left}
+table.rt th{background:#f6f7f9}
+.modal-bg{position:fixed;inset:0;background:rgba(15,20,30,.4);display:none;place-items:center;z-index:50;padding:16px}
+.modal-bg.on{display:grid}
+.modal{background:#fff;border-radius:12px;padding:18px;max-width:420px;width:100%;box-shadow:0 10px 40px rgba(0,0,0,.2)}
+.modal p{margin:0 0 14px}
+.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.right{justify-content:flex-end}
+.toast{position:fixed;bottom:16px;left:50%;transform:translateX(-50%);background:var(--ink);color:#fff;padding:8px 14px;border-radius:8px;font-size:13px;opacity:0;transition:opacity .2s;pointer-events:none;z-index:60}
+.toast.on{opacity:1}
+.hint{font-size:12px;color:var(--muted);margin-top:6px}
+/* inside Personal Tracker */
+.embed header{position:sticky}
+.embed .brand{display:none}
+.embed main{padding-bottom:24px}
+svg text{font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+.it{cursor:grab}
+.it:active{cursor:grabbing}
+</style>
+</head>
+<body>
+<header>
+  <div class="brand"><svg viewBox="0 0 24 24" fill="none" stroke="#1f6feb" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h4M3 15h4M9 3v4M15 3v4"/></svg>Room Measure</div>
+  <select id="roomSel" aria-label="Room" style="max-width:220px"></select>
+  <button class="btn" id="newRoom">+ New room</button>
+  <div class="grow"></div>
+  <span class="status" id="status"><i></i><span>Saved on this device</span></span>
+</header>
+
+<nav class="tabs">
+  <button data-tab="setup">1 · Room setup</button>
+  <button data-tab="plan" class="on">2 · Plan &amp; walls</button>
+  <button data-tab="report">3 · Report</button>
+</nav>
+
+<main>
+  <!-- SETUP -->
+  <section class="view" id="v-setup">
+    <div class="card">
+      <h2>Room details</h2>
+      <div class="fields">
+        <label class="f">Room name<input data-room="name" type="text"></label>
+        <label class="f">Job / address<input data-room="site" type="text" placeholder="optional"></label>
+        <label class="f">Units<select data-room="units"><option value="mm">mm</option><option value="cm">cm</option><option value="m">m</option></select></label>
+        <label class="f">Ceiling height<div class="unit-in"><input data-room="ceiling" type="number" inputmode="decimal" step="any"><span class="u"></span></div></label>
+        <label class="f">Floor type<input data-room="floorType" list="floorTypes" type="text"></label>
+        <label class="f">Wall type (default)<select data-room="wallType"><option>Gyprock</option><option>Brick</option></select></label>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:12px">
+      <h2>Room shape</h2>
+      <div class="shapes" id="shapes"></div>
+      <div id="shapeInputs" style="margin-top:12px"></div>
+    </div>
+
+    <div class="card" style="margin-top:12px">
+      <h2>Walls <span class="note">— walk around the room clockwise; each wall turns from the previous one</span></h2>
+      <div style="overflow-x:auto"><table class="walls" id="wallTable"></table></div>
+      <div class="row" style="margin-top:10px">
+        <button class="btn" id="addWall">+ Add wall</button>
+        <label class="row note"><input type="checkbox" id="openRoom"> Open side (not all walls closed, e.g. 3 walls)</label>
+      </div>
+      <div id="closureWarn"></div>
+    </div>
+    <div class="card" style="margin-top:12px">
+      <h2>Rooms</h2>
+      <div class="row">
+        <button class="btn" id="dupRoom">Duplicate room</button>
+        <button class="btn danger" id="delRoom">Delete room</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- PLAN & WALLS -->
+  <section class="view on" id="v-plan">
+    <div class="grid2" style="margin-top:0">
+      <div class="card">
+        <h2>Bird's-eye plan</h2>
+        <div class="toolbar" id="planTools"></div>
+        <div class="svgbox" id="plan"></div>
+        <div class="hint" id="planHint"></div>
+        <div class="stats" id="roomStats"></div>
+      </div>
+      <div class="card" id="wallCard">
+        <h2>Wall elevation</h2>
+        <div class="chips" id="wallChips"></div>
+        <div class="svgbox" id="elev"></div>
+        <div class="hint">Drag any item on the drawing to move it. Every number below is editable.</div>
+        <div id="wallFields"></div>
+        <h3>Doors, windows &amp; fixtures on this wall</h3>
+        <div class="toolbar" id="addItemTools"></div>
+        <div class="items" id="itemList"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- REPORT -->
+  <section class="view" id="v-report">
+    <div class="card">
+      <div class="row">
+        <h2 style="margin:0" class="grow">Measurement report</h2>
+        <button class="btn primary" id="dlPdf">Download PDF</button>
+        <button class="btn" id="dlCsv">Download CSV</button>
+      </div>
+      <div id="report"></div>
+    </div>
+  </section>
+</main>
+
+<datalist id="floorTypes"><option>Carpet</option><option>Tiles</option><option>Timber</option><option>Engineered timber</option><option>Laminate</option><option>Vinyl / LVP</option><option>Polished concrete</option><option>Concrete slab</option></datalist>
+
+
+<div class="modal-bg" id="modal"><div class="modal"><p id="modalMsg"></p><div class="row right"><button class="btn" id="modalNo">Cancel</button><button class="btn primary" id="modalYes">OK</button></div></div></div>
+<div class="toast" id="toast"></div>
+
+<script src="app.js"></script>
+</body>
+</html>

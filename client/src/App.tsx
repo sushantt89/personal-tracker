@@ -31,6 +31,7 @@ const TermsPage = lazy(() => import('./pages/Legal').then((m) => ({ default: m.T
 const Today = lazy(() => import('./pages/Today'));
 const WorkHours = lazy(() => import('./pages/WorkHours'));
 const Kilometres = lazy(() => import('./pages/Kilometres'));
+const Measurements = lazy(() => import('./pages/Measurements'));
 
 const Spinner = () => <Box sx={{ display: 'grid', placeItems: 'center', minHeight: '50vh' }}><CircularProgress /></Box>;
 
@@ -98,6 +99,7 @@ export default function App() {
             <Route path="notifications" element={<NotificationsPage />} />
             <Route path="assistant" element={<Assistant />} />
             <Route path="news" element={<News />} />
+            <Route path="measurements" element={<Measurements />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Route>
         </Routes>

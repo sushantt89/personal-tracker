@@ -19,6 +19,7 @@ import NewspaperOutlinedIcon from '@mui/icons-material/NewspaperOutlined';
 import WbSunnyOutlinedIcon from '@mui/icons-material/WbSunnyOutlined';
 import AccessTimeOutlinedIcon from '@mui/icons-material/AccessTimeOutlined';
 import DirectionsCarOutlinedIcon from '@mui/icons-material/DirectionsCarOutlined';
+import StraightenOutlinedIcon from '@mui/icons-material/StraightenOutlined';
 import type { ReactNode } from 'react';
 
 export interface NavItem { to: string; label: string; icon: ReactNode }
@@ -49,5 +50,8 @@ export const NAV: { section?: string; items: NavItem[] }[] = [
     { to: '/insights', label: 'Insights', icon: <LightbulbOutlinedIcon /> },
     { to: '/documents', label: 'Documents', icon: <FolderOutlinedIcon /> },
     { to: '/settings', label: 'Settings', icon: <SettingsOutlinedIcon /> },
+  ] },
+  { section: 'Tools', items: [
+    { to: '/measurements', label: 'Measurements', icon: <StraightenOutlinedIcon /> },
   ] },
 ];

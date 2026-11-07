@@ -1,7 +1,7 @@
 /* Personal Tracker service worker.
    - Makes the app installable and lets it open when offline (the app shell is cached; your data always comes live from the server).
    - Shows reminders sent by the server and opens the app when one is tapped. */
-const CACHE = 'pt-shell-v2';
+const CACHE = 'pt-shell-v3';
 const SHELL = ['/', '/manifest.webmanifest', '/icon-192.png', '/icon-512.png', '/favicon.svg'];
 
 self.addEventListener('install', (event) => {
@@ -19,6 +19,16 @@ self.addEventListener('fetch', (event) => {
   const url = new URL(req.url);
   if (url.origin !== self.location.origin || url.pathname.startsWith('/api/')) return; // data is never cached
 
+  // Room Measure tool (opened inside the Measurements page): network first, keep its own copy for offline use
+  if (url.pathname.startsWith('/room-measure/')) {
+    event.respondWith(
+      fetch(req).then((res) => {
+        if (res.ok) { const copy = res.clone(); caches.open(CACHE).then((c) => c.put(url.pathname, copy)); }
+        return res;
+      }).catch(() => caches.match(url.pathname).then((r) => r || new Response('You are offline.', { status: 503, headers: { 'Content-Type': 'text/plain' } }))),
+    );
+    return;
+  }
   // Opening the app: try the network, fall back to the saved shell when offline
   if (req.mode === 'navigate') {
     event.respondWith(

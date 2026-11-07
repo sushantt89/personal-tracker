@@ -22,6 +22,7 @@ import { userCtx } from './utils/userCtx.js';
 import googleRoutes from './routes/google.js';
 import travelRoutes from './routes/travel.js';
 import notificationRoutes from './routes/notifications.js';
+import roomMeasureRoutes from './routes/roomMeasures.js';
 import {
   categoriesRouter, incomeSourcesRouter, clientsRouter, jobsRouter, incomeRouter, expensesRouter, billsRouter, tasksRouter, invoiceTemplatesRouter,
 } from './routes/resources.js';
@@ -60,6 +61,7 @@ export function createApp() {
   api.use('/notifications', notificationRoutes);
   api.use('/assistant', assistantRoutes);
   api.use('/news', newsRoutes);
+  api.use('/room-measures', roomMeasureRoutes);
   api.get('/work-hours', async (req, res) => { res.json(await workHours(req.userId!, (await userCtx(req)).today)); });
   api.use('/', analyticsRoutes);
   api.use('/', settingsRoutes);

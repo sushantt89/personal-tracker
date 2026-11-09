@@ -1,5 +1,5 @@
 "use strict";
-const APP_VERSION = '46cbcc7';
+const APP_VERSION = '6db2a74';
 try { if (/[?&]embed=tracker/.test(location.search)) document.documentElement.classList.add('embed'); } catch (e) {}
 /* ---------- constants ---------- */
 /* cls: open = opening measured to frame edges, point = measured to centre,
@@ -769,7 +769,7 @@ function elevSVG(r, wi, opt = {}) {
         }
         if (it.kind === 'sliding') sh += `<line x1="${cx}" y1="${top}" x2="${cx}" y2="${bot}" stroke="${c}" stroke-width="${sw * 1.5}"/>`;
         if (it.kind === 'ac') for (let q = 1; q < 4; q++) sh += `<line x1="${x0 + it.w * 0.08}" y1="${top + it.h * q / 4}" x2="${x1 - it.w * 0.08}" y2="${top + it.h * q / 4}" stroke="${c}" stroke-width="${sw}"/>`;
-        const name = short(it.label || k.name, 20) + (it.kind === 'door' ? (it.swing === 'none' ? ' · no door' : it.swing === 'out' ? ' · opens out' : ' · opens in') : ''), size = `${fmt(it.w, r)} × ${fmt(it.h, r)}${k.cls === 'obst' && it.depth ? ' × ' + fmt(it.depth, r) : ''}`;
+        const name = short(it.label || k.name, 20) + (it.kind === 'door' ? (it.swing === 'none' ? ' · frame only' : it.swing === 'out' ? ' · opens out' : ' · opens in') : ''), size = `${fmt(it.w, r)} × ${fmt(it.h, r)}${k.cls === 'obst' && it.depth ? ' × ' + fmt(it.depth, r) : ''}`;
         const lines = [{t: name + (tag ? ' · ' + tag : ''), size: fs * 0.75, bold: true}, {t: size, size: fs * 0.7}];
         const fits = lines.every(q => tw(q.t, q.size) < it.w * 0.92) && it.h > fs * 2.6;
         if (fits) { const ty = top + Math.min(it.h * 0.35, fs * 1.4); lines.forEach((q, n) => sh += `<text x="${cx}" y="${ty + n * fs}" font-size="${q.size}" fill="${c}" text-anchor="middle" ${q.bold ? 'font-weight="700"' : ''} paint-order="stroke" stroke="#fff" stroke-width="${fs * 0.2}">${esc(q.t)}</text>`); }
@@ -965,7 +965,7 @@ function renderWallPanel() {
   renderWallStats();
   renderPhotos();
 }
-const doorSwing = it => it.kind !== 'door' ? '' : it.swing === 'none' ? 'frame only, no door' : `opens ${it.swing === 'out' ? 'outward' : 'into room'}, hinge ${it.hinge === 'R' ? 'right' : 'left'}`;
+const doorSwing = it => it.kind !== 'door' ? '' : it.swing === 'none' ? 'frame only' : `opens ${it.swing === 'out' ? 'outward' : 'into room'}, hinge ${it.hinge === 'R' ? 'right' : 'left'}`;
 const itemTitle = it => KINDS[it.kind].name + (it.kind === 'door' ? ` (${doorSwing(it)})` : '');
 function itemLabels(it) {
   const k = KINDS[it.kind];

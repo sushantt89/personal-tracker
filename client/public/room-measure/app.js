@@ -1,5 +1,5 @@
 "use strict";
-const APP_VERSION = '6db2a74';
+const APP_VERSION = 'a3aa72e';
 try { if (/[?&]embed=tracker/.test(location.search)) document.documentElement.classList.add('embed'); } catch (e) {}
 /* ---------- constants ---------- */
 /* cls: open = opening measured to frame edges, point = measured to centre,
@@ -1433,6 +1433,9 @@ const pickerBack = () => { if (!pickerOpenAt) return; const at = pickerOpenAt;
 window.addEventListener('focus', pickerBack);
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') pickerBack(); });
 ['photoInput', 'cameraInput'].forEach(id => $('#' + id).addEventListener('cancel', () => { pickerOpenAt = 0; }));
+// iPhone/iPad: picking several photos uses a newer picker that can fail to return photos to web apps — pick one at a time there
+const isIOS = /iP(hone|ad|od)/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+if (isIOS) $('#photoInput').removeAttribute('multiple');
 ['photoInput', 'cameraInput'].forEach(id => $('#' + id).addEventListener('change', e => addPickedPhotos(e.target)));
 async function addPickedPhotos(inp) {
   pickerOpenAt = 0;

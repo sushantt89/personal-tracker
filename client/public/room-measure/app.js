@@ -333,6 +333,9 @@ async function claudeStore() {
     list: async () => (await c.get()).docs.filter(x => x.exists).map(x => x.data()),
     put: (rid, data) => c.doc(rid).set(data),
     del: rid => c.doc(rid).delete(),
+    putPhoto: (rid, pid, data) => d.collection('data/users/' + id + '/photos/' + rid).doc(pid).set({data}),
+    getPhoto: async (rid, pid) => { const x = await d.collection('data/users/' + id + '/photos/' + rid).doc(pid).get(); return x.exists ? x.data().data : null; },
+    delPhoto: (rid, pid) => d.collection('data/users/' + id + '/photos/' + rid).doc(pid).delete(),
   };
 }
 async function trackerStore() {
@@ -352,6 +355,9 @@ async function trackerStore() {
     list: async () => ((await call('GET', '')).items || []),
     put: (rid, data) => call('PUT', '/' + encodeURIComponent(rid), {data}),
     del: rid => call('DELETE', '/' + encodeURIComponent(rid)),
+    putPhoto: (rid, pid, data) => call('PUT', `/${encodeURIComponent(rid)}/photos/${encodeURIComponent(pid)}`, {data}),
+    getPhoto: async (rid, pid) => { try { return (await call('GET', `/${encodeURIComponent(rid)}/photos/${encodeURIComponent(pid)}`)).data || null; } catch (e) { if (e.code === 'unavailable') return null; throw e; } },
+    delPhoto: (rid, pid) => call('DELETE', `/${encodeURIComponent(rid)}/photos/${encodeURIComponent(pid)}`),
   };
 }
 async function initCloud() {
@@ -379,8 +385,82 @@ async function initCloud() {
     if (screen === 'house' && !house()) screen = 'houses';
     saveLocal(); setStatus('cloud', 'Synced with ' + st.name);
     if (changed) { selWall = 0; selItem = null; renderAll(); }
-    flushRemote();
+    flushRemote(); flushPhotos();
   } catch (e) { setStatus('local', 'Saved on this device only'); }
+}
+
+/* ---------- photos ----------
+   Each room keeps a small list (r.photos: id, wall, caption, size). The pictures themselves are kept
+   on this device (IndexedDB) and uploaded separately, so the room itself stays small. */
+const idb = (() => {
+  let dbp = null; const mem = new Map();
+  const open = () => dbp = dbp || new Promise((res, rej) => {
+    try { const q = indexedDB.open('roommeasure', 1); q.onupgradeneeded = () => q.result.createObjectStore('photos'); q.onsuccess = () => res(q.result); q.onerror = () => rej(q.error); }
+    catch (e) { rej(e); }
+  });
+  const run = async (mode, fn) => { const d = await open(); return new Promise((res, rej) => { const t = d.transaction('photos', mode), q = fn(t.objectStore('photos')); t.oncomplete = () => res(q && q.result); t.onerror = () => rej(t.error); }); };
+  return {
+    get: async k => { try { return await run('readonly', st => st.get(k)); } catch (e) { return mem.get(k); } },
+    put: async (k, v) => { mem.set(k, v); try { await run('readwrite', st => st.put(v, k)); } catch (e) {} },
+    del: async k => { mem.delete(k); try { await run('readwrite', st => st.delete(k)); } catch (e) {} },
+  };
+})();
+const LS_PEND = 'roommeasure.pendingPhotos';
+let pendingPhotos = []; try { pendingPhotos = JSON.parse(localStorage.getItem(LS_PEND) || '[]') || []; } catch (e) {}
+const savePending = () => { try { localStorage.setItem(LS_PEND, JSON.stringify(pendingPhotos)); } catch (e) {} };
+let flushingPhotos = false;
+async function flushPhotos() {
+  if (!store || flushingPhotos || !pendingPhotos.length) return;
+  flushingPhotos = true;
+  try {
+    for (const p of [...pendingPhotos]) {
+      const v = await idb.get(p.pid);
+      try { if (v && v.data) await store.putPhoto(p.rid, p.pid, v.data); pendingPhotos = pendingPhotos.filter(q => q.pid !== p.pid); savePending(); }
+      catch (e) { if (e && (e.code === 'invalid_argument' || e.code === 'quota_exceeded')) { pendingPhotos = pendingPhotos.filter(q => q.pid !== p.pid); savePending(); toast('A photo could not be uploaded (kept on this device)'); } else break; }
+    }
+  } finally { flushingPhotos = false; renderPhotoBadges(); }
+}
+setInterval(() => { if (pendingPhotos.length) flushPhotos(); }, 20000);
+window.addEventListener('online', () => flushPhotos());
+async function photoData(rid, pid) {
+  const v = await idb.get(pid); if (v && v.data) return v.data;
+  if (!store) return null;
+  try { const d = await store.getPhoto(rid, pid); if (d) { idb.put(pid, {data: d, rid}); return d; } } catch (e) {}
+  return null;
+}
+/* shrink a photo to a JPEG small enough to store and upload */
+async function compressPhoto(file) {
+  const url = URL.createObjectURL(file);
+  try {
+    const img = new Image(); await new Promise((ok, bad) => { img.onload = ok; img.onerror = bad; img.src = url; });
+    let max = 1400, q = 0.72, out, W, H;
+    for (let k = 0; k < 8; k++) {
+      const sc = Math.min(1, max / Math.max(img.naturalWidth, img.naturalHeight)); W = Math.round(img.naturalWidth * sc); H = Math.round(img.naturalHeight * sc);
+      const c = document.createElement('canvas'); c.width = W; c.height = H; const ctx = c.getContext('2d'); ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, W, H); ctx.drawImage(img, 0, 0, W, H);
+      out = c.toDataURL('image/jpeg', q);
+      if (out.length < 230000) break;
+      if (q > 0.5) q -= 0.08; else max = Math.round(max * 0.8);
+    }
+    return {data: out, w: W, h: H};
+  } finally { URL.revokeObjectURL(url); }
+}
+function roomPhotoList(r, wallId) {
+  const ph = r.photos || [];
+  return wallId ? ph.filter(p => p.wallId === wallId) : ph.filter(p => !p.wallId || !r.walls.some(w => w.id === p.wallId));
+}
+function renderPhotoGrid(el, wallId) {
+  const r = room(); if (!el || !r) return;
+  const list = roomPhotoList(r, wallId);
+  el.innerHTML = list.map(p => `<div class="ph" data-ph="${p.id}"><img data-pimg="${p.id}" alt="">${pendingPhotos.some(q => q.pid === p.id) ? '<span class="up">not uploaded yet</span>' : ''}
+      <button class="x" data-delph="${p.id}" title="Delete photo">✕</button><input data-phcap="${p.id}" value="${esc(p.caption || '')}" placeholder="Caption"></div>`).join('') +
+    `<label class="addph">📷<br>Add photo<br><span style="font-size:11px">camera or gallery</span><input type="file" accept="image/*" multiple hidden data-addph="${wallId || ''}"></label>`;
+  list.forEach(async p => { const d = await photoData(r.id, p.id); const im = el.querySelector(`[data-pimg="${p.id}"]`); if (im && d) im.src = d; else if (im) im.alt = 'Photo not on this device yet'; });
+}
+function renderPhotos() { renderPhotoGrid($('#roomPhotos'), null); const r = room(), w = r && r.walls[selWall]; renderPhotoGrid($('#wallPhotos'), w ? w.id : '__none'); }
+function renderPhotoBadges() { if (screen === 'room' && tab === 'plan') renderPhotos(); }
+async function deleteRoomPhotos(r) {
+  for (const p of (r.photos || [])) { idb.del(p.id); pendingPhotos = pendingPhotos.filter(q => q.pid !== p.id); if (store) store.delPhoto(r.id, p.id).catch(() => {}); }
+  savePending();
 }
 
 /* ---------- modal & toast ---------- */
@@ -716,7 +796,7 @@ function goHouse(hid) { curHouse = hid; screen = house(hid) ? 'house' : 'houses'
 async function removeRoom(r) {
   const last = houseRooms(r.houseId).length === 1;
   if (!(await ask(`Delete “${r.name}” and all its measurements?${last ? ' It is the only room, so the house will be removed too.' : ''}`, 'Delete'))) return false;
-  rooms = rooms.filter(x => x.id !== r.id); dirty.delete(r.id);
+  rooms = rooms.filter(x => x.id !== r.id); dirty.delete(r.id); deleteRoomPhotos(r);
   if (store) store.del(r.id).catch(() => { tombstones.push(r.id); saveLocal(); }); else tombstones.push(r.id);
   if (cur === r.id) cur = null;
   saveLocal(); return true;
@@ -804,6 +884,7 @@ function renderWallPanel() {
   </div><div class="row" style="justify-content:space-between;margin-top:8px"><div class="stats" id="wallStats" style="margin-top:0"></div>${r.walls.length > 1 ? `<button class="btn sm danger" id="delWallBtn">🗑 Delete wall ${letter(selWall)}</button>` : ''}</div>`;
   renderItems();
   renderWallStats();
+  renderPhotos();
 }
 const doorSwing = it => it.kind === 'door' ? `opens ${it.swing === 'out' ? 'outward' : 'into room'}, hinge ${it.hinge === 'R' ? 'right' : 'left'}` : '';
 const itemTitle = it => KINDS[it.kind].name + (it.kind === 'door' ? ` (${doorSwing(it)})` : '');
@@ -971,12 +1052,12 @@ $('#houseAddr').addEventListener('input', e => {
 $('#delHouse').addEventListener('click', async () => {
   const h = house(); if (!h) return;
   if (!(await ask(`Delete ${h.address} and all ${h.rooms.length} room(s) in it? This can't be undone.`, 'Delete house'))) return;
-  h.rooms.forEach(r => { dirty.delete(r.id); if (store) store.del(r.id).catch(() => { tombstones.push(r.id); saveLocal(); }); else tombstones.push(r.id); });
+  h.rooms.forEach(r => { dirty.delete(r.id); deleteRoomPhotos(r); if (store) store.del(r.id).catch(() => { tombstones.push(r.id); saveLocal(); }); else tombstones.push(r.id); });
   rooms = rooms.filter(r => r.houseId !== h.id); cur = null; screen = 'houses'; saveLocal(); renderAll(); toast('House deleted');
 });
 $('#dupRoom').addEventListener('click', () => {
   const r = JSON.parse(JSON.stringify(room())); r.id = uid('r'); r.name += ' (copy)'; r.walls.forEach(w => { w.id = uid('w'); w.items.forEach(i => i.id = uid('i')); });
-  r.created = Date.now(); rooms.push(r); cur = r.id; touch(); renderAll(); toast('Room duplicated');
+  r.photos = []; r.created = Date.now(); rooms.push(r); cur = r.id; touch(); renderAll(); toast('Room duplicated (without photos)');
 });
 $('#delRoom').addEventListener('click', async () => {
   const r = room(); if (!r) return;
@@ -1268,6 +1349,44 @@ function syncCard(it) {
   if (it.to) { const a = c.querySelector('[data-if=tfloor]'), b = c.querySelector('[data-if=tdist]'); if (a) a.value = fmt(it.to.floor); if (b) b.value = fmt(it.to.dist); }
 }
 
+/* ---------- photo events ---------- */
+document.addEventListener('change', async e => {
+  const inp = e.target.closest && e.target.closest('[data-addph]'); if (!inp) return;
+  const r = room(); if (!r) return;
+  const files = [...inp.files]; inp.value = '';
+  if (!files.length) return;
+  const wallId = inp.dataset.addph || null;
+  toast(files.length > 1 ? `Adding ${files.length} photos…` : 'Adding photo…');
+  for (const f of files) {
+    try {
+      const c = await compressPhoto(f), pid = uid('p');
+      await idb.put(pid, {data: c.data, rid: r.id});
+      (r.photos = r.photos || []).push({id: pid, wallId, caption: '', w: c.w, h: c.h, created: Date.now()});
+      pendingPhotos.push({rid: r.id, pid}); savePending();
+    } catch (err) { toast('That file could not be read as a photo'); }
+  }
+  touch(); renderPhotos(); flushPhotos();
+});
+document.addEventListener('input', e => {
+  const c = e.target.closest && e.target.closest('[data-phcap]'); if (!c) return;
+  const r = room(), p = (r.photos || []).find(x => x.id === c.dataset.phcap); if (!p) return;
+  p.caption = c.value; touch();
+});
+document.addEventListener('click', async e => {
+  const d = e.target.closest && e.target.closest('[data-delph]');
+  if (d) {
+    const r = room(), p = (r.photos || []).find(x => x.id === d.dataset.delph); if (!p) return;
+    if (!(await ask(`Delete this photo${p.caption ? ` (“${p.caption}”)` : ''}? It will be removed from the report too.`, 'Delete photo'))) return;
+    r.photos = r.photos.filter(x => x !== p); idb.del(p.id);
+    pendingPhotos = pendingPhotos.filter(q => q.pid !== p.id); savePending();
+    if (store) store.delPhoto(r.id, p.id).catch(() => {});
+    touch(); renderPhotos(); return;
+  }
+  const im = e.target.closest && e.target.closest('[data-pimg]');
+  if (im && im.src) { const r = room(), p = (r.photos || []).find(x => x.id === im.dataset.pimg); $('#lbImg').src = im.src; $('#lbCap').textContent = p && p.caption || ''; $('#lightbox').classList.add('on'); return; }
+  if (e.target.closest && e.target.closest('#lightbox')) $('#lightbox').classList.remove('on');
+});
+
 /* ---------- exports: PDF and CSV ---------- */
 function safeName(s) { return (s || 'room').replace(/[^\w\- ]+/g, '').trim().replace(/\s+/g, '-') || 'room'; }
 async function saveFile(filename, data, mime) {
@@ -1368,6 +1487,27 @@ async function buildPDF(r) {
   table([{h: 'Wall', w: 18}, {h: `Length (${u})`, w: 30}, {h: `Height (${u})`, w: 30}, {h: 'Wall type', w: 34}, {h: 'Items', w: 74}],
     r.walls.map((w, i) => { const cnt = {}; w.items.forEach(it => cnt[KINDS[it.kind].name] = (cnt[KINDS[it.kind].name] || 0) + 1);
       return [letter(i), fmt(w.length, r), fmt(wallH(r, w), r), w.type || r.wallType, Object.entries(cnt).map(([k, n]) => `${n} × ${k}`).join(', ') || '—']; }));
+  // photos: two per row, caption under each
+  const addPhotos = async (list, title) => {
+    const ok = [];
+    for (const p of list) { const d = await photoData(r.id, p.id); if (d) ok.push({p, d}); }
+    if (!ok.length) return;
+    const gap = 6, cw = (CW - gap) / 2, rows = [];
+    for (let n = 0; n < ok.length; n += 2) {
+      const row = ok.slice(n, n + 2).map(o => { const ratio = (o.p.h || 3) / (o.p.w || 4); let w2 = cw, h2 = cw * ratio; if (h2 > 85) { h2 = 85; w2 = h2 / ratio; } return {...o, w2, h2}; });
+      rows.push({row, rowH: Math.max(...row.map(o => o.h2)) + (row.some(o => o.p.caption) ? 6 : 1) + 4});
+    }
+    y += 3; need(10 + rows[0].rowH); text(title, M, 11, 'bold'); y += 3; // keep the heading with its first photos
+    for (const {row, rowH} of rows) {
+      need(rowH);
+      row.forEach((o, j) => { const x = M + j * (cw + gap);
+        doc.addImage(o.d, 'JPEG', x + (cw - o.w2) / 2, y, o.w2, o.h2); doc.setDrawColor(226, 229, 234); doc.rect(x + (cw - o.w2) / 2, y, o.w2, o.h2);
+        if (o.p.caption) { doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(75, 85, 99); doc.text(doc.splitTextToSize(o.p.caption, cw)[0], x + cw / 2, y + o.h2 + 4, {align: 'center'}); } });
+      y += rowH;
+    }
+    y += 2;
+  };
+  await addPhotos(roomPhotoList(r, null), 'Room photos');
   // each wall
   for (let i = 0; i < r.walls.length; i++) {
     const w = r.walls[i], nb = neighbours(r, i, g), nm = j => j == null ? 'open end' : 'wall ' + letter(j);
@@ -1389,6 +1529,7 @@ async function buildPDF(r) {
           if (it.note) extra.push(it.note);
           return [itemTitle(it) + (it.label ? ' — ' + it.label : ''), STATUS[st].replace(' to…', '').replace('…', ''), size, fmt(it.floor, r) + ref, fmt(sd.left, r), fmt(sd.right, r), extra.join('\n') || '—']; }));
     } else { text('No openings, fixtures or obstacles on this wall.', M, 8.5, 'normal', [107, 115, 128]); y += 6; }
+    await addPhotos(roomPhotoList(r, w.id), `Wall ${letter(i)} photos`);
   }
   // notes + page numbers
   need(12);

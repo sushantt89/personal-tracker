@@ -20,3 +20,4 @@ export * from './Notify.js';
 export * from './WishItem.js';
 export * from './SavingsGoal.js';
 export * from './RoomMeasure.js';
+export * from './RoomPhoto.js';

@@ -1311,35 +1311,14 @@ $('#wallCard').addEventListener('click', async e => {
   if (card && selItem !== card.dataset.card) { selItem = card.dataset.card; $$('.item').forEach(c => c.classList.toggle('sel', c.dataset.card === selItem)); renderDrawings(); }
 });
 
-// drag items in elevation
-let drag = null, raf = 0;
-$('#elev').addEventListener('pointerdown', e => {
+// wall drawing: tapping an item selects it (items are not draggable; edit the numbers instead)
+let raf = 0;
+$('#elev').addEventListener('click', e => {
   const g = e.target.closest('.it'); if (!g) return;
-  const svg = $('#elevSvg'), r = room(), w = r.walls[selWall], it = w.items.find(x => x.id === g.dataset.item); if (!it) return;
-  const p = svgPoint(svg, e);
-  const ghost = g.dataset.to === '1' && it.to;
-  drag = {it, w, ghost, sx: p.x, sy: p.y, left: ghost ? targetLeft(it, w) : itemLeft(it, w), floor: ghost ? it.to.floor : it.floor, moved: false, ctm: svg.getScreenCTM().inverse()};
-  selItem = it.id; e.preventDefault();
-});
-window.addEventListener('pointermove', e => {
-  if (!drag) return;
-  const pt = $('#elevSvg').createSVGPoint(); pt.x = e.clientX; pt.y = e.clientY; const p = pt.matrixTransform(drag.ctm);
-  const dx = p.x - drag.sx, dy = -(p.y - drag.sy);
-  if (!drag.moved && Math.hypot(dx, dy) < 15) return;
-  drag.moved = true;
-  const r = room(), snap = r.units === 'mm' ? 5 : 10, H = wallH(r, drag.w);
-  const maxF = isPoint(drag.it) ? H : Math.max(0, H - drag.it.h), nf = clamp(Math.round((drag.floor + dy) / snap) * snap, 0, maxF);
-  if (drag.ghost) { setTargetLeft(drag.it, drag.w, Math.round((drag.left + dx) / snap) * snap); drag.it.to.floor = nf; }
-  else { setItemLeft(drag.it, drag.w, Math.round((drag.left + dx) / snap) * snap); drag.it.floor = nf; }
-  if (!raf) raf = requestAnimationFrame(() => { raf = 0; renderDrawings(); syncCard(drag?.it); });
-});
-window.addEventListener('pointerup', () => {
-  if (!drag) return;
-  const d = drag; drag = null;
-  if (d.moved) { touch(); syncCard(d.it); }
+  const r = room(), w = r.walls[selWall], it = w && w.items.find(x => x.id === g.dataset.item); if (!it) return;
+  selItem = it.id;
   $$('.item').forEach(c => c.classList.toggle('sel', c.dataset.card === selItem));
-  renderDrawings();
-  if (!d.moved) scrollToCard();
+  renderDrawings(); scrollToCard();
 });
 function syncCard(it) {
   if (!it) return;

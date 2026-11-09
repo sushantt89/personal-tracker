@@ -6,6 +6,7 @@ import {
 } from '@mui/material';
 import MenuIcon2 from '@mui/icons-material/Menu';
 import MenuOpenIcon from '@mui/icons-material/MenuOpen';
+import RefreshIcon from '@mui/icons-material/Refresh';
 import LightModeOutlinedIcon from '@mui/icons-material/LightModeOutlined';
 import DarkModeOutlinedIcon from '@mui/icons-material/DarkModeOutlined';
 import SettingsBrightnessOutlinedIcon from '@mui/icons-material/SettingsBrightnessOutlined';
@@ -75,6 +76,22 @@ export default function AppLayout() {
   const sideMenu = desktop || rail;
   const side = sideMenu && !navHidden ? (desktop ? WIDTH : RAIL) : 0;
 
+  // like Ctrl+Shift+R: drop the saved offline copy, look for a new version of the app, then reload
+  const hardRefresh = async () => {
+    setUserEl(null);
+    try {
+      if ('serviceWorker' in navigator) {
+        const regs = await navigator.serviceWorker.getRegistrations();
+        await Promise.all(regs.map((r) => r.update().catch(() => undefined)));
+      }
+      if ('caches' in window) {
+        const keys = await caches.keys();
+        await Promise.all(keys.map((k) => caches.delete(k)));
+      }
+    } catch { /* reload anyway */ }
+    window.location.reload();
+  };
+
   const cycleTheme = () => {
     const next: ThemePref = pref === 'light' ? 'dark' : pref === 'dark' ? 'system' : 'light';
     setPref(next);
@@ -141,6 +158,7 @@ export default function AppLayout() {
             <MenuItem onClick={() => { setUserEl(null); nav('/settings'); }}><MenuIcon><SettingsOutlinedIcon fontSize="small" /></MenuIcon>Settings</MenuItem>
             <MenuItem onClick={cycleTheme} sx={{ display: { sm: 'none' } }}><MenuIcon>{themeIcon}</MenuIcon>Theme: {pref}</MenuItem>
             {install.available && <MenuItem onClick={() => { setUserEl(null); install.run(); }}><MenuIcon><InstallMobileIcon fontSize="small" /></MenuIcon>Install app</MenuItem>}
+            <MenuItem onClick={hardRefresh} disabled={!online}><MenuIcon><RefreshIcon fontSize="small" /></MenuIcon>Refresh app (get latest version)</MenuItem>
             <Divider />
             <MenuItem onClick={async () => { setUserEl(null); await logout(); nav('/login'); }}><MenuIcon><LogoutIcon fontSize="small" /></MenuIcon>Log out</MenuItem>
           </Menu>

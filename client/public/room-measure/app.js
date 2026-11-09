@@ -1,4 +1,5 @@
 "use strict";
+const APP_VERSION = '46cbcc7';
 try { if (/[?&]embed=tracker/.test(location.search)) document.documentElement.classList.add('embed'); } catch (e) {}
 /* ---------- constants ---------- */
 /* cls: open = opening measured to frame edges, point = measured to centre,
@@ -458,6 +459,23 @@ async function photoData(rid, pid) {
   return null;
 }
 /* shrink a photo to a JPEG small enough to store and upload */
+/* open a picture without blob: links (the tracker's security settings block those).
+   Big library photos are decoded straight to a smaller size so phones don't run out of memory,
+   and every step gives up after a while instead of hanging. */
+const withTimeout = (p, ms, what) => Promise.race([p, new Promise((_, bad) => setTimeout(() => bad(new Error(what + ' timed out')), ms))]);
+async function loadPicture(file) {
+  if (window.createImageBitmap) {
+    for (const opts of [{resizeWidth: 1600, resizeQuality: 'medium'}, undefined]) {
+      try { const bmp = await withTimeout(opts ? createImageBitmap(file, opts) : createImageBitmap(file), 20000, 'decode'); if (bmp.width && bmp.height) return {src: bmp, w: bmp.width, h: bmp.height}; }
+      catch (e) { /* try the next way */ }
+    }
+  }
+  const url = await withTimeout(new Promise((ok, bad) => { const fr = new FileReader(); fr.onload = () => ok(fr.result); fr.onerror = () => bad(fr.error || new Error('read failed')); fr.readAsDataURL(file); }), 30000, 'read');
+  const img = new Image();
+  await withTimeout(new Promise((ok, bad) => { img.onload = ok; img.onerror = () => bad(new Error('not an image the browser can open')); img.src = url; }), 30000, 'open');
+  return {src: img, w: img.naturalWidth, h: img.naturalHeight};
+}
+/* shrink a photo to a JPEG small enough to store and upload */
 /* open a picture without blob: links (the tracker's security settings block those) */
 async function loadPicture(file) {
   if (window.createImageBitmap) { try { const bmp = await createImageBitmap(file); return {src: bmp, w: bmp.width, h: bmp.height}; } catch (e) { /* fall back below */ } }
@@ -490,7 +508,7 @@ function renderPhotoGrid(el, wallId) {
   const list = roomPhotoList(r, wallId);
   el.innerHTML = list.map(p => `<div class="ph" data-ph="${p.id}"><img data-pimg="${p.id}" alt="">${pendingPhotos.some(q => q.pid === p.id) ? '<span class="up">not uploaded yet</span>' : ''}
       <button class="x" data-delph="${p.id}" title="Delete photo">✕</button><input data-phcap="${p.id}" value="${esc(p.caption || '')}" placeholder="Caption"></div>`).join('') +
-    `<button type="button" class="addph" data-addph="${wallId || ''}">📷<br>Add photo<br><span style="font-size:11px">camera or gallery</span></button>`;
+    `<div class="addph" style="cursor:default;gap:6px;align-content:center"><button type="button" class="btn sm" data-addph="${wallId || ''}" data-src="camera">📷 Camera</button><button type="button" class="btn sm" data-addph="${wallId || ''}" data-src="gallery">🖼 Gallery</button></div>`;
   list.forEach(async p => { const d = await photoData(r.id, p.id); const im = el.querySelector(`[data-pimg="${p.id}"]`); if (im && d) im.src = d; else if (im) im.alt = 'Photo not on this device yet'; });
 }
 function renderPhotos() { renderPhotoGrid($('#roomPhotos'), null); const r = room(), w = r && r.walls[selWall]; renderPhotoGrid($('#wallPhotos'), w ? w.id : '__none'); }
@@ -523,6 +541,7 @@ function ask(msg, yes = 'OK') {
     $('#modalYes').onclick = () => done(true); $('#modalNo').onclick = () => done(false);
   });
 }
+function toastStay(m, ms = 60000) { const t = $('#toast'); t.textContent = m; t.classList.add('on'); clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove('on'), ms); }
 let toastT; function toast(m) { const t = $('#toast'); t.textContent = m; t.classList.add('on'); clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove('on'), 2200); }
 
 /* ---------- SVG: plan ---------- */
@@ -1398,33 +1417,50 @@ function syncCard(it) {
 }
 
 /* ---------- photo events ---------- */
-let photoTarget = null; // which room / wall the picker was opened for
+let photoTarget = null, pickerOpenAt = 0, pickerInput = null; // which room / wall the picker was opened for
 document.addEventListener('click', e => {
   const b = e.target.closest && e.target.closest('[data-addph]'); if (!b) return;
   const r = room(); if (!r) return;
   photoTarget = {rid: r.id, wallId: b.dataset.addph || null};
-  const inp = $('#photoInput'); inp.value = ''; inp.click();
+  const inp = b.dataset.src === 'camera' ? $('#cameraInput') : $('#photoInput');
+  inp.value = ''; pickerOpenAt = Date.now(); pickerInput = inp; inp.click();
 });
-$('#photoInput').addEventListener('change', async e => {
-  const inp = e.target, t = photoTarget || {rid: cur, wallId: null};
-  const r = rooms.find(x => x.id === t.rid) || room(); if (!r) return;
+// coming back from the picker without a photo arriving: say so instead of doing nothing
+const pickerBack = () => { if (!pickerOpenAt) return; const at = pickerOpenAt;
+  // some phone browsers fill the picker but never announce it: pick the photos up ourselves
+  setTimeout(() => { if (pickerOpenAt === at && pickerInput && pickerInput.files && pickerInput.files.length) addPickedPhotos(pickerInput); }, 900);
+  setTimeout(() => { if (pickerOpenAt === at && Date.now() - at > 1500) { pickerOpenAt = 0; toast('No photo arrived from the picker. Try again, or use 📷 Camera.'); } }, 2500); };
+window.addEventListener('focus', pickerBack);
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') pickerBack(); });
+['photoInput', 'cameraInput'].forEach(id => $('#' + id).addEventListener('cancel', () => { pickerOpenAt = 0; }));
+['photoInput', 'cameraInput'].forEach(id => $('#' + id).addEventListener('change', e => addPickedPhotos(e.target)));
+async function addPickedPhotos(inp) {
+  pickerOpenAt = 0;
+  const t = photoTarget || {rid: cur, wallId: null};
+  const r = rooms.find(x => x.id === t.rid) || room(); if (!r) { toast('Open a room first'); return; }
   const files = [...(inp.files || [])]; inp.value = '';
-  if (!files.length) return;
+  if (!files.length) { toast('No photo was selected'); return; }
   const wallId = t.wallId;
-  toast(files.length > 1 ? `Adding ${files.length} photos…` : 'Adding photo…');
+  let n = 0, added = 0;
   for (const f of files) {
+    n++; toastStay(files.length > 1 ? `Adding photo ${n} of ${files.length}…` : 'Adding photo…');
     try {
       const c = await compressPhoto(f), pid = uid('p');
       await idb.put(pid, {data: c.data, rid: r.id});
       (r.photos = r.photos || []).push({id: pid, wallId, caption: '', w: c.w, h: c.h, created: Date.now()});
-      pendingPhotos.push({rid: r.id, pid}); savePending();
+      pendingPhotos.push({rid: r.id, pid}); savePending(); added++;
+      if (r === room()) renderPhotos();
     } catch (err) {
-      const heic = /hei[cf]/i.test(f.type) || /\.hei[cf]$/i.test(f.name);
-      toast(heic ? 'This phone photo format (HEIC) can\'t be opened in this browser — take the photo from here with the camera, or set the camera to “Most Compatible” (JPEG)' : `“${f.name}” couldn't be opened as a photo`);
+      const heic = /hei[cf]/i.test(f.type) || /\.hei[cf]$/i.test(f.name), mb = (f.size / 1048576).toFixed(1);
+      toastStay(heic ? 'This photo is in HEIC format, which this browser can\'t open. Use 📷 Camera, or set your camera to save JPEG (“Most compatible”).'
+        : `Couldn't open “${f.name || 'photo'}” (${f.type || 'unknown type'}, ${mb} MB): ${err && err.message || 'unknown problem'}`, 9000);
+      await new Promise(ok => setTimeout(ok, 2500));
     }
   }
+  if (!added) return;
   touch(r); if (r === room()) renderPhotos(); flushPhotos();
-});
+  toast(added > 1 ? `${added} photos added` : 'Photo added');
+}
 document.addEventListener('input', e => {
   const c = e.target.closest && e.target.closest('[data-phcap]'); if (!c) return;
   const r = room(), p = (r.photos || []).find(x => x.id === c.dataset.phcap); if (!p) return;
@@ -1639,6 +1675,7 @@ $('#dlPdf').addEventListener('click', async e => {
 });
 
 /* ---------- boot ---------- */
+$('#appVer').textContent = 'v' + APP_VERSION;
 loadLocal();
 rooms = rooms.filter(r => !r.pristine);
 try { const n = JSON.parse(localStorage.getItem(LS_NAV) || 'null'); if (n) { screen = n.screen || 'houses'; curHouse = n.house || null; if (['setup', 'plan', 'report'].includes(n.tab)) tab = n.tab; } } catch (e) {}

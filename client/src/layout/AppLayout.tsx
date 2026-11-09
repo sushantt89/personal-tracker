@@ -5,6 +5,7 @@ import {
   Tooltip, useMediaQuery, useTheme, Divider, Button, ListSubheader, ListItemIcon as MenuIcon, Paper, ButtonBase, Fab,
 } from '@mui/material';
 import MenuIcon2 from '@mui/icons-material/Menu';
+import MenuOpenIcon from '@mui/icons-material/MenuOpen';
 import LightModeOutlinedIcon from '@mui/icons-material/LightModeOutlined';
 import DarkModeOutlinedIcon from '@mui/icons-material/DarkModeOutlined';
 import SettingsBrightnessOutlinedIcon from '@mui/icons-material/SettingsBrightnessOutlined';
@@ -68,7 +69,11 @@ export default function AppLayout() {
   const { pathname } = useLocation();
   const online = useOnline();
   const install = useInstallAction();
-  const side = desktop ? WIDTH : rail ? RAIL : 0;
+  // the side menu can be hidden on bigger screens for more room (remembered on this device)
+  const [navHidden, setNavHidden] = useState(() => { try { return localStorage.getItem('pt.navHidden') === '1'; } catch { return false; } });
+  const toggleNav = () => setNavHidden((v) => { const n = !v; try { localStorage.setItem('pt.navHidden', n ? '1' : '0'); } catch { /* storage blocked */ } return n; });
+  const sideMenu = desktop || rail;
+  const side = sideMenu && !navHidden ? (desktop ? WIDTH : RAIL) : 0;
 
   const cycleTheme = () => {
     const next: ThemePref = pref === 'light' ? 'dark' : pref === 'dark' ? 'system' : 'light';
@@ -113,6 +118,11 @@ export default function AppLayout() {
       <AppBar position="fixed" color="inherit" elevation={0} sx={{ borderBottom: 1, borderColor: 'divider', bgcolor: 'background.paper', width: `calc(100% - ${side}px)`, ml: `${side}px`, pt: SAFE_TOP }}>
         <Toolbar sx={{ gap: { xs: 0.5, sm: 1 }, minHeight: { xs: 60, sm: 64 }, pl: { xs: 'calc(8px + env(safe-area-inset-left))', sm: 3 }, pr: { xs: 'calc(8px + env(safe-area-inset-right))', sm: 3 } }}>
           {!desktop && !rail && !phone && <IconButton edge="start" onClick={() => setMobileOpen(true)} aria-label="Open navigation"><MenuIcon2 /></IconButton>}
+          {sideMenu && (
+            <Tooltip title={navHidden ? 'Show menu' : 'Hide menu'}>
+              <IconButton edge="start" onClick={toggleNav} aria-label={navHidden ? 'Show menu' : 'Hide menu'} aria-expanded={!navHidden}>{navHidden ? <MenuIcon2 /> : <MenuOpenIcon />}</IconButton>
+            </Tooltip>
+          )}
           {phone && <Box component="img" src="/favicon.svg" alt="" sx={{ width: 28, height: 28, mx: 0.75, flexShrink: 0 }} />}
           <Box sx={{ flex: 1, display: 'flex', minWidth: 0 }}><GlobalSearch /></Box>
           <Button variant="contained" color="primary" startIcon={<ContentPasteGoIcon />} onClick={() => nav('/import')} sx={{ display: { xs: 'none', md: 'inline-flex' }, whiteSpace: 'nowrap' }}>Paste & Import</Button>
@@ -138,8 +148,8 @@ export default function AppLayout() {
       </AppBar>
 
       <Box component="nav" aria-label="Main" sx={{ width: side, flexShrink: 0 }}>
-        {desktop || rail ? (
-          <Drawer variant="permanent" open sx={{ '& .MuiDrawer-paper': { width: side, boxSizing: 'border-box', borderRight: 1, borderColor: 'divider', overflowX: 'hidden' } }}>{drawer(rail)}</Drawer>
+        {sideMenu ? (
+          !navHidden && <Drawer variant="permanent" open sx={{ '& .MuiDrawer-paper': { width: side, boxSizing: 'border-box', borderRight: 1, borderColor: 'divider', overflowX: 'hidden' } }}>{drawer(rail)}</Drawer>
         ) : (
           <Drawer variant="temporary" open={mobileOpen} onClose={() => setMobileOpen(false)} ModalProps={{ keepMounted: true }} sx={{ '& .MuiDrawer-paper': { width: 'min(300px, 86vw)' } }}>{drawer(false)}</Drawer>
         )}

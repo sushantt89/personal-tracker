@@ -20,6 +20,7 @@ export default function Measurements() {
         component="iframe"
         src="/room-measure/index.html?embed=tracker"
         title="Room measurements"
+        allow="web-share; camera"
         sx={{
           display: 'block', width: '100%', border: 0, bgcolor: '#f4f5f7',
           height: {

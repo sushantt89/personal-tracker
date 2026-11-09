@@ -281,9 +281,38 @@ function migrate(r) {
 }
 function migrate2(r) { if (!r) return; r.wallType = normType(r.wallType) || 'Gyprock'; (r.walls || []).forEach(w => w.type = normType(w.type)); }
 let saveTimer = null;
+/* ---------- undo / redo: a snapshot of the room before each change (quick bursts like typing count as one step) ---------- */
+const hist = new Map();
+const H = id => { if (!hist.has(id)) hist.set(id, {u: [], r: [], snap: null, t: 0}); return hist.get(id); };
+function snapNow(r) { if (r) H(r.id).snap = JSON.stringify(r); }
+function updateUndoButtons() {
+  const bar = $('#undoBar'); if (!bar) return;
+  const r = screen === 'room' ? room() : null; bar.style.display = r ? '' : 'none';
+  if (!r) return; const h = H(r.id);
+  $('#undoBtn').disabled = !h.u.length; $('#redoBtn').disabled = !h.r.length;
+}
+function restoreRoom(r, json) {
+  const n = JSON.parse(json), oldIds = new Set((r.photos || []).map(p => p.id));
+  rooms[rooms.indexOf(r)] = n; n.updated = Date.now();
+  const h = H(n.id); h.snap = JSON.stringify(n); h.t = 0;
+  // photos brought back by undo/redo are uploaded again from this device
+  (n.photos || []).forEach(p => { if (!oldIds.has(p.id) && !pendingPhotos.some(q => q.pid === p.id)) pendingPhotos.push({rid: n.id, pid: p.id}); });
+  savePending();
+  dirty.add(n.id); saveLocal(); if (store) setStatus('saving');
+  clearTimeout(saveTimer); saveTimer = setTimeout(flushRemote, 700);
+  if (selItem && !n.walls.some(w => w.items.some(it => it.id === selItem))) selItem = null;
+  selVtx = null; renderAll(); flushPhotos();
+}
+function undo() { const r = room(); if (!r || screen !== 'room') return; const h = H(r.id); if (!h.u.length) return; h.r.push(JSON.stringify(r)); restoreRoom(r, h.u.pop()); toast('Undone'); }
+function redo() { const r = room(); if (!r || screen !== 'room') return; const h = H(r.id); if (!h.r.length) return; h.u.push(JSON.stringify(r)); restoreRoom(r, h.r.pop()); toast('Redone'); }
 function touch(r = room()) {
   if (!r) return;
+  { const h = H(r.id), now = Date.now();
+    if (h.snap && (now - h.t > 600 || !h.u.length)) { h.u.push(h.snap); if (h.u.length > 100) h.u.shift(); }
+    if (h.snap) h.r.length = 0;
+    h.t = now; }
   r.updated = Date.now(); delete r.pristine;
+  H(r.id).snap = JSON.stringify(r); updateUndoButtons();
   dirty.add(r.id); const ok = saveLocal();
   if (store) setStatus('saving');
   else if (ok) setStatus('local', 'Saved on this device · ' + hhmm());
@@ -384,7 +413,7 @@ async function initCloud() {
     if (!room()) { cur = null; if (screen === 'room') screen = curHouse && house() ? 'house' : 'houses'; }
     if (screen === 'house' && !house()) screen = 'houses';
     saveLocal(); setStatus('cloud', 'Synced with ' + st.name);
-    if (changed) { selWall = 0; selItem = null; renderAll(); }
+    if (changed) { selWall = 0; selItem = null; hist.clear(); if (room()) snapNow(room()); renderAll(); }
     flushRemote(); flushPhotos();
   } catch (e) { setStatus('local', 'Saved on this device only'); }
 }
@@ -429,20 +458,28 @@ async function photoData(rid, pid) {
   return null;
 }
 /* shrink a photo to a JPEG small enough to store and upload */
+/* open a picture without blob: links (the tracker's security settings block those) */
+async function loadPicture(file) {
+  if (window.createImageBitmap) { try { const bmp = await createImageBitmap(file); return {src: bmp, w: bmp.width, h: bmp.height}; } catch (e) { /* fall back below */ } }
+  const url = await new Promise((ok, bad) => { const fr = new FileReader(); fr.onload = () => ok(fr.result); fr.onerror = () => bad(fr.error); fr.readAsDataURL(file); });
+  const img = new Image();
+  await new Promise((ok, bad) => { img.onload = ok; img.onerror = bad; img.src = url; });
+  return {src: img, w: img.naturalWidth, h: img.naturalHeight};
+}
+/* shrink a photo to a JPEG small enough to store and upload */
 async function compressPhoto(file) {
-  const url = URL.createObjectURL(file);
-  try {
-    const img = new Image(); await new Promise((ok, bad) => { img.onload = ok; img.onerror = bad; img.src = url; });
-    let max = 1400, q = 0.72, out, W, H;
-    for (let k = 0; k < 8; k++) {
-      const sc = Math.min(1, max / Math.max(img.naturalWidth, img.naturalHeight)); W = Math.round(img.naturalWidth * sc); H = Math.round(img.naturalHeight * sc);
-      const c = document.createElement('canvas'); c.width = W; c.height = H; const ctx = c.getContext('2d'); ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, W, H); ctx.drawImage(img, 0, 0, W, H);
-      out = c.toDataURL('image/jpeg', q);
-      if (out.length < 230000) break;
-      if (q > 0.5) q -= 0.08; else max = Math.round(max * 0.8);
-    }
-    return {data: out, w: W, h: H};
-  } finally { URL.revokeObjectURL(url); }
+  const pic = await loadPicture(file);
+  if (!pic.w || !pic.h) throw new Error('empty image');
+  let max = 1400, q = 0.72, out, W, H;
+  for (let k = 0; k < 8; k++) {
+    const sc = Math.min(1, max / Math.max(pic.w, pic.h)); W = Math.round(pic.w * sc); H = Math.round(pic.h * sc);
+    const c = document.createElement('canvas'); c.width = W; c.height = H; const ctx = c.getContext('2d'); ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, W, H); ctx.drawImage(pic.src, 0, 0, W, H);
+    out = c.toDataURL('image/jpeg', q);
+    if (out.length < 230000) break;
+    if (q > 0.5) q -= 0.08; else max = Math.round(max * 0.8);
+  }
+  if (pic.src.close) pic.src.close();
+  return {data: out, w: W, h: H};
 }
 function roomPhotoList(r, wallId) {
   const ph = r.photos || [];
@@ -462,6 +499,15 @@ async function deleteRoomPhotos(r) {
   for (const p of (r.photos || [])) { idb.del(p.id); pendingPhotos = pendingPhotos.filter(q => q.pid !== p.id); if (store) store.delPhoto(r.id, p.id).catch(() => {}); }
   savePending();
 }
+
+function updateUndoButtonsSoon() { setTimeout(updateUndoButtons, 0); }
+document.addEventListener('keydown', e => {
+  if (!(e.ctrlKey || e.metaKey) || screen !== 'room') return;
+  const k = e.key.toLowerCase(), t = e.target, typing = t && (t.tagName === 'TEXTAREA' || (t.tagName === 'INPUT' && !['checkbox', 'radio', 'file', 'button'].includes(t.type)));
+  if (typing) return; // let the text box undo its own typing
+  if (k === 'z' && !e.shiftKey) { e.preventDefault(); undo(); }
+  else if ((k === 'z' && e.shiftKey) || k === 'y') { e.preventDefault(); redo(); }
+});
 
 /* ---------- modal & toast ---------- */
 function ask(msg, yes = 'OK') {
@@ -543,7 +589,11 @@ function planSVG(r, opt = {}) {
       if (k.cls !== 'point') {
         const a = planPt(s, g, L, l), b = planPt(s, g, L, l + it.w);
         if (k.cls === 'open' && it.kind !== 'ac') o += `<line x1="${a.x}" y1="${a.y}" x2="${b.x}" y2="${b.y}" stroke="#fbfcfd" stroke-width="${wt * 1.1}"/>`;
-        if (it.kind === 'door') {
+        if (it.kind === 'door' && it.swing === 'none') {
+          // doorway with a frame but no door: just the two jambs
+          [a, b].forEach(q => o += `<line x1="${q.x - nx * wt * 0.9}" y1="${q.y - ny * wt * 0.9}" x2="${q.x + nx * wt * 0.9}" y2="${q.y + ny * wt * 0.9}" stroke="${c}" stroke-width="${wt * 0.3}"/>`);
+          o += `<line x1="${a.x}" y1="${a.y}" x2="${b.x}" y2="${b.y}" stroke="${c}" stroke-width="${wt * 0.12}" stroke-dasharray="${wt * 0.4} ${wt * 0.4}"/>`;
+        } else if (it.kind === 'door') {
           // hinge on the left or right (as seen from inside), leaf swings into the room or outward
           const hp = it.hinge === 'R' ? b : a, jp = it.hinge === 'R' ? a : b, dir = it.swing === 'out' ? -1 : 1;
           const lx = hp.x + nx * dir * it.w, ly = hp.y + ny * dir * it.w;
@@ -682,7 +732,11 @@ function elevSVG(r, wi, opt = {}) {
         const fill = k.cls === 'obst' ? 'url(#hatchE)' : it.kind === 'window' ? '#dbeefe' : it.kind === 'ac' ? '#e0f2f4' : it.kind === 'sliding' ? '#efe7fd' : '#fbefe2';
         sh += `<rect x="${x0}" y="${top}" width="${it.w}" height="${it.h}" fill="${fill}" stroke="${stc}" stroke-width="${swi}"${dash}/>`;
         if (it.kind === 'window') sh += `<line x1="${cx}" y1="${top}" x2="${cx}" y2="${bot}" stroke="${c}" stroke-width="${sw * 1.2}"/><line x1="${x0}" y1="${cy}" x2="${x1}" y2="${cy}" stroke="${c}" stroke-width="${sw * 1.2}" stroke-opacity=".5"/>`;
-        if (it.kind === 'door') {
+        if (it.kind === 'door' && it.swing === 'none') {
+          // frame only: inner line shows the frame, no leaf, no handle
+          const fw = Math.min(it.w * 0.06, 60);
+          sh += `<path d="M${x0 + fw} ${bot} V${top + fw} H${x1 - fw} V${bot}" fill="#fbfcfd" stroke="${c}" stroke-width="${sw * 1.2}"/>`;
+        } else if (it.kind === 'door') {
           // swing lines: point to the handle side; solid = opens towards you (into room), dashed = opens away (outward)
           const hx = it.hinge === 'R' ? x1 : x0, lxh = it.hinge === 'R' ? x0 : x1, out = it.swing === 'out';
           sh += `<path d="M${hx} ${top} L${lxh} ${cy} L${hx} ${bot}" fill="none" stroke="${c}" stroke-width="${sw * 1.2}" stroke-opacity=".7"${out ? ` stroke-dasharray="${fs * 0.35} ${fs * 0.25}"` : ''}/>`;
@@ -690,7 +744,7 @@ function elevSVG(r, wi, opt = {}) {
         }
         if (it.kind === 'sliding') sh += `<line x1="${cx}" y1="${top}" x2="${cx}" y2="${bot}" stroke="${c}" stroke-width="${sw * 1.5}"/>`;
         if (it.kind === 'ac') for (let q = 1; q < 4; q++) sh += `<line x1="${x0 + it.w * 0.08}" y1="${top + it.h * q / 4}" x2="${x1 - it.w * 0.08}" y2="${top + it.h * q / 4}" stroke="${c}" stroke-width="${sw}"/>`;
-        const name = (it.label || k.name) + (it.kind === 'door' ? (it.swing === 'out' ? ' · opens out' : ' · opens in') : ''), size = `${fmt(it.w, r)} × ${fmt(it.h, r)}${k.cls === 'obst' && it.depth ? ' × ' + fmt(it.depth, r) : ''}`;
+        const name = (it.label || k.name) + (it.kind === 'door' ? (it.swing === 'none' ? ' · no door' : it.swing === 'out' ? ' · opens out' : ' · opens in') : ''), size = `${fmt(it.w, r)} × ${fmt(it.h, r)}${k.cls === 'obst' && it.depth ? ' × ' + fmt(it.depth, r) : ''}`;
         const lines = [{t: name + (tag ? ' · ' + tag : ''), size: fs * 0.75, bold: true}, {t: size, size: fs * 0.7}];
         const fits = lines.every(q => tw(q.t, q.size) < it.w * 0.92) && it.h > fs * 2.6;
         if (fits) { const ty = top + Math.min(it.h * 0.35, fs * 1.4); lines.forEach((q, n) => sh += `<text x="${cx}" y="${ty + n * fs}" font-size="${q.size}" fill="${c}" text-anchor="middle" ${q.bold ? 'font-weight="700"' : ''} paint-order="stroke" stroke="#fff" stroke-width="${fs * 0.2}">${esc(q.t)}</text>`); }
@@ -791,7 +845,7 @@ function renderHouse() {
     return `<div class="li" data-openroom="${r.id}"><div class="ic">${ICON_ROOM}</div><div class="grow"><div class="t">${esc(r.name || 'Untitled')}</div><div class="s">${fmt(rs.x, r)} × ${fmt(rs.y, r)} ${r.units} · ${r.walls.length} walls · ${n} item${n === 1 ? '' : 's'} · ceiling ${fmtU(r.ceiling, r)}</div></div><button class="btn sm danger" data-delroom="${r.id}" title="Delete room">✕</button></div>`;
   }).join('');
 }
-function openRoom(id, t = 'setup') { cur = id; const r = room(); if (!r) return; curHouse = r.houseId; screen = 'room'; tab = t; selWall = 0; selItem = null; saveLocal(); renderAll(); window.scrollTo(0, 0); }
+function openRoom(id, t = 'setup') { cur = id; const r = room(); if (!r) return; if (!H(r.id).snap) snapNow(r); curHouse = r.houseId; screen = 'room'; tab = t; selWall = 0; selItem = null; saveLocal(); renderAll(); window.scrollTo(0, 0); }
 function goHouse(hid) { curHouse = hid; screen = house(hid) ? 'house' : 'houses'; saveLocal(); renderAll(); window.scrollTo(0, 0); }
 async function removeRoom(r) {
   const last = houseRooms(r.houseId).length === 1;
@@ -886,7 +940,7 @@ function renderWallPanel() {
   renderWallStats();
   renderPhotos();
 }
-const doorSwing = it => it.kind === 'door' ? `opens ${it.swing === 'out' ? 'outward' : 'into room'}, hinge ${it.hinge === 'R' ? 'right' : 'left'}` : '';
+const doorSwing = it => it.kind !== 'door' ? '' : it.swing === 'none' ? 'frame only, no door' : `opens ${it.swing === 'out' ? 'outward' : 'into room'}, hinge ${it.hinge === 'R' ? 'right' : 'left'}`;
 const itemTitle = it => KINDS[it.kind].name + (it.kind === 'door' ? ` (${doorSwing(it)})` : '');
 function itemLabels(it) {
   const k = KINDS[it.kind];
@@ -927,9 +981,9 @@ function renderItems() {
       <button class="btn sm danger" data-delitem="${it.id}" title="Delete">✕</button></div>
       <div class="fields">${f}</div>
       ${it.kind === 'door' ? `<div class="row" style="margin-top:8px;gap:14px">
-        <span class="note">Opens</span><span class="seg"><button data-ii="${it.id}" data-swing="in" class="${it.swing !== 'out' ? 'on' : ''}">Into room</button><button data-ii="${it.id}" data-swing="out" class="${it.swing === 'out' ? 'on' : ''}">Outward</button></span>
-        <span class="note">Hinge</span><span class="seg"><button data-ii="${it.id}" data-hinge="L" class="${it.hinge !== 'R' ? 'on' : ''}">◀ Left</button><button data-ii="${it.id}" data-hinge="R" class="${it.hinge === 'R' ? 'on' : ''}">Right ▶</button></span>
-        <span class="note">(as seen from inside the room)</span></div>` : ''}
+        <span class="note">Door</span><span class="seg"><button data-ii="${it.id}" data-swing="in" class="${it.swing !== 'out' && it.swing !== 'none' ? 'on' : ''}">Opens into room</button><button data-ii="${it.id}" data-swing="out" class="${it.swing === 'out' ? 'on' : ''}">Opens outward</button><button data-ii="${it.id}" data-swing="none" class="${it.swing === 'none' ? 'on' : ''}">No door (frame only)</button></span>
+        ${it.swing === 'none' ? '' : `<span class="note">Hinge</span><span class="seg"><button data-ii="${it.id}" data-hinge="L" class="${it.hinge !== 'R' ? 'on' : ''}">◀ Left</button><button data-ii="${it.id}" data-hinge="R" class="${it.hinge === 'R' ? 'on' : ''}">Right ▶</button></span>
+        <span class="note">(as seen from inside the room)</span>`}</div>` : ''}
       <div class="nearest" data-near="${it.id}"></div>
       ${reloc}
       <input data-ii="${it.id}" data-if="note" value="${esc(it.note || '')}" placeholder="Notes (e.g. 2 gang, hot & cold, cap-off)" style="width:100%;margin-top:8px">
@@ -1004,6 +1058,8 @@ function renderTabs() {
   $$('.view').forEach(v => v.classList.toggle('on', v.id === 'v-' + tab));
 }
 function renderAll() {
+  updateUndoButtonsSoon();
+  try { updateUndoButtons(); } catch (e) {}
   if (screen === 'room' && !room()) screen = house() ? 'house' : 'houses';
   if (screen === 'house' && !house()) screen = 'houses';
   renderRoomSel();
@@ -1023,6 +1079,8 @@ function renderAll() {
 
 /* ---------- events ---------- */
 $('nav.tabs').addEventListener('click', e => { const b = e.target.closest('[data-tab]'); if (!b) return; tab = b.dataset.tab; shapePick = null; renderAll(); try { location.hash = tab; } catch (x) {} });
+$('#undoBtn').addEventListener('click', undo);
+$('#redoBtn').addEventListener('click', redo);
 $('#crumbs').addEventListener('click', e => { const a = e.target.closest('[data-go]'); if (!a) return; if (a.dataset.go === 'houses') { screen = 'houses'; saveLocal(); renderAll(); } else goHouse(curHouse); });
 $('#crumbs').addEventListener('change', e => {
   if (e.target.id !== 'roomSel') return;
@@ -1342,7 +1400,10 @@ document.addEventListener('change', async e => {
       await idb.put(pid, {data: c.data, rid: r.id});
       (r.photos = r.photos || []).push({id: pid, wallId, caption: '', w: c.w, h: c.h, created: Date.now()});
       pendingPhotos.push({rid: r.id, pid}); savePending();
-    } catch (err) { toast('That file could not be read as a photo'); }
+    } catch (err) {
+      const heic = /hei[cf]/i.test(f.type) || /\.hei[cf]$/i.test(f.name);
+      toast(heic ? 'This phone photo format (HEIC) can\'t be opened in this browser — take the photo from here with the camera, or set the camera to “Most Compatible” (JPEG)' : `“${f.name}” couldn't be opened as a photo`);
+    }
   }
   touch(); renderPhotos(); flushPhotos();
 });
@@ -1356,7 +1417,7 @@ document.addEventListener('click', async e => {
   if (d) {
     const r = room(), p = (r.photos || []).find(x => x.id === d.dataset.delph); if (!p) return;
     if (!(await ask(`Delete this photo${p.caption ? ` (“${p.caption}”)` : ''}? It will be removed from the report too.`, 'Delete photo'))) return;
-    r.photos = r.photos.filter(x => x !== p); idb.del(p.id);
+    r.photos = r.photos.filter(x => x !== p); // the picture stays on this device so Undo can bring it back
     pendingPhotos = pendingPhotos.filter(q => q.pid !== p.id); savePending();
     if (store) store.delPhoto(r.id, p.id).catch(() => {});
     touch(); renderPhotos(); return;
@@ -1381,6 +1442,20 @@ async function saveFile(filename, data, mime) {
     setTimeout(() => URL.revokeObjectURL(url), 4000); toast('Downloaded ' + filename);
   } catch (e) { toast('Could not download the file'); }
 }
+/* share sheet (WhatsApp, Messenger, email…) with the PDF attached; falls back to saving the file */
+async function sharePdf(blob, filename, title) {
+  const file = new File([blob], filename, {type: 'application/pdf'});
+  try {
+    if (navigator.canShare && navigator.canShare({files: [file]})) { await navigator.share({files: [file], title, text: title}); return; }
+  } catch (e) { if (e && e.name === 'AbortError') return; }
+  await saveFile(filename, blob, 'application/pdf');
+  toast(dl ? 'PDF ready — choose WhatsApp, Messenger or another app from the share options' : 'This browser can\'t share files directly — the PDF was downloaded, send it from your files');
+}
+async function withBusy(btn, label, fn) {
+  const old = btn.textContent; btn.disabled = true; btn.textContent = label;
+  try { await fn(); } catch (err) { console.error(err); toast('Could not make the PDF'); } finally { btn.disabled = false; btn.textContent = old; }
+}
+const houseRoomsOrdered = h => h.rooms.slice().sort((a, b) => (a.created || 0) - (b.created || 0));
 function csvRows(r) {
   const rows = [['House', 'Room', 'Wall', 'Wall length', 'Wall height', 'Wall type', 'Item', 'Label', 'Status', 'Width / diameter', 'Height', 'Depth', 'Floor to bottom/centre', 'From left wall', 'From right wall', 'New: from left wall', 'New: from right wall', 'New: from floor', 'Notes']];
   r.walls.forEach((w, i) => {
@@ -1417,12 +1492,13 @@ async function svgToJpeg(svgStr, pxW) {
   const ctx = c.getContext('2d'); ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, W, H); ctx.drawImage(img, 0, 0, W, H);
   return {data: c.toDataURL('image/jpeg', 0.9), ratio};
 }
-async function buildPDF(r) {
+/* one room, or several rooms (a whole house) compiled into one PDF */
+async function buildPDF(list, title) {
+  if (!Array.isArray(list)) list = [list];
   const JsPDF = await loadJsPDF();
   const doc = new JsPDF({unit: 'mm', format: 'a4', orientation: 'portrait'});
-  const PW = 210, PH = 297, M = 12, CW = PW - 2 * M, u = r.units;
+  const PW = 210, PH = 297, M = 12, CW = PW - 2 * M;
   let y = M;
-  const g = geom(r), rs = roomSize(r);
   const need = h => { if (y + h > PH - M - 6) { doc.addPage(); y = M; } };
   const text = (t, x, size = 10, style = 'normal', color = [28, 36, 48]) => { doc.setFont('helvetica', style); doc.setFontSize(size); doc.setTextColor(...color); doc.text(String(t), x, y); };
   const table = (cols, rows) => {
@@ -1445,6 +1521,16 @@ async function buildPDF(r) {
     });
     y += 3;
   };
+  // cover page for a whole house
+  if (list.length > 1) {
+    y += 6; text(title || list[0].houseAddress || 'House', M, 20, 'bold'); y += 7;
+    text(`Room measurements  ·  ${list.length} rooms  ·  ${new Date().toLocaleDateString()}`, M, 10, 'normal', [107, 115, 128]); y += 8;
+    table([{h: 'Room', w: 50}, {h: 'Size (W × L)', w: 36}, {h: 'Ceiling', w: 24}, {h: 'Floor', w: 30}, {h: 'Walls', w: 16}, {h: 'Items', w: 16}, {h: 'Photos', w: 14}],
+      list.map(r => { const rs = roomSize(r); return [r.name || 'Room', `${fmt(rs.x, r)} × ${fmt(rs.y, r)} ${r.units}`, fmtU(r.ceiling, r), r.floorType || '—', String(r.walls.length), String(r.walls.reduce((a, w) => a + w.items.length, 0)), String((r.photos || []).length)]; }));
+  }
+  for (let ri = 0; ri < list.length; ri++) {
+  const r = list[ri], u = r.units, g = geom(r), rs = roomSize(r);
+  if (ri > 0 || list.length > 1) { doc.addPage(); y = M; }
   // header
   y += 4; text(r.name || 'Room', M, 18, 'bold'); y += 6;
   if (r.houseAddress) { text(r.houseAddress, M, 10, 'normal', [107, 115, 128]); y += 5; }
@@ -1510,14 +1596,23 @@ async function buildPDF(r) {
     } else { text('No openings, fixtures or obstacles on this wall.', M, 8.5, 'normal', [107, 115, 128]); y += 6; }
     await addPhotos(roomPhotoList(r, w.id), `Wall ${letter(i)} photos`);
   }
+  }
   // notes + page numbers
   need(12);
   doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5); doc.setTextColor(107, 115, 128);
   doc.text(doc.splitTextToSize('Doors and windows are measured including frame, to the frame edges. Outlets, switches, water, drain and gas points are measured to their centre. Vents are measured to the bottom edge of the opening. Left / right is as seen standing inside the room facing the wall.', CW), M, y + 3);
   const n = doc.getNumberOfPages();
-  for (let p = 1; p <= n; p++) { doc.setPage(p); doc.setFontSize(7.5); doc.setTextColor(150, 156, 165); doc.text(`${r.name || 'Room'} — page ${p} of ${n}`, PW - M, PH - 6, {align: 'right'}); }
+  const foot = title || (list.length === 1 ? `${list[0].houseAddress ? list[0].houseAddress + ' — ' : ''}${list[0].name || 'Room'}` : 'Measurements');
+  for (let p = 1; p <= n; p++) { doc.setPage(p); doc.setFontSize(7.5); doc.setTextColor(150, 156, 165); doc.text(`${foot} — page ${p} of ${n}`, PW - M, PH - 6, {align: 'right'}); }
   return doc.output('blob');
 }
+$('#sharePdf').addEventListener('click', e => { const r = room(); withBusy(e.currentTarget, 'Making PDF…', async () => {
+  const name = safeName((r.houseAddress ? r.houseAddress + ' ' : '') + r.name) + '-measurements.pdf';
+  await sharePdf(await buildPDF(r), name, `${r.houseAddress ? r.houseAddress + ' — ' : ''}${r.name} measurements`); }); });
+$('#shareHouse').addEventListener('click', e => { const h = house(); if (!h) return; withBusy(e.currentTarget, 'Making PDF…', async () => {
+  await sharePdf(await buildPDF(houseRoomsOrdered(h), h.address), safeName(h.address) + '-measurements.pdf', `${h.address} — room measurements`); }); });
+$('#dlHouse').addEventListener('click', e => { const h = house(); if (!h) return; withBusy(e.currentTarget, 'Making PDF…', async () => {
+  await saveFile(safeName(h.address) + '-measurements.pdf', await buildPDF(houseRoomsOrdered(h), h.address), 'application/pdf'); }); });
 $('#dlPdf').addEventListener('click', async e => {
   const btn = e.currentTarget, r = room(); btn.disabled = true; const old = btn.textContent; btn.textContent = 'Making PDF…';
   try { const blob = await buildPDF(r); await saveFile(safeName((r.houseAddress ? r.houseAddress + ' ' : '') + r.name) + '-measurements.pdf', blob, 'application/pdf'); }
@@ -1529,7 +1624,7 @@ $('#dlPdf').addEventListener('click', async e => {
 loadLocal();
 rooms = rooms.filter(r => !r.pristine);
 try { const n = JSON.parse(localStorage.getItem(LS_NAV) || 'null'); if (n) { screen = n.screen || 'houses'; curHouse = n.house || null; if (['setup', 'plan', 'report'].includes(n.tab)) tab = n.tab; } } catch (e) {}
-if (room()) curHouse = curHouse || room().houseId; else if (screen === 'room') screen = 'houses';
+if (room()) { curHouse = curHouse || room().houseId; snapNow(room()); } else if (screen === 'room') screen = 'houses';
 window.addEventListener('hashchange', () => { const h = location.hash.slice(1); if (screen === 'room' && ['setup', 'plan', 'report'].includes(h) && h !== tab) { tab = h; renderAll(); } });
 renderAll();
 initCloud();

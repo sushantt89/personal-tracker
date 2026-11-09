@@ -706,6 +706,7 @@ function elevSVG(r, wi, opt = {}) {
   const fs = S * 0.03, sw = S * 0.0018, m = S * 0.14;
   const Y = y => H - y; // floor at bottom
   const tw = (t, size) => String(t).length * size * 0.56; // rough text width
+  const short = (t, n = 18) => { t = String(t || ''); return t.length > n ? t.slice(0, n - 1).trimEnd() + '…' : t; }; // full label stays in the table
   let shapes = '', arrows = '';
   const vdims = [], hdims = [], labels = [], boxes = []; // boxes: drawn item rectangles in svg coords
   const draw = (it, l, floor, ghost) => {
@@ -726,13 +727,13 @@ function elevSVG(r, wi, opt = {}) {
       top = cy - vh / 2; bot = cy + vh / 2; x0 = cx - vw / 2; x1 = cx + vw / 2;
       if (floor > 0) vdims.push({x: x1 + fs * 0.7, y: cy, label: fmt(floor, r), c});
       hdims.push(t.ref === 'L' ? {x1: 0, x2: cx, edge: cx, from: bot, label: fmt(sd.left, r), c} : {x1: cx, x2: L, edge: cx, from: bot, label: fmt(sd.right, r), c});
-      const lines = [it.label, tag].filter(Boolean);
+      const lines = [short(it.label), tag].filter(Boolean);
       if (lines.length) labels.push({cx, top, lines: lines.map(x => ({t: x, size: fs * 0.62, bold: false})), c, own: it.id});
     } else {
       x0 = l; x1 = l + it.w; bot = Y(floor); top = Y(floor + it.h); cx = (x0 + x1) / 2; cy = (top + bot) / 2;
       if (k.cls === 'round') {
         sh += `<circle cx="${cx}" cy="${cy}" r="${it.w / 2}" fill="#e0f2f4" stroke="${stc}" stroke-width="${swi}"${dash}/><circle cx="${cx}" cy="${cy}" r="${it.w * 0.3}" fill="none" stroke="${c}" stroke-width="${sw}"/>`;
-        labels.push({cx, top, lines: [{t: `${it.label || 'Vent'} Ø${fmt(it.w, r)}`, size: fs * 0.7, bold: true}, ...(tag ? [{t: tag, size: fs * 0.6}] : [])], c, own: it.id});
+        labels.push({cx, top, lines: [{t: `${short(it.label || 'Vent')} Ø${fmt(it.w, r)}`, size: fs * 0.7, bold: true}, ...(tag ? [{t: tag, size: fs * 0.6}] : [])], c, own: it.id});
       } else {
         const fill = k.cls === 'obst' ? 'url(#hatchE)' : it.kind === 'window' ? '#dbeefe' : it.kind === 'ac' ? '#e0f2f4' : it.kind === 'sliding' ? '#efe7fd' : '#fbefe2';
         sh += `<rect x="${x0}" y="${top}" width="${it.w}" height="${it.h}" fill="${fill}" stroke="${stc}" stroke-width="${swi}"${dash}/>`;
@@ -749,7 +750,7 @@ function elevSVG(r, wi, opt = {}) {
         }
         if (it.kind === 'sliding') sh += `<line x1="${cx}" y1="${top}" x2="${cx}" y2="${bot}" stroke="${c}" stroke-width="${sw * 1.5}"/>`;
         if (it.kind === 'ac') for (let q = 1; q < 4; q++) sh += `<line x1="${x0 + it.w * 0.08}" y1="${top + it.h * q / 4}" x2="${x1 - it.w * 0.08}" y2="${top + it.h * q / 4}" stroke="${c}" stroke-width="${sw}"/>`;
-        const name = (it.label || k.name) + (it.kind === 'door' ? (it.swing === 'none' ? ' · no door' : it.swing === 'out' ? ' · opens out' : ' · opens in') : ''), size = `${fmt(it.w, r)} × ${fmt(it.h, r)}${k.cls === 'obst' && it.depth ? ' × ' + fmt(it.depth, r) : ''}`;
+        const name = short(it.label || k.name, 20) + (it.kind === 'door' ? (it.swing === 'none' ? ' · no door' : it.swing === 'out' ? ' · opens out' : ' · opens in') : ''), size = `${fmt(it.w, r)} × ${fmt(it.h, r)}${k.cls === 'obst' && it.depth ? ' × ' + fmt(it.depth, r) : ''}`;
         const lines = [{t: name + (tag ? ' · ' + tag : ''), size: fs * 0.75, bold: true}, {t: size, size: fs * 0.7}];
         const fits = lines.every(q => tw(q.t, q.size) < it.w * 0.92) && it.h > fs * 2.6;
         if (fits) { const ty = top + Math.min(it.h * 0.35, fs * 1.4); lines.forEach((q, n) => sh += `<text x="${cx}" y="${ty + n * fs}" font-size="${q.size}" fill="${c}" text-anchor="middle" ${q.bold ? 'font-weight="700"' : ''} paint-order="stroke" stroke="#fff" stroke-width="${fs * 0.2}">${esc(q.t)}</text>`); }
@@ -1030,6 +1031,7 @@ function renderRoomStats() {
 }
 function renderDrawings() {
   const r = room(); if (!r) return;
+  $('#plan').classList.toggle('editing', shapeEdit);
   $('#plan').innerHTML = planSVG(r, {sel: selWall, selItem, interactive: true, id: 'planSvg', edit: shapeEdit, selVtx, frame: vdrag && vdrag.moved ? vdrag.frame : null, snapStart: vdrag && vdrag.snap});
   $('#elev').innerHTML = elevSVG(r, selWall, {selItem, interactive: true, id: 'elevSvg'});
   renderRoomStats(); renderWallStats(); updateNear();
@@ -1049,13 +1051,13 @@ function reportHTML(r) {
     h += `<div class="report-wall"><h3 style="color:#1c2430;font-size:15px;text-transform:none;letter-spacing:0">Wall ${letter(i)} — ${fmtU(w.length, r)} × ${fmtU(wallH(r, w), r)} · ${esc(w.type || r.wallType || '')}${w.note ? ' · ' + esc(w.note) : ''}</h3>`;
     h += `<div class="svgbox" style="max-width:900px">${elevSVG(r, i, {})}</div>`;
     if (w.items.length) {
-      h += `<table class="rt"><tr><th>Item</th><th>Status</th><th>Size</th><th>Floor →</th><th>From ${nm(nb.left)}</th><th>From ${nm(nb.right)}</th><th>New position</th><th>Notes</th></tr>`;
+      h += `<div class="rt-wrap"><table class="rt"><tr><th>Item</th><th>Status</th><th>Size</th><th>Floor →</th><th>From ${nm(nb.left)}</th><th>From ${nm(nb.right)}</th><th>New position</th><th>Notes</th></tr>`;
       w.items.forEach(it => { const sd = sides(it, w), k = KINDS[it.kind], st = it.status || 'existing';
         const size = k.cls === 'point' ? '—' : k.cls === 'round' ? 'Ø ' + fmt(it.w, r) : fmt(it.w, r) + ' × ' + fmt(it.h, r) + (k.cls === 'obst' && it.depth ? ' × ' + fmt(it.depth, r) + ' deep' : '') + (k.cls === 'open' && it.kind !== 'ac' ? ' (incl. frame)' : '');
         const ref = k.cls === 'point' ? ' (centre)' : k.cls === 'open' && it.kind !== 'ac' ? ' (frame)' : ' (bottom)';
         let np = '—'; if (st === 'relocate' && it.to) { const t = targetSides(it, w); np = `${fmt(t.left, r)} from ${nm(nb.left)}, ${fmt(t.right, r)} from ${nm(nb.right)}, ${fmt(it.to.floor, r)} from floor`; }
         h += `<tr><td>${esc(itemTitle(it))}${it.label ? ' — ' + esc(it.label) : ''}</td><td>${STATUS[st].replace('…', '')}</td><td>${size}</td><td>${fmt(it.floor, r)}${ref}</td><td>${fmt(sd.left, r)}</td><td>${fmt(sd.right, r)}</td><td>${np}</td><td>${esc(it.note || '')}</td></tr>`; });
-      h += `</table>`;
+      h += `</table></div>`;
     } else h += `<p class="note">No openings or fixtures.</p>`;
     h += `</div>`;
   });

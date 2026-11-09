@@ -58,7 +58,14 @@ table.walls input,table.walls select{width:100%}
 .toolbar{display:flex;gap:6px 14px;flex-wrap:wrap;margin-bottom:8px}
 .tool{display:flex;align-items:center;gap:6px}
 .dot{width:10px;height:10px;border-radius:3px;display:inline-block;flex:none}
-.svgbox{border:1px solid var(--line);border-radius:8px;background:#fbfcfd;touch-action:none;overflow:hidden}
+.svgbox{border:1px solid var(--line);border-radius:8px;background:#fbfcfd;touch-action:pan-x pan-y pinch-zoom;overflow:hidden}
+#plan.editing{touch-action:none} /* only while dragging corners in Edit shape */
+.rt-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch;max-width:100%;margin-top:6px}
+.rt-wrap table.rt{margin-top:0;min-width:640px}
+#report{min-width:0}
+.rt-wrap th{white-space:nowrap}
+@media(max-width:600px){table.rt{font-size:12px}}
+#report .svgbox{max-width:100% !important}
 .svgbox svg{display:block;width:100%;height:auto;max-height:62vh}
 .chips{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px}
 .chip{border:1.5px solid var(--line);background:#fff;border-radius:999px;padding:4px 12px;cursor:pointer;font-weight:700}
@@ -279,6 +286,6 @@ svg text{font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
 <input type="file" id="photoInput" accept="image/*" multiple tabindex="-1" aria-hidden="true" style="position:fixed;left:-9999px;top:0;width:1px;height:1px;opacity:0">
 <div class="lightbox" id="lightbox"><div><img id="lbImg" alt=""><p id="lbCap"></p></div></div>
 
-<script src="app.js?v=c5426af2"></script>
+<script src="app.js?v=aab41e9e"></script>
 </body>
 </html>

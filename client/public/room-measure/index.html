@@ -74,7 +74,7 @@ table.walls input,table.walls select{width:100%}
 .item .fields{grid-template-columns:repeat(auto-fill,minmax(120px,1fr))}
 .item .fields .wide{grid-column:span 2}
 .item .fields .wide input{min-width:70px}
-.seg{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden}
+.seg{display:inline-flex;flex-wrap:wrap;border:1px solid var(--line);border-radius:8px;overflow:hidden}
 .seg button{border:0;background:#fff;padding:6px 9px;cursor:pointer;font-size:12px}
 .seg button.on{background:var(--ink);color:#fff}
 .nearest{font-size:12px;color:var(--muted);margin-top:6px}
@@ -276,8 +276,9 @@ svg text{font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
 
 <div class="modal-bg" id="modal"><div class="modal"><p id="modalMsg"></p><div class="row right"><button class="btn" id="modalNo">Cancel</button><button class="btn primary" id="modalYes">OK</button></div></div></div>
 <div class="toast" id="toast"></div>
+<input type="file" id="photoInput" accept="image/*" multiple tabindex="-1" aria-hidden="true" style="position:fixed;left:-9999px;top:0;width:1px;height:1px;opacity:0">
 <div class="lightbox" id="lightbox"><div><img id="lbImg" alt=""><p id="lbCap"></p></div></div>
 
-<script src="app.js"></script>
+<script src="app.js?v=c5426af2"></script>
 </body>
 </html>

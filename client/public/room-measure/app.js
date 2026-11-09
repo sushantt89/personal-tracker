@@ -490,11 +490,16 @@ function renderPhotoGrid(el, wallId) {
   const list = roomPhotoList(r, wallId);
   el.innerHTML = list.map(p => `<div class="ph" data-ph="${p.id}"><img data-pimg="${p.id}" alt="">${pendingPhotos.some(q => q.pid === p.id) ? '<span class="up">not uploaded yet</span>' : ''}
       <button class="x" data-delph="${p.id}" title="Delete photo">✕</button><input data-phcap="${p.id}" value="${esc(p.caption || '')}" placeholder="Caption"></div>`).join('') +
-    `<label class="addph">📷<br>Add photo<br><span style="font-size:11px">camera or gallery</span><input type="file" accept="image/*" multiple hidden data-addph="${wallId || ''}"></label>`;
+    `<button type="button" class="addph" data-addph="${wallId || ''}">📷<br>Add photo<br><span style="font-size:11px">camera or gallery</span></button>`;
   list.forEach(async p => { const d = await photoData(r.id, p.id); const im = el.querySelector(`[data-pimg="${p.id}"]`); if (im && d) im.src = d; else if (im) im.alt = 'Photo not on this device yet'; });
 }
 function renderPhotos() { renderPhotoGrid($('#roomPhotos'), null); const r = room(), w = r && r.walls[selWall]; renderPhotoGrid($('#wallPhotos'), w ? w.id : '__none'); }
-function renderPhotoBadges() { if (screen === 'room' && tab === 'plan') renderPhotos(); }
+function renderPhotoBadges() {
+  $$('.ph[data-ph]').forEach(el => {
+    const waiting = pendingPhotos.some(q => q.pid === el.dataset.ph), b = el.querySelector('.up');
+    if (waiting && !b) el.insertAdjacentHTML('afterbegin', '<span class="up">not uploaded yet</span>'); else if (!waiting && b) b.remove();
+  });
+}
 async function deleteRoomPhotos(r) {
   for (const p of (r.photos || [])) { idb.del(p.id); pendingPhotos = pendingPhotos.filter(q => q.pid !== p.id); if (store) store.delPhoto(r.id, p.id).catch(() => {}); }
   savePending();
@@ -981,7 +986,10 @@ function renderItems() {
       <button class="btn sm danger" data-delitem="${it.id}" title="Delete">✕</button></div>
       <div class="fields">${f}</div>
       ${it.kind === 'door' ? `<div class="row" style="margin-top:8px;gap:14px">
-        <span class="note">Door</span><span class="seg"><button data-ii="${it.id}" data-swing="in" class="${it.swing !== 'out' && it.swing !== 'none' ? 'on' : ''}">Opens into room</button><button data-ii="${it.id}" data-swing="out" class="${it.swing === 'out' ? 'on' : ''}">Opens outward</button><button data-ii="${it.id}" data-swing="none" class="${it.swing === 'none' ? 'on' : ''}">No door (frame only)</button></span>
+        <label class="f" style="min-width:200px">Door<select data-ii="${it.id}" data-if="swing">
+          <option value="in" ${it.swing !== 'out' && it.swing !== 'none' ? 'selected' : ''}>Opens into the room</option>
+          <option value="out" ${it.swing === 'out' ? 'selected' : ''}>Opens outward (away from room)</option>
+          <option value="none" ${it.swing === 'none' ? 'selected' : ''}>No door — frame only</option></select></label>
         ${it.swing === 'none' ? '' : `<span class="note">Hinge</span><span class="seg"><button data-ii="${it.id}" data-hinge="L" class="${it.hinge !== 'R' ? 'on' : ''}">◀ Left</button><button data-ii="${it.id}" data-hinge="R" class="${it.hinge === 'R' ? 'on' : ''}">Right ▶</button></span>
         <span class="note">(as seen from inside the room)</span>`}</div>` : ''}
       <div class="nearest" data-near="${it.id}"></div>
@@ -1330,7 +1338,7 @@ $('#wallCard').addEventListener('input', e => {
     const it = w.items.find(x => x.id === el.dataset.ii); if (!it) return;
     const f = el.dataset.if;
     if (f === 'label' || f === 'note') it[f] = el.value;
-    else if (f === 'kind' || f === 'status') return;
+    else if (f === 'kind' || f === 'status' || f === 'swing') return;
     else { const v = parse(el.value); if (v == null || v < 0) return;
       if (f === 'w' || f === 'h') { if (v <= 0) return; it[f] = v; if (KINDS[it.kind].cls === 'round') it.h = it.w; }
       else if (f === 'tdist') { ensureTo(it, w); it.to.dist = v; }
@@ -1344,6 +1352,7 @@ $('#wallCard').addEventListener('change', e => {
   if (el.dataset.if === 'kind') { const it = w.items.find(x => x.id === el.dataset.ii); const was = isPoint(it); const left = itemLeft(it, w); it.kind = el.value;
     const k = KINDS[it.kind]; if (was !== isPoint(it) || k.cls === 'round' || k.cls === 'obst') { it.w = k.w; it.h = k.h; if (k.depth) it.depth = k.depth; setItemLeft(it, w, left); }
     touch(); renderItems(); renderDrawings(); }
+  if (el.dataset.if === 'swing') { const it = w.items.find(x => x.id === el.dataset.ii); if (!it) return; it.swing = el.value; selItem = it.id; touch(); renderItems(); renderDrawings(); return; }
   if (el.dataset.if === 'status') { const it = w.items.find(x => x.id === el.dataset.ii); it.status = el.value; if (el.value === 'relocate') ensureTo(it, w); selItem = it.id; touch(); renderItems(); renderDrawings(); }
   if (el.dataset.pf === 'length' && (r.shape === 'rect' || r.shape === 'square')) toast(r.shape === 'square' ? 'All 4 walls updated (square)' : `Opposite wall ${letter((selWall + 2) % 4)} updated too`);
 });
@@ -1387,12 +1396,19 @@ function syncCard(it) {
 }
 
 /* ---------- photo events ---------- */
-document.addEventListener('change', async e => {
-  const inp = e.target.closest && e.target.closest('[data-addph]'); if (!inp) return;
+let photoTarget = null; // which room / wall the picker was opened for
+document.addEventListener('click', e => {
+  const b = e.target.closest && e.target.closest('[data-addph]'); if (!b) return;
   const r = room(); if (!r) return;
-  const files = [...inp.files]; inp.value = '';
+  photoTarget = {rid: r.id, wallId: b.dataset.addph || null};
+  const inp = $('#photoInput'); inp.value = ''; inp.click();
+});
+$('#photoInput').addEventListener('change', async e => {
+  const inp = e.target, t = photoTarget || {rid: cur, wallId: null};
+  const r = rooms.find(x => x.id === t.rid) || room(); if (!r) return;
+  const files = [...(inp.files || [])]; inp.value = '';
   if (!files.length) return;
-  const wallId = inp.dataset.addph || null;
+  const wallId = t.wallId;
   toast(files.length > 1 ? `Adding ${files.length} photos…` : 'Adding photo…');
   for (const f of files) {
     try {
@@ -1405,7 +1421,7 @@ document.addEventListener('change', async e => {
       toast(heic ? 'This phone photo format (HEIC) can\'t be opened in this browser — take the photo from here with the camera, or set the camera to “Most Compatible” (JPEG)' : `“${f.name}” couldn't be opened as a photo`);
     }
   }
-  touch(); renderPhotos(); flushPhotos();
+  touch(r); if (r === room()) renderPhotos(); flushPhotos();
 });
 document.addEventListener('input', e => {
   const c = e.target.closest && e.target.closest('[data-phcap]'); if (!c) return;

@@ -71,7 +71,11 @@ export function createApp() {
   // In production, serve the built React app from the same origin (one free web service).
   const clientDist = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../client/dist');
   if (isProd && fs.existsSync(clientDist)) {
-    app.use(express.static(clientDist, { maxAge: '1h', index: false }));
+    app.use(express.static(clientDist, {
+      maxAge: '1h', index: false,
+      // the Room Measure tool is not built with versioned file names, so make browsers check for updates
+      setHeaders: (res, file) => { if (/[\\/]room-measure[\\/](index\.html|app\.js)$/.test(file)) res.setHeader('Cache-Control', 'no-cache'); },
+    }));
     app.get(/^\/(?!api\/).*/, (_req, res) => res.sendFile(path.join(clientDist, 'index.html')));
   }
 

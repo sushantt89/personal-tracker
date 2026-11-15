@@ -136,12 +136,15 @@ export default function PasteImport() {
     }
   };
 
+  /** How many roster photos are read in one go (each is read one after another on the server). */
+  const MAX_ROSTER_PHOTOS = 50;
   /**
    * Roster screenshots or photos — one or several at once. The server reads the text out of each, then all the shifts
    * found are reviewed together exactly like pasted text. A photo that can't be read doesn't stop the others.
    */
   const uploadRosters = async (files: File[]) => {
-    const list = files.filter((f) => /^image\/|pdf$/i.test(f.type) || /\.(heic|heif|jpe?g|png|webp|pdf)$/i.test(f.name)).slice(0, 10);
+    const usable = files.filter((f) => /^image\/|pdf$/i.test(f.type) || /\.(heic|heif|jpe?g|png|webp|pdf)$/i.test(f.name));
+    const list = usable.slice(0, MAX_ROSTER_PHOTOS);
     if (!list.length) { setError('Choose roster screenshots or photos (JPG, PNG, HEIC or PDF).'); return; }
     setReading(true); setError(null); setDone(null); setResult(null); setJobs([]); setPayments([]);
     const ok: ParseResponse[] = [], failed: string[] = [];
@@ -155,6 +158,7 @@ export default function PasteImport() {
           ok.push(await api<ParseResponse>('/import/roster', { method: 'POST', form: fd }));
         } catch (e) { failed.push(`${list.length > 1 ? `Photo ${i + 1}` : file.name}: ${(e as Error).message}`); }
       }
+      if (usable.length > list.length) failed.unshift(`Only the first ${MAX_ROSTER_PHOTOS} photos were read — add the other ${usable.length - list.length} in another go`);
       if (failed.length) setError(failed.join(' · '));
       if (!ok.length) return;
       if (ok.length === 1) { setText(ok[0].text ?? ''); show(ok[0]); return; }

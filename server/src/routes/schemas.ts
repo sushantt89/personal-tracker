@@ -50,7 +50,7 @@ export const jobSchema = z.object({
   hourlyRate: zOptMoney,
   amountEstimated: z.boolean().optional(),
   excludeFromHours: z.boolean().optional(),
-  hoursWorked: z.coerce.number().min(0).max(24).optional().nullable(),
+  hoursWorked: z.coerce.number().min(0).max(168, "Hours can be at most 168 (one week)").optional().nullable(),
   address: zAddress,
   meetingPoint: zOptStr(300),
   description: zOptStr(2000),

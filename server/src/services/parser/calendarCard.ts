@@ -21,7 +21,8 @@ import type { ParsedJob, ParseResult } from './types.js';
 
 const MARKER_RE = /\b(created by|repeats|does not repeat|organi[sz]er|invitation from|going\?|notifications?|\d+\s*(?:minutes?|hours?)\s+before|guests?)\b/i;
 const TIME = String.raw`(\d{1,2})(?:[:.](\d{2}))?\s*(am|pm|a\.m\.|p\.m\.)?`;
-const RANGE_RE = new RegExp(`${TIME}\\s*(?:[-–—~=⋅·]+|to|until)\\s*${TIME}`, 'i');
+// The dash between the times comes out of OCR as almost anything: "–", "-", "=", "<=", "»", "— -"
+const RANGE_RE = new RegExp(`${TIME}\\s*(?:(?:[-–—~=⋅·<>»«_|]\\s*)+|to|until)\\s*${TIME}`, 'i');
 const SINGLE_RE = new RegExp(`\\b${TIME}`, 'i');
 
 /** Icons beside each line come out of OCR as stray characters: "®", "2,", "[5]", "(YO", "9?". */
@@ -155,7 +156,7 @@ export function parseCalendarCard(input: string, opts: CalendarCardOptions): Par
     specialInstructions: [...special, text.specialInstructions].filter(Boolean).join(' ') || undefined,
     rooms: text.rooms, bathrooms: text.bathrooms,
     // (other people's email addresses aren't kept)
-    sourceText: raw.filter((l) => !/created by|organi[sz]er|@/i.test(l)).join('\n'), confidence: Math.max(0, Math.round((0.95 - warnings.length * 0.15) * 100) / 100), warnings,
+    sourceText: raw.filter((l, i) => !chrome[i] && i >= dIdx - titleLines.length && !/created by|organi[sz]er|@/i.test(l)).join('\n'), confidence: Math.max(0, Math.round((0.95 - warnings.length * 0.15) * 100) / 100), warnings,
   };
   return {
     kind: 'schedule', scheduleDate: d!.date, jobs: [job], payments: [],

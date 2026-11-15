@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { describe, it, expect } from 'vitest';
-import { parseMessage, parseAddress, findDate, parseHeader, parseCalendarCard } from '../src/services/parser/index.js';
+import { parseMessage, parseAddress, findDate, parseHeader, parseCalendarCard, parseTimeRange } from '../src/services/parser/index.js';
 
 const SAMPLE = `Hi SUSHANT
 Your schedule for Friday 2 OCT.
@@ -253,6 +253,26 @@ Going?     Yes     IN[e]     Maybe`;
     expect(read('Q 3/29 Example Cres\nSampleton SA 5000').address.line1).toBe('3/29 Example Cres');
     // A task that happens to end in a street word stays a task
     expect(read('29 Example St\nSampleton SA 5000\nMop 3 rooms then walk').tasks).toEqual(['Mop 3 rooms then walk']);
+  });
+
+  it('reads a dark-mode iPhone screenshot: status bar ignored, time dash read as "<="', () => {
+    const ocr = `4:39                        hg            BE
+et                                                                             ame
+® SAMPLE M ($35)
+
+Tuesday 3 Nov - 9 <= 10am
+
+Repeats every 2 weeks
+® 8 Example Ave
+
+Sampleton SA 5000, Australia
+2 Created by someone@example.com
+[5] Team ALEX + SAM`;
+    const job = parseCalendarCard(ocr, { today: '2026-11-15' })!.jobs[0];
+    expect(job).toMatchObject({ clientName: 'SAMPLE M', amount: 35, date: '2026-11-03', startTime: '09:00', endTime: '10:00', hours: 1, tasks: [], warnings: [] });
+    expect(job.address.formatted).toBe('8 Example Ave, Sampleton SA 5000');
+    expect(job.sourceText!.split('\n')[0]).toBe('® SAMPLE M ($35)');
+    for (const [t, want] of [['9 » 10am', ['09:00', '10:00']], ['9 — - 10:30am', ['09:00', '10:30']], ['12 _ 1pm', ['12:00', '13:00']]] as const) expect(Object.values(parseTimeRange(t))).toEqual(want);
   });
 
   it('passes over a date in the status bar and reads a time that wrapped onto its own line', () => {

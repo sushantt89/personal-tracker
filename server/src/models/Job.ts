@@ -33,7 +33,7 @@ const jobSchema = new Schema(
     amountEstimated: { type: Boolean, default: false },
     /** Left out of the work-hours tracker (e.g. a cash job that isn't part of the hours being watched) */
     excludeFromHours: { type: Boolean, default: false },
-    hoursWorked: { type: Number, min: 0, max: 168 },
+    hoursWorked: { type: Number, min: 0, max: 24 },
     address: addressSchema,
     meetingPoint: { type: String, maxlength: 300 },
     description: { type: String, maxlength: 2000 },

@@ -152,7 +152,7 @@ const commitJob = z.object({
   fuelAllowance: zOptMoney,
   /** The amount is an estimate (e.g. roster hours × expected hourly rate); real pay is recorded later */
   amountEstimated: z.boolean().optional(),
-  hoursWorked: z.coerce.number().min(0).max(168).optional().nullable(),
+  hoursWorked: z.coerce.number().min(0).max(24).optional().nullable(),
   address: zAddress,
   description: zOptStr(2000),
   tasks: z.array(z.string().max(300)).max(50).optional(),
